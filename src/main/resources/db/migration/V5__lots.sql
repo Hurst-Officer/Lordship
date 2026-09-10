@@ -18,13 +18,13 @@ CREATE TABLE lot ( --TODO: add square footage, also, add a MFH (manufactured hom
                      deleted_at    TIMESTAMPTZ,
                      FOREIGN KEY (property_id) REFERENCES property(uuid),
 
-                     CONSTRAINT lot_not_rentable_has_reason CHECK (
+                     CONSTRAINT lot_not_rentable_must_have_a_reason CHECK (
                          is_rentable OR (not_rentable_reason IS NOT NULL AND length(trim(not_rentable_reason)) > 0)
                          ),
-                     CONSTRAINT lot_reason_only_when_not_rentable CHECK (
+                     CONSTRAINT lot_reason_only_allowed_when_not_rentable CHECK (
                          is_rentable IS FALSE OR not_rentable_reason IS NULL
                          ),
-                     CONSTRAINT lot_shape_has_polygon CHECK (
+                     CONSTRAINT lot_shape_must_have_three_or_more_vertices CHECK (
                              CASE WHEN jsonb_typeof(shape_data -> 'vertices') = 'array'
                              THEN jsonb_array_length(shape_data -> 'vertices') >= 3
                              ELSE false
@@ -36,8 +36,8 @@ CREATE TABLE lot_permissible_agreement_type ( -- what agreements are permissible
                         uuid           UUID PRIMARY KEY DEFAULT uuidv7(),
                         lot_id         UUID NOT NULL REFERENCES lot(uuid),
                         agreement_type agreement_type NOT NULL,
-                        target_rate    NUMERIC(12,2) CHECK (target_rate >= 0), -- where existing tenancies are steered
-                        asking_rate    NUMERIC(12,2) CHECK (asking_rate >= 0), -- what a new applicant is quoted
+                        target_rate    NUMERIC(12,2) CONSTRAINT lot_agreement_target_rate_must_not_be_negative CHECK (target_rate >= 0), -- where existing tenancies are steered
+                        asking_rate    NUMERIC(12,2) CONSTRAINT lot_agreement_asking_rate_must_not_be_negative CHECK (asking_rate >= 0), -- what a new applicant is quoted
                         CONSTRAINT lot_permissible_agreement_type_uq UNIQUE (lot_id, agreement_type)
 );
 

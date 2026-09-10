@@ -148,7 +148,7 @@ CREATE TABLE property_document_customization (
                                                  uuid        UUID PRIMARY KEY DEFAULT uuidv7(),
                                                  assignment  UUID NOT NULL REFERENCES property_document_assignment(uuid),
                                                  action      TEXT NOT NULL
-                                                     CHECK (action IN ('EXCLUDE_SECTION','EXCLUDE_CLAUSE','ADD_CLAUSE')),
+                                                     CONSTRAINT document_customization_action_must_be_known CHECK (action IN ('EXCLUDE_SECTION','EXCLUDE_CLAUSE','ADD_CLAUSE')),
 
                                                  section     UUID REFERENCES document_section(uuid), -- EXCLUDE_SECTION, and ADD_CLAUSE says which section receives it
                                                  clause      UUID REFERENCES template_clause(uuid),  -- EXCLUDE_CLAUSE only
@@ -181,7 +181,7 @@ CREATE TABLE instrument ( -- WIP
                             type           instrument_type NOT NULL, -- includes paper that changes nothing: PAY_OR_VACATE, notices
 
                             status         TEXT NOT NULL DEFAULT 'DRAFT'
-                                CHECK (status IN ('DRAFT','GENERATED','SENT','SERVED','APPROVED','ABANDONED')),
+                                CONSTRAINT instrument_status_must_be_known CHECK (status IN ('DRAFT','GENERATED','SENT','SERVED','APPROVED','ABANDONED')),
 
                             serial         TEXT, -- printed on the paper, assigned at GENERATED; typed back in to find the lease
                             amends         UUID, -- composite FK below
@@ -189,8 +189,8 @@ CREATE TABLE instrument ( -- WIP
     -- This document's own period; null on notices and addenda. on_expiry is
     -- what THIS paper claims happens next, not the system's renewal record.
                             term_start     DATE,
-                            term_months    INT CHECK (term_months > 0), -- 1 for month to month; inherited leases may exceed 12
-                            on_expiry      TEXT CHECK (on_expiry IN ('MONTH_TO_MONTH','AUTO_RENEW','TERMINATE')),
+                            term_months    INT CONSTRAINT instrument_term_months_must_be_positive CHECK (term_months > 0), -- 1 for month to month; inherited leases may exceed 12
+                            on_expiry      TEXT CONSTRAINT instrument_on_expiry_must_be_known CHECK (on_expiry IN ('MONTH_TO_MONTH','AUTO_RENEW','TERMINATE')),
 
     -- Where the wording came from. What it SAID is in instrument_clause.
                             template            UUID REFERENCES document_template(uuid),
@@ -204,7 +204,7 @@ CREATE TABLE instrument ( -- WIP
                             sent_by        UUID REFERENCES agent(uuid),
 
                             served_on      DATE,
-                            service_method TEXT CHECK (service_method IN ('PERSONAL','MAIL','POST_AND_MAIL','EMAIL','OTHER')),
+                            service_method TEXT CONSTRAINT instrument_service_method_must_be_known CHECK (service_method IN ('PERSONAL','MAIL','POST_AND_MAIL','EMAIL','OTHER')),
                             served_by      UUID REFERENCES agent(uuid),
                             proof_file     UUID REFERENCES document_file(uuid),
 
@@ -306,7 +306,7 @@ CREATE TABLE instrument_clause (
                                    body          TEXT NOT NULL, -- the words on the page, amounts and all
                                    body_template TEXT NOT NULL, -- the same words with the tokens still in them
                                    statute_ref   TEXT, -- copied down so a generate-time completeness check has something to test
-                                   origin        TEXT NOT NULL CHECK (origin IN ('TEMPLATE','PROPERTY')),
+                                   origin        TEXT NOT NULL CONSTRAINT instrument_clause_origin_must_be_known CHECK (origin IN ('TEMPLATE','PROPERTY')),
 
     -- Deliberately NOT a foreign key: the clause it came from may be
     -- edited, retired or soft-deleted later, and this snapshot has to
@@ -341,50 +341,50 @@ CREATE TABLE tenancy_charge_term (
 
                                      agreement_type    agreement_type NOT NULL, -- do not allow editing from patch requests
 
-                                     rate              NUMERIC(12,2) NOT NULL CHECK (rate >= 0), -- COALESCE(lot rate, terms_template rate)
-                                     car_fee           NUMERIC(12,2) NOT NULL CHECK (car_fee >= 0),
-                                     allowed_cars      INT           NOT NULL CHECK (allowed_cars >= 0),
+                                     rate              NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_rate_must_not_be_negative CHECK (rate >= 0), -- COALESCE(lot rate, terms_template rate)
+                                     car_fee           NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_car_fee_must_not_be_negative CHECK (car_fee >= 0),
+                                     allowed_cars      INT           NOT NULL CONSTRAINT charge_term_allowed_cars_must_not_be_negative CHECK (allowed_cars >= 0),
                                      cars_max          INT           NOT NULL,
-                                     pet_fee           NUMERIC(12,2) NOT NULL CHECK (pet_fee >= 0),
-                                     allowed_pets      INT           NOT NULL CHECK (allowed_pets >= 0),
+                                     pet_fee           NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_pet_fee_must_not_be_negative CHECK (pet_fee >= 0),
+                                     allowed_pets      INT           NOT NULL CONSTRAINT charge_term_allowed_pets_must_not_be_negative CHECK (allowed_pets >= 0),
 
-                                     payment_due_day   INT NOT NULL CHECK (payment_due_day BETWEEN 1 AND 28),
-                                     grace_period_days INT NOT NULL CHECK (grace_period_days >= 0),
+                                     payment_due_day   INT NOT NULL CONSTRAINT charge_term_payment_due_day_must_be_1_to_28 CHECK (payment_due_day BETWEEN 1 AND 28),
+                                     grace_period_days INT NOT NULL CONSTRAINT charge_term_grace_period_days_not_negative CHECK (grace_period_days >= 0),
 
                                      rule_violation_fee_method TEXT NOT NULL
-                                         CHECK (rule_violation_fee_method IN ('NONE','FLAT')),
-                                     rule_violation_fee_amount NUMERIC(12,2) NOT NULL CHECK (rule_violation_fee_amount >= 0),
+                                         CONSTRAINT charge_term_violation_fee_method_must_be_known CHECK (rule_violation_fee_method IN ('NONE','FLAT')),
+                                     rule_violation_fee_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_violation_fee_amount_not_negative CHECK (rule_violation_fee_amount >= 0),
 
                                      nsf_fee_method    TEXT NOT NULL
-                                         CHECK (nsf_fee_method IN ('NONE','FLAT','BANK_OR_FLAT')), -- BANK_OR_FLAT: either the flat amt or the bank fee if the bank fee is greater
-                                     nsf_fee_amount    NUMERIC(12,2) NOT NULL CHECK (nsf_fee_amount >= 0),
+                                         CONSTRAINT charge_term_nsf_fee_method_must_be_known CHECK (nsf_fee_method IN ('NONE','FLAT','BANK_OR_FLAT')), -- BANK_OR_FLAT: either the flat amt or the bank fee if the bank fee is greater
+                                     nsf_fee_amount    NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_nsf_fee_amount_must_not_be_negative CHECK (nsf_fee_amount >= 0),
 
                                      late_fee_method   TEXT NOT NULL
-                                         CHECK (late_fee_method IN ('NONE','FLAT', 'PERCENT_OF_RENT')),
-                                     late_fee_amount   NUMERIC(12,2) NOT NULL CHECK (late_fee_amount >= 0), -- can be a percent OR a flat rate
+                                         CONSTRAINT charge_term_late_fee_method_must_be_known CHECK (late_fee_method IN ('NONE','FLAT', 'PERCENT_OF_RENT')),
+                                     late_fee_amount   NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_late_fee_amount_must_not_be_negative CHECK (late_fee_amount >= 0), -- can be a percent OR a flat rate
 
                                      water_method      TEXT NOT NULL
-                                         CHECK (water_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
-                                     water_flat_amount NUMERIC(12,2) NOT NULL CHECK (water_flat_amount >= 0),
+                                         CONSTRAINT charge_term_water_method_must_be_known CHECK (water_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                     water_flat_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_water_amount_must_not_be_negative CHECK (water_flat_amount >= 0),
                                      power_method      TEXT NOT NULL
-                                         CHECK (power_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
-                                     power_flat_amount NUMERIC(12,2) NOT NULL CHECK (power_flat_amount >= 0),
+                                         CONSTRAINT charge_term_power_method_must_be_known CHECK (power_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                     power_flat_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_power_amount_must_not_be_negative CHECK (power_flat_amount >= 0),
                                      sewer_method      TEXT NOT NULL
-                                         CHECK (sewer_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
-                                     sewer_flat_amount NUMERIC(12,2) NOT NULL CHECK (sewer_flat_amount >= 0),
+                                         CONSTRAINT charge_term_sewer_method_must_be_known CHECK (sewer_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                     sewer_flat_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_sewer_amount_must_not_be_negative CHECK (sewer_flat_amount >= 0),
                                      trash_method      TEXT NOT NULL
-                                         CHECK (trash_method IN ('NONE','FLAT','RUBS')),
-                                     trash_flat_amount NUMERIC(12,2) NOT NULL CHECK (trash_flat_amount >= 0),
+                                         CONSTRAINT charge_term_trash_method_must_be_known CHECK (trash_method IN ('NONE','FLAT','RUBS')),
+                                     trash_flat_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_trash_amount_must_not_be_negative CHECK (trash_flat_amount >= 0),
 
                                      status            TEXT NOT NULL DEFAULT 'PROPOSED'
-                                         CHECK (status IN ('PROPOSED','PENDING','ACTIVE','CANCELLED')),
+                                         CONSTRAINT charge_term_status_must_be_known CHECK (status IN ('PROPOSED','PENDING','ACTIVE','CANCELLED')),
     -- PROPOSED  - editable, filled in incrementally
     -- PENDING   - submitted- a document is out for signature or service
     -- ACTIVE    - in force from valid_at until a later ACTIVE term supersedes it
     -- CANCELLED - was in force, retracted; excluded from resolution entirely
 
                                      source            TEXT NOT NULL
-                                         CHECK (source IN ('LEASE','INCREASE_NOTICE','ASSUMPTION','ADDENDUM','CORRECTION','MIGRATION')),
+                                         CONSTRAINT charge_term_source_must_be_known CHECK (source IN ('LEASE','INCREASE_NOTICE','ASSUMPTION','ADDENDUM','CORRECTION','MIGRATION')),
 
                                      source_uuid       UUID,     -- the instrument that produced this deal
 

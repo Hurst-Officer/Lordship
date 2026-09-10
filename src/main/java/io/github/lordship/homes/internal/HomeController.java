@@ -32,8 +32,7 @@ public class HomeController {
     public record HomeCreateRequest(
             @NotNull
             UUID lotId
-    ) {
-    }
+    ) { }
 
 
     private final HomeService homeService;

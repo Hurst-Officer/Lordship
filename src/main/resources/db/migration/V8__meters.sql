@@ -37,8 +37,8 @@ CREATE TABLE meter_relationship (
                             effective_to DATE, -- in case a relationship were to change
                             FOREIGN KEY (parent_meter) REFERENCES meters(uuid),
                             FOREIGN KEY (child_meter) REFERENCES meters(uuid),
-                            CHECK (child_meter <> parent_meter),
-                            CHECK ((child_meter IS NULL) = (has_unmetered_remainder = TRUE))
+                            CONSTRAINT meter_relationship_child_must_differ_from_parent CHECK (child_meter <> parent_meter),
+                            CONSTRAINT meter_relationship_remainder_means_no_child_meter CHECK ((child_meter IS NULL) = (has_unmetered_remainder = TRUE))
 );
 
 CREATE TABLE meter_reads (
@@ -67,7 +67,7 @@ CREATE TABLE meter_billing (
                            updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
                            deleted_at       TIMESTAMPTZ,
                            FOREIGN KEY (billed_meter, rate_unit) REFERENCES meters (uuid, measurement),
-                           CHECK (period_end > period_start)
+                           CONSTRAINT meter_billing_period_end_must_follow_start CHECK (period_end > period_start)
 );
 
 
@@ -92,7 +92,8 @@ CREATE OR REPLACE FUNCTION check_meter_relationship_utility_match()
 BEGIN
        IF (SELECT utility_type FROM meters WHERE uuid = NEW.parent_meter)
           <> (SELECT utility_type FROM meters WHERE uuid = NEW.child_meter) THEN
-           RAISE EXCEPTION 'Parent and Child meters must share the same utility_type';
+           RAISE EXCEPTION 'Parent and child meters must share the same utility type'
+               USING ERRCODE = '23514';
 END IF;
 RETURN NEW;
 END;
