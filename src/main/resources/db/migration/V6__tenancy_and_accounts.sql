@@ -9,7 +9,7 @@ CREATE TABLE tenancy (
                          end_date              DATE,
                          anniversary_on        DATE, -- sticky; established by the first lease or first payment
                          anniversary_source    TEXT
-                             CHECK (anniversary_source IN ('FIRST_LEASE','FIRST_PAYMENT','WAIVER','AGREED','MIGRATED')),
+                             CONSTRAINT tenancy_anniversary_source_must_be_known CHECK (anniversary_source IN ('FIRST_LEASE','FIRST_PAYMENT','WAIVER','AGREED','MIGRATED')),
                          no_personal_checks    BOOLEAN NOT NULL DEFAULT FALSE,
                          no_partial_payments   BOOLEAN NOT NULL DEFAULT FALSE,
                          accept_payments       BOOLEAN NOT NULL DEFAULT TRUE,
@@ -148,7 +148,7 @@ CREATE TABLE transaction ( --TODO:  needs nullable field: a uuid for the batch b
                              billing_period DATE NOT NULL,
                              posted_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
                              deleted_at     TIMESTAMPTZ,
-                             CONSTRAINT transaction_amount_check
+                             CONSTRAINT transaction_amount_nonzero_negative_only_if_adjustment
                                  CHECK (amount <> 0 AND (amount > 0 OR type = 'BALANCE_ADJUSTMENT'))
 );
 
