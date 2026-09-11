@@ -6,6 +6,7 @@ import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.termstemplate.internal.TermsTemplateRepository;
 import io.github.lordship.termstemplate.internal.TermsTemplateRow;
 import org.springframework.stereotype.Service;
@@ -37,31 +38,53 @@ public class TermsTemplateService {
 
     private static final Set<String> TRASH_METHODS = Set.of("NONE", "FLAT", "RUBS");
 
+    private static final Set<String> SECURITY_DEPOSIT_METHODS = Set.of("NONE", "FLAT", "MULTIPLE_OF_RENT");
+
     // if only these things change - DO NOT do an audit log
     private static final Set<String> HOUSEKEEPING_KEYS = Set.of("updatedAt");
 
+    /**
+     * One method column and the amount column it governs.
+     *
+     * <p>{@code methodsCarryingAmount} is per-pair rather than global because the
+     * rule differs by column: a late fee carries an amount on PERCENT_OF_RENT, an
+     * NSF fee on BANK_OR_FLAT, a deposit on MULTIPLE_OF_RENT, a utility on FLAT
+     * alone. It mirrors the amount-matches-method CHECK on each pair, so the
+     * service and the schema refuse the same rows.
+     */
     private record MethodAmountPair(
             String methodColumn,
             String amountColumn,
             Set<String> allowedMethods,
+            Set<String> methodsCarryingAmount,
             Function<TermsTemplateRow, Enum<?>> currentMethod,
             Function<TermsTemplateRow, BigDecimal> currentAmount) {}
 
     private static final List<MethodAmountPair> METHOD_AMOUNT_PAIRS = List.of(
             new MethodAmountPair("late_fee_method", "late_fee_amount", LATE_FEE_METHODS,
+                    Set.of("FLAT", "PERCENT_OF_RENT"),
                     TermsTemplateRow::lateFeeMethod, TermsTemplateRow::lateFeeAmount),
             new MethodAmountPair("rule_violation_fee_method", "rule_violation_fee_amount", VIOLATION_FEE_METHODS,
+                    Set.of("FLAT"),
                     TermsTemplateRow::ruleViolationFeeMethod, TermsTemplateRow::ruleViolationFeeAmount),
             new MethodAmountPair("nsf_fee_method", "nsf_fee_amount", NSF_FEE_METHODS,
+                    Set.of("FLAT", "BANK_OR_FLAT"),
                     TermsTemplateRow::nsfFeeMethod, TermsTemplateRow::nsfFeeAmount),
             new MethodAmountPair("water_method", "water_flat_amount", UTILITY_METHODS,
+                    Set.of("FLAT"),
                     TermsTemplateRow::waterMethod, TermsTemplateRow::waterFlatAmount),
             new MethodAmountPair("power_method", "power_flat_amount", UTILITY_METHODS,
+                    Set.of("FLAT"),
                     TermsTemplateRow::powerMethod, TermsTemplateRow::powerFlatAmount),
             new MethodAmountPair("sewer_method", "sewer_flat_amount", UTILITY_METHODS,
+                    Set.of("FLAT"),
                     TermsTemplateRow::sewerMethod, TermsTemplateRow::sewerFlatAmount),
             new MethodAmountPair("trash_method", "trash_flat_amount", TRASH_METHODS,
-                    TermsTemplateRow::trashMethod, TermsTemplateRow::trashFlatAmount));
+                    Set.of("FLAT"),
+                    TermsTemplateRow::trashMethod, TermsTemplateRow::trashFlatAmount),
+            new MethodAmountPair("security_deposit_method", "security_deposit_amount", SECURITY_DEPOSIT_METHODS,
+                    Set.of("FLAT", "MULTIPLE_OF_RENT"),
+                    TermsTemplateRow::securityDepositMethod, TermsTemplateRow::securityDepositAmount));
 
     private final TermsTemplateRepository termsTemplateRepository;
     private final AuditService auditService;
@@ -138,6 +161,7 @@ public class TermsTemplateService {
         }
         TermsTemplateRow before = beforeOpt.get();
 
+        validateDepositCeiling(before, changes);
         reconcileMethodAmountPairs(before, changes);
 
         Optional<TermsTemplateRow> afterOpt =
@@ -160,6 +184,27 @@ public class TermsTemplateService {
         return Optional.of(after.toTermsTemplate());
     }
 
+    private static void validateDepositCeiling(TermsTemplateRow before, Map<String, Object> changes) {
+        String method = changes.containsKey("security_deposit_method")
+                ? String.valueOf(changes.get("security_deposit_method"))
+                : nameOf(before.securityDepositMethod());
+
+        if (!SecurityDepositMethod.MULTIPLE_OF_RENT.name().equals(method)) {
+            return;
+        }
+
+        BigDecimal amount = changes.containsKey("security_deposit_amount")
+                ? toAmount(changes.get("security_deposit_amount"), "security_deposit_amount")
+                : before.securityDepositAmount();
+
+        if (amount != null && amount.compareTo(SecurityDepositMethod.MAX_MONTHS) > 0) {
+            throw new IllegalArgumentException(
+                    "security_deposit_amount: " + amount + " months' rent is above the maximum of "
+                            + SecurityDepositMethod.MAX_MONTHS
+                            + ". For a flat dollar amount, set security_deposit_method to FLAT");
+        }
+    }
+
     @Transactional
     public boolean deleteTermsTemplate(UUID uuid) {
         return termsTemplateRepository.findById(uuid).map(existing -> {
@@ -180,16 +225,23 @@ public class TermsTemplateService {
     }
 
     // Globals may repeat an agreement type -- WA_Land_Lease and OR_Land_Lease -- so
-// the name is the identity.
+    // the name is the identity.
     private void requireGlobalNameIsFree(String name) {
         if (termsTemplateRepository.findGlobalByName(name).isPresent()) {
             throw new IllegalStateException("A global template named " + name + " already exists");
         }
     }
 
-    // A flat amount is only meaningful when the method is FLAT; every other method
-    // requires it to be zero. Resolve the resulting pair from `before` plus the patch,
-    // so patching either half alone still lands on a row the CHECK constraints accept.
+    /**
+     * An amount is only meaningful under the methods that carry one; every other
+     * method requires it to be zero. Resolve the resulting pair from {@code before}
+     * plus the patch, so patching either half alone still lands on a row the CHECK
+     * constraints accept.
+     *
+     * <p>Which methods carry an amount is the pair's business, not a rule shared
+     * across columns -- a deposit on MULTIPLE_OF_RENT carries a multiplier, a
+     * utility on RUBS carries nothing.
+     */
     private static void reconcileMethodAmountPairs(TermsTemplateRow before, Map<String, Object> changes) {
         for (MethodAmountPair pair : METHOD_AMOUNT_PAIRS) {
             boolean methodTouched = changes.containsKey(pair.methodColumn());
@@ -202,14 +254,16 @@ public class TermsTemplateService {
             if (methodTouched) {
                 Object raw = changes.get(pair.methodColumn());
                 method = (raw == null) ? null : raw.toString().trim().toUpperCase(Locale.ROOT);
-                if (!pair.allowedMethods().contains(method)) {
+                // The null check is not decoration: Set.of(...) throws on a null
+                // probe rather than answering false.
+                if (method == null || !pair.allowedMethods().contains(method)) {
                     throw new IllegalArgumentException(
                             pair.methodColumn() + " must be one of " + pair.allowedMethods());
                 }
                 changes.put(pair.methodColumn(), method);
             }
 
-            if (!"FLAT".equals(method) && !"BANK_OR_FLAT".equals(method) && !"PERCENT_OF_RENT".equals(method)) {
+            if (method == null || !pair.methodsCarryingAmount().contains(method)) {
                 changes.put(pair.amountColumn(), BigDecimal.ZERO);
                 continue;
             }
@@ -221,7 +275,7 @@ public class TermsTemplateService {
             if (amount == null || amount.signum() <= 0) {
                 throw new IllegalArgumentException(
                         pair.amountColumn() + " must be greater than zero when "
-                                + pair.methodColumn() + " is FLAT");
+                                + pair.methodColumn() + " is " + method);
             }
             changes.put(pair.amountColumn(), amount);
         }

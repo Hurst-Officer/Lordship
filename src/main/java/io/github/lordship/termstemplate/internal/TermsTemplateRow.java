@@ -2,6 +2,7 @@ package io.github.lordship.termstemplate.internal;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.shared.UtilityMethod;
 
@@ -51,6 +52,9 @@ public record TermsTemplateRow(
         UtilityMethod trashMethod,
         BigDecimal trashFlatAmount,
 
+        SecurityDepositMethod securityDepositMethod,
+        BigDecimal securityDepositAmount,
+
         String note,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
@@ -69,6 +73,7 @@ public record TermsTemplateRow(
                 powerMethod, powerFlatAmount,
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
+                securityDepositMethod, securityDepositAmount,
                 note, createdAt, updatedAt, createdBy, deletedAt
         );
     }
@@ -89,6 +94,7 @@ public record TermsTemplateRow(
                 null, null,                    // power method, amount
                 null, null,                    // sewer method, amount
                 null, null,                    // trash method, amount
+                null, null,         // security deposit method, amount
                 null,                          // note
                 null, null,                    // createdAt, updatedAt
                 createdBy,
@@ -110,6 +116,7 @@ public record TermsTemplateRow(
                 powerMethod, powerFlatAmount,
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
+                securityDepositMethod, securityDepositAmount,
                 note, null, null, copiedBy, null
         );
     }

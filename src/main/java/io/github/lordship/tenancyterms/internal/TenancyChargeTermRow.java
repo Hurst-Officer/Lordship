@@ -2,6 +2,7 @@ package io.github.lordship.tenancyterms.internal;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
@@ -54,6 +55,9 @@ public record TenancyChargeTermRow(
         UtilityMethod trashMethod, // NONE, FLAT, RUBS -- no SUBMETERED
         BigDecimal trashFlatAmount,
 
+        SecurityDepositMethod securityDepositMethod,
+        BigDecimal securityDepositAmount,
+
         TenancyTermStatus status,
         TenancyTermSource source,
         UUID sourceUuid,    // the instrument that produced this deal
@@ -82,6 +86,7 @@ public record TenancyChargeTermRow(
                 powerMethod, powerFlatAmount,
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
+                securityDepositMethod, securityDepositAmount,
                 status, source, sourceUuid, termsTemplate, batch,
                 cancelledAt, cancelledBy, cancelReason, deletedAt,
                 note, createdAt, createdBy
@@ -132,6 +137,8 @@ public record TenancyChargeTermRow(
                 template.sewerFlatAmount(),
                 template.trashMethod(),
                 template.trashFlatAmount(),
+                template.securityDepositMethod(),
+                template.securityDepositAmount(),
                 TenancyTermStatus.PROPOSED,
                 source,
                 null,                          // sourceUuid - no instrument until one is generated

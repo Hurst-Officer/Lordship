@@ -41,4 +41,4 @@ out/
 
 ### Project ###
 lordship-keys*.txt
-/src/main/resources/db/migration/V12__seed_wa_land_lease.sql
+/src/main/resources/db/migration/V13__seed_wa_land_lease.sql

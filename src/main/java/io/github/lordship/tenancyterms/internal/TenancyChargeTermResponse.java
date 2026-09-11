@@ -2,6 +2,7 @@ package io.github.lordship.tenancyterms.internal;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
 import io.github.lordship.tenancyterms.TenancyTermSource;
@@ -53,6 +54,9 @@ public record TenancyChargeTermResponse(
         UtilityMethod trashMethod,
         BigDecimal trashFlatAmount,
 
+        SecurityDepositMethod securityDepositMethod,
+        BigDecimal securityDepositAmount,
+
         TenancyTermStatus status,
         // Chosen, not leaked: the form needs to know whether to render read-only.
         boolean editable,
@@ -83,6 +87,7 @@ public record TenancyChargeTermResponse(
                 term.powerMethod(), term.powerFlatAmount(),
                 term.sewerMethod(), term.sewerFlatAmount(),
                 term.trashMethod(), term.trashFlatAmount(),
+                term.securityDepositMethod(), term.securityDepositAmount(),
                 term.status(), term.isEditable(),
                 term.source(), term.sourceUuid(), term.termsTemplate(), term.batch(),
                 term.cancelledAt(), term.cancelledBy(), term.cancelReason(),

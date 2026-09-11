@@ -23,7 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * HTTP behaviour and the paths that need a real database -- creates resolve an
+ * HTTP behavior and the paths that need a real database -- creates resolve an
  * acting agent from the audit context, and the seeded WA packet is the only
  * fixture big enough to prove hydration works. The rules themselves are unit
  * tested in {@code DocumentTemplateServiceTest}.
@@ -97,7 +97,7 @@ public class DocumentTemplateControllerIT extends IntegrationTest {
                 .andExpect(jsonPath("$.sections.length()").value(7))
                 .andExpect(jsonPath("$.sections[0].sectionKey").value("CHECKLIST"))
                 .andExpect(jsonPath("$.sections[6].sectionKey").value("SEPTIC"))
-                .andExpect(jsonPath("$.conditionWorklist.length()").value(9));
+                .andExpect(jsonPath("$.conditionWorklist.length()").value(10)); // changes if we add elements
     }
 
     // The list view drops children on purpose: sixty clause bodies per row is

@@ -27,6 +27,7 @@ public class TermsTemplateRepository {
             "power_method", "power_flat_amount",
             "sewer_method", "sewer_flat_amount",
             "trash_method", "trash_flat_amount",
+            "security_deposit_method", "security_deposit_amount",
             "note"
     );
 
@@ -67,6 +68,7 @@ public class TermsTemplateRepository {
                     power_method, power_flat_amount,
                     sewer_method, sewer_flat_amount,
                     trash_method, trash_flat_amount,
+                    security_deposit_method, security_deposit_amount,
                     note, created_by
                 ) VALUES (
                     :property, :copiedFrom, :name, :agreementType::agreement_type, :targetRate, :askingRate,
@@ -79,6 +81,7 @@ public class TermsTemplateRepository {
                     :powerMethod, :powerFlatAmount,
                     :sewerMethod, :sewerFlatAmount,
                     :trashMethod, :trashFlatAmount,
+                    :securityDepositMethod, :securityDepositAmount,
                     :note, :createdBy
                 ) RETURNING *
                 """)
@@ -109,6 +112,8 @@ public class TermsTemplateRepository {
                 .param("sewerFlatAmount", row.sewerFlatAmount())
                 .param("trashMethod", nameOf(row.trashMethod()))
                 .param("trashFlatAmount", row.trashFlatAmount())
+                .param("securityDepositMethod", nameOf(row.securityDepositMethod()))
+                .param("securityDepositAmount", row.securityDepositAmount())
                 .param("note", row.note())
                 .param("createdBy", row.createdBy())
                 .query(rowMapper)

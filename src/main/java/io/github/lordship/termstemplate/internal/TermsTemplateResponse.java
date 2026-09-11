@@ -2,6 +2,7 @@ package io.github.lordship.termstemplate.internal;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
 
@@ -49,6 +50,9 @@ public record TermsTemplateResponse(
         UtilityMethod trashMethod,
         BigDecimal trashFlatAmount,
 
+        SecurityDepositMethod securityDepositMethod,
+        BigDecimal securityDepositAmount,
+
         String note,
         OffsetDateTime createdAt,
         UUID createdBy,
@@ -67,6 +71,7 @@ public record TermsTemplateResponse(
                 terms.powerMethod(), terms.powerFlatAmount(),
                 terms.sewerMethod(), terms.sewerFlatAmount(),
                 terms.trashMethod(), terms.trashFlatAmount(),
+                terms.securityDepositMethod(), terms.securityDepositAmount(),
                 terms.note(), terms.createdAt(), terms.createdBy(), terms.updatedAt()
         );
     }

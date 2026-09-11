@@ -5,10 +5,7 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.lots.PermissibleAgreementType;
-import io.github.lordship.shared.AgreementType;
-import io.github.lordship.shared.FeeMethod;
-import io.github.lordship.shared.SystemPrincipal;
-import io.github.lordship.shared.UtilityMethod;
+import io.github.lordship.shared.*;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
 import io.github.lordship.tenancyterms.internal.TenancyChargeTermRepository;
@@ -669,7 +666,137 @@ public class TenancyChargeTermServiceTest {
         verify(auditService).recordDelete(eq("tenancy_charge_term"), eq(uuid), any());
     }
 
+    // ---- security deposit ----------------------------------------------------
+
+    @Test
+    void patchChargeTerm_shouldKeepTheMultiplier_whenTheDepositIsMultipleOfRent() {
+        // Arrange -- a multiplier is an amount; FLAT_ONLY would have zeroed it
+        TenancyChargeTermRow before = row(UUID.randomUUID(), TenancyTermStatus.PROPOSED);
+        when(tenancyChargeTermRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(tenancyChargeTermRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+
+        // Act
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("security_deposit_method", "MULTIPLE_OF_RENT");
+        changes.put("security_deposit_amount", new BigDecimal("1.00"));
+        tenancyChargeTermService.patchChargeTerm(before.uuid(), changes);
+
+        // Assert
+        verify(tenancyChargeTermRepository).patch(eq(before.uuid()), argThat(
+                map -> new BigDecimal("1.00")
+                        .compareTo((BigDecimal) map.get("security_deposit_amount")) == 0));
+    }
+
+    @Test
+    void patchChargeTerm_shouldZeroTheDeposit_whenTheMethodBecomesNone() {
+        // Arrange
+        TenancyChargeTermRow before =
+                rowWithDeposit(UUID.randomUUID(), SecurityDepositMethod.FLAT, new BigDecimal("500.00"));
+        when(tenancyChargeTermRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(tenancyChargeTermRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+
+        // Act
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("security_deposit_method", "NONE");
+        tenancyChargeTermService.patchChargeTerm(before.uuid(), changes);
+
+        // Assert
+        verify(tenancyChargeTermRepository).patch(eq(before.uuid()), argThat(
+                map -> BigDecimal.ZERO.equals(map.get("security_deposit_amount"))));
+    }
+
+    @Test
+    void patchChargeTerm_shouldRejectAFeeMethodOnTheDepositColumn() {
+        // Arrange -- PERCENT_OF_RENT is a real FeeMethod, but not a deposit method
+        TenancyChargeTermRow before = row(UUID.randomUUID(), TenancyTermStatus.PROPOSED);
+        when(tenancyChargeTermRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        // Act / Assert
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("security_deposit_method", "PERCENT_OF_RENT");
+        assertThrows(IllegalArgumentException.class,
+                () -> tenancyChargeTermService.patchChargeTerm(before.uuid(), changes));
+        verify(tenancyChargeTermRepository, never()).patch(any(), any());
+    }
+
+    @Test
+    void submit_shouldRefuseADepositMultiplierAboveTheCeiling() {
+        // Arrange -- 500 typed into a field labelled "amount" while the method
+        // is MULTIPLE_OF_RENT: a $325,000 deposit on a $650 lot
+        TenancyChargeTermRow before = rowWithDeposit(
+                UUID.randomUUID(), SecurityDepositMethod.MULTIPLE_OF_RENT, new BigDecimal("500.00"));
+        when(tenancyChargeTermRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        // Act / Assert -- the message has to show the resulting dollars, or the
+        // office worker cannot see what they actually typed
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> tenancyChargeTermService.submit(before.uuid()));
+        assertTrue(thrown.getMessage().contains("325000.00"), thrown.getMessage());
+        verify(tenancyChargeTermRepository, never()).updateStatus(any(), any(), any());
+    }
+
+    @Test
+    void submit_shouldAllowAMultiplierAtTheCeiling() {
+        // Arrange -- the bound is inclusive; five months' rent is legal
+        TenancyChargeTermRow before = rowWithDeposit(
+                UUID.randomUUID(), SecurityDepositMethod.MULTIPLE_OF_RENT, new BigDecimal("5"));
+        when(tenancyChargeTermRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(tenancyChargeTermRepository.updateStatus(
+                before.uuid(), TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING))
+                .thenReturn(Optional.of(before));
+
+        // Act
+        tenancyChargeTermService.submit(before.uuid());
+
+        // Assert
+        verify(tenancyChargeTermRepository).updateStatus(
+                before.uuid(), TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING);
+    }
+
+    @Test
+    void submit_shouldNotApplyTheMultiplierCeilingToAFlatDeposit() {
+        // Arrange -- $500 is an ordinary flat deposit, not 500 months' rent
+        TenancyChargeTermRow before = rowWithDeposit(
+                UUID.randomUUID(), SecurityDepositMethod.FLAT, new BigDecimal("500.00"));
+        when(tenancyChargeTermRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(tenancyChargeTermRepository.updateStatus(
+                before.uuid(), TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING))
+                .thenReturn(Optional.of(before));
+
+        // Act
+        tenancyChargeTermService.submit(before.uuid());
+
+        // Assert
+        verify(tenancyChargeTermRepository).updateStatus(
+                before.uuid(), TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING);
+    }
+
+    @Test
+    void submit_shouldRefuseAMultipleOfRentDepositWithNoAmount() {
+        // Arrange -- the floor, from the pair loop rather than the ceiling above
+        TenancyChargeTermRow before = rowWithDeposit(
+                UUID.randomUUID(), SecurityDepositMethod.MULTIPLE_OF_RENT, BigDecimal.ZERO);
+        when(tenancyChargeTermRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        // Act / Assert
+        assertThrows(IllegalArgumentException.class,
+                () -> tenancyChargeTermService.submit(before.uuid()));
+        verify(tenancyChargeTermRepository, never()).updateStatus(any(), any(), any());
+    }
+
+
     // ---- Fixtures ------------------------------------------------------------
+
+    private static TenancyChargeTermRow rowWithDeposit(
+            UUID uuid, SecurityDepositMethod method, BigDecimal amount) {
+        return row(uuid, TenancyTermStatus.PROPOSED, TenancyTermSource.LEASE, null,
+                new BigDecimal("650.00"), 2, 4,
+                FeeMethod.FLAT, new BigDecimal("65.00"),
+                FeeMethod.FLAT, new BigDecimal("35.00"),
+                UtilityMethod.NONE, BigDecimal.ZERO,
+                method, amount);
+    }
+
 
     private void arrangeCreate(Lot lot, TermsTemplate template) {
         when(tenancyService.findTenancyById(TENANCY)).thenReturn(Optional.of(tenancy()));
@@ -722,6 +849,7 @@ public class TenancyChargeTermServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
+                SecurityDepositMethod.NONE, BigDecimal.ZERO,
                 null, now, now, SystemPrincipal.AGENT_UUID, null);
     }
 
@@ -774,6 +902,28 @@ public class TenancyChargeTermServiceTest {
                 method, amount);
     }
 
+    /** The common case: no deposit. Delegates so the big constructor stays in one place. */
+    private static TenancyChargeTermRow row(
+            UUID uuid,
+            TenancyTermStatus status,
+            TenancyTermSource source,
+            UUID sourceUuid,
+            BigDecimal rate,
+            int allowedCars,
+            int carsMax,
+            FeeMethod lateFeeMethod,
+            BigDecimal lateFeeAmount,
+            FeeMethod nsfFeeMethod,
+            BigDecimal nsfFeeAmount,
+            UtilityMethod waterMethod,
+            BigDecimal waterFlatAmount) {
+
+        return row(uuid, status, source, sourceUuid, rate, allowedCars, carsMax,
+                lateFeeMethod, lateFeeAmount, nsfFeeMethod, nsfFeeAmount,
+                waterMethod, waterFlatAmount,
+                SecurityDepositMethod.NONE, BigDecimal.ZERO);
+    }
+
     /**
      * The one place the 38-component constructor is written out. Rule violation,
      * power, sewer and trash stay NONE/zero -- the tests that exercise those
@@ -792,7 +942,9 @@ public class TenancyChargeTermServiceTest {
             FeeMethod nsfFeeMethod,
             BigDecimal nsfFeeAmount,
             UtilityMethod waterMethod,
-            BigDecimal waterFlatAmount) {
+            BigDecimal waterFlatAmount,
+            SecurityDepositMethod securityDepositMethod,
+            BigDecimal securityDepositAmount) {
 
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         boolean cancelled = status == TenancyTermStatus.CANCELLED;
@@ -817,6 +969,7 @@ public class TenancyChargeTermServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,      // power
                 UtilityMethod.NONE, BigDecimal.ZERO,      // sewer
                 UtilityMethod.NONE, BigDecimal.ZERO,      // trash
+                securityDepositMethod, securityDepositAmount, // security deposit
                 status,
                 source,
                 sourceUuid,

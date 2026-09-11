@@ -2,10 +2,7 @@ package io.github.lordship.termstemplate;
 
 import io.github.lordship.audit.AuditContext;
 import io.github.lordship.audit.AuditService;
-import io.github.lordship.shared.AgreementType;
-import io.github.lordship.shared.FeeMethod;
-import io.github.lordship.shared.SystemPrincipal;
-import io.github.lordship.shared.UtilityMethod;
+import io.github.lordship.shared.*;
 import io.github.lordship.termstemplate.internal.TermsTemplateRepository;
 import io.github.lordship.termstemplate.internal.TermsTemplateRow;
 import org.junit.jupiter.api.Test;
@@ -536,6 +533,7 @@ public class TermsTemplateServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
+                SecurityDepositMethod.NONE, BigDecimal.ZERO,
                 null, now, now, SystemPrincipal.AGENT_UUID, null);
     }
 
@@ -552,6 +550,7 @@ public class TermsTemplateServiceTest {
                 row.powerMethod(), row.powerFlatAmount(),
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
+                row.securityDepositMethod(), row.securityDepositAmount(),
                 row.note(), row.createdAt(), updatedAt, row.createdBy(), row.deletedAt());
     }
 
@@ -568,6 +567,149 @@ public class TermsTemplateServiceTest {
                 row.powerMethod(), row.powerFlatAmount(),
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
+                row.securityDepositMethod(), row.securityDepositAmount(),
                 row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
+    }
+
+    private static TermsTemplateRow withSecurityDeposit(
+            TermsTemplateRow row, SecurityDepositMethod method, BigDecimal amount) {
+        return new TermsTemplateRow(
+                row.uuid(), row.property(), row.copiedFrom(), row.name(), row.agreementType(),
+                row.targetRate(), row.askingRate(),
+                row.carFee(), row.allowedCars(), row.carsMax(), row.petFee(), row.allowedPets(),
+                row.paymentDueDay(), row.gracePeriodDays(),
+                row.ruleViolationFeeMethod(), row.ruleViolationFeeAmount(),
+                row.nsfFeeMethod(), row.nsfFeeAmount(),
+                row.lateFeeMethod(), row.lateFeeAmount(),
+                row.waterMethod(), row.waterFlatAmount(),
+                row.powerMethod(), row.powerFlatAmount(),
+                row.sewerMethod(), row.sewerFlatAmount(),
+                row.trashMethod(), row.trashFlatAmount(),
+                method, amount,
+                row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
+    }
+
+    // ── Security deposit ─────────────────────────────────────────────────────
+
+    @Test
+    void patchTermsTemplate_shouldKeepTheMultiplier_whenMethodIsMultipleOfRent() {
+        // Arrange -- a multiplier is an amount; it must survive reconciliation
+        TermsTemplateRow before = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(termsTemplateRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+
+        // Act
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("security_deposit_method", "MULTIPLE_OF_RENT");
+        changes.put("security_deposit_amount", new BigDecimal("1.00"));
+        termsTemplateService.patchTermsTemplate(before.uuid(), changes);
+
+        // Assert -- zeroing this would fail the amount-matches-method CHECK
+        verify(termsTemplateRepository).patch(eq(before.uuid()), argThat(
+                map -> new BigDecimal("1.00")
+                        .compareTo((BigDecimal) map.get("security_deposit_amount")) == 0));
+    }
+
+    @Test
+    void patchTermsTemplate_shouldZeroTheDeposit_whenMethodBecomesNone() {
+        // Arrange -- a land lease that stops taking deposits
+        TermsTemplateRow before = withSecurityDeposit(
+                template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND),
+                SecurityDepositMethod.FLAT, new BigDecimal("500.00"));
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(termsTemplateRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+
+        // Act
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("security_deposit_method", "NONE");
+        termsTemplateService.patchTermsTemplate(before.uuid(), changes);
+
+        // Assert
+        verify(termsTemplateRepository).patch(eq(before.uuid()), argThat(
+                map -> BigDecimal.ZERO.equals(map.get("security_deposit_amount"))));
+    }
+
+    @Test
+    void patchTermsTemplate_shouldKeepTheExistingAmount_whenOnlyTheDepositMethodIsPatched() {
+        // Arrange -- before already has a FLAT deposit of 500
+        TermsTemplateRow before = withSecurityDeposit(
+                template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND),
+                SecurityDepositMethod.FLAT, new BigDecimal("500.00"));
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(termsTemplateRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+
+        // Act
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("security_deposit_method", "FLAT");
+        termsTemplateService.patchTermsTemplate(before.uuid(), changes);
+
+        // Assert
+        verify(termsTemplateRepository).patch(eq(before.uuid()), argThat(
+                map -> new BigDecimal("500.00")
+                        .compareTo((BigDecimal) map.get("security_deposit_amount")) == 0));
+    }
+
+    @Test
+    void patchTermsTemplate_shouldThrow_whenMultipleOfRentIsGivenZero() {
+        // Arrange
+        TermsTemplateRow before = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        // Act / Assert
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("security_deposit_method", "MULTIPLE_OF_RENT");
+        changes.put("security_deposit_amount", BigDecimal.ZERO);
+        assertThrows(IllegalArgumentException.class,
+                () -> termsTemplateService.patchTermsTemplate(before.uuid(), changes));
+        verify(termsTemplateRepository, never()).patch(any(), any());
+    }
+
+    @Test
+    void patchTermsTemplate_shouldThrow_whenDepositIsGivenAFeeMethod() {
+        // Arrange -- PERCENT_OF_RENT is a real FeeMethod, but not a deposit method
+        TermsTemplateRow before = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        // Act / Assert
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("security_deposit_method", "PERCENT_OF_RENT");
+        assertThrows(IllegalArgumentException.class,
+                () -> termsTemplateService.patchTermsTemplate(before.uuid(), changes));
+        verify(termsTemplateRepository, never()).patch(any(), any());
+    }
+
+    @Test
+    void patchTermsTemplate_shouldThrow_whenMethodIsExplicitlyNull() {
+        // Arrange -- Set.of(...).contains(null) throws, so this must be caught first
+        TermsTemplateRow before = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        // Act / Assert
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("security_deposit_method", null);
+        assertThrows(IllegalArgumentException.class,
+                () -> termsTemplateService.patchTermsTemplate(before.uuid(), changes));
+        verify(termsTemplateRepository, never()).patch(any(), any());
+    }
+
+    @Test
+    void copyTemplateToProperty_shouldCarryTheDepositTerms() {
+        // Arrange -- residential asks one month's rent; the copy must inherit it
+        UUID property = UUID.randomUUID();
+        TermsTemplateRow global = withSecurityDeposit(
+                template(UUID.randomUUID(), "Standard Residential Terms", AgreementType.RESIDENTIAL),
+                SecurityDepositMethod.MULTIPLE_OF_RENT, new BigDecimal("1.00"));
+        when(termsTemplateRepository.findById(global.uuid())).thenReturn(Optional.of(global));
+        when(termsTemplateRepository.findByPropertyAndAgreementType(property, AgreementType.RESIDENTIAL))
+                .thenReturn(Optional.empty());
+        when(termsTemplateRepository.saveCopy(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Act
+        termsTemplateService.copyTemplateToProperty(global.uuid(), property);
+
+        // Assert
+        verify(termsTemplateRepository).saveCopy(argThat(row ->
+                row.securityDepositMethod() == SecurityDepositMethod.MULTIPLE_OF_RENT
+                        && new BigDecimal("1.00").compareTo(row.securityDepositAmount()) == 0));
     }
 }

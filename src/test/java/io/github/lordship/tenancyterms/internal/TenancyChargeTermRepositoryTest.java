@@ -3,11 +3,9 @@ package io.github.lordship.tenancyterms.internal;
 import io.github.lordship.IntegrationTest;
 import io.github.lordship.lots.internal.LotRow;
 import io.github.lordship.properties.internal.PropertyRow;
-import io.github.lordship.shared.AgreementType;
-import io.github.lordship.shared.FeeMethod;
-import io.github.lordship.shared.SystemPrincipal;
-import io.github.lordship.shared.UtilityMethod;
+import io.github.lordship.shared.*;
 import io.github.lordship.tenancy.internal.TenancyRow;
+import io.github.lordship.tenancyterms.ChargeTermConfiguration;
 import io.github.lordship.tenancyterms.TenancyTermSource;
 import io.github.lordship.tenancyterms.TenancyTermStatus;
 import io.github.lordship.termstemplate.TermsTemplate;
@@ -410,6 +408,63 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
         assertThrows(DataIntegrityViolationException.class, () -> tenancyChargeTermRepository.attachSource(saved.uuid(), foreignInstrument));
     }
 
+    // ---- configurations in force ---------------------------------------------
+
+    @Test
+    void findConfigurationsInForceByProperty_shouldReturnEveryBranchableMethod() {
+        // Arrange -- the query filters on CURRENT_DATE, so the fixture is relative
+        activeTermAt(LocalDate.now().minusMonths(1));
+
+        // Act
+        List<ChargeTermConfiguration> configurations =
+                tenancyChargeTermRepository.findConfigurationsInForceByProperty(property);
+
+        // Assert -- a method missing here reads as "unset" to DocumentAuditService,
+        // which then passes a park whose lease is short a paragraph
+        assertEquals(1, configurations.size());
+        ChargeTermConfiguration configuration = configurations.get(0);
+        assertEquals("LAND", configuration.agreementType());
+        assertEquals("FLAT", configuration.lateFeeMethod());
+        assertEquals("NONE", configuration.waterMethod());
+        assertEquals("NONE", configuration.securityDepositMethod());
+        assertEquals(1, configuration.tenancyCount());
+    }
+
+    @Test
+    void findConfigurationsInForceByProperty_shouldSplitOnTheDepositMethod() {
+        // Arrange -- two tenancies at one park, identical but for the deposit
+        activeTermAt(LocalDate.now().minusMonths(1));
+
+        LotRow secondLot = testData.insertLot(property, "2");
+        UUID secondTenancy = testData.insertTenancy(secondLot.uuid()).uuid();
+
+        TenancyChargeTermRow deposited = tenancyChargeTermRepository.save(
+                TenancyChargeTermRow.fromTemplate(
+                        secondTenancy, template, new BigDecimal("650.00"),
+                        LocalDate.now().minusMonths(1),
+                        TenancyTermSource.MIGRATION, null, SystemPrincipal.AGENT_UUID));
+
+        tenancyChargeTermRepository.patch(deposited.uuid(), Map.of(
+                "security_deposit_method", "MULTIPLE_OF_RENT",
+                "security_deposit_amount", new BigDecimal("1.00")));
+        tenancyChargeTermRepository.updateStatus(
+                deposited.uuid(), TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING).orElseThrow();
+        tenancyChargeTermRepository.updateStatus(
+                deposited.uuid(), TenancyTermStatus.PENDING, TenancyTermStatus.ACTIVE).orElseThrow();
+
+        // Act
+        List<ChargeTermConfiguration> configurations =
+                tenancyChargeTermRepository.findConfigurationsInForceByProperty(property);
+
+        // Assert -- two rows rather than one collapsed row: the deposit method is
+        // part of what makes a configuration distinct. This is the GROUP BY test.
+        assertEquals(2, configurations.size());
+        assertTrue(configurations.stream()
+                .anyMatch(c -> "MULTIPLE_OF_RENT".equals(c.securityDepositMethod())));
+        assertTrue(configurations.stream()
+                .anyMatch(c -> "NONE".equals(c.securityDepositMethod())));
+    }
+
     // ---- Fixtures ------------------------------------------------------------
 
     /**
@@ -491,6 +546,7 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
                 UtilityMethod.RUBS, new BigDecimal("302.00"),
                 UtilityMethod.SUBMETERED, new BigDecimal("303.00"),
                 UtilityMethod.RUBS, new BigDecimal("304.00"),
+                SecurityDepositMethod.FLAT, new BigDecimal("101.00"),
                 TenancyTermStatus.PROPOSED,
                 TenancyTermSource.CORRECTION,
                 null,

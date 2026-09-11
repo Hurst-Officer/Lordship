@@ -2,6 +2,7 @@ package io.github.lordship.tenancyterms;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 
 import java.math.BigDecimal;
@@ -47,6 +48,9 @@ public record TenancyChargeTerm(
 
         UtilityMethod trashMethod, // NONE, FLAT, RUBS -- no SUBMETERED
         BigDecimal trashFlatAmount,
+
+        SecurityDepositMethod securityDepositMethod,
+        BigDecimal securityDepositAmount,
 
         TenancyTermStatus status,
         TenancyTermSource source,

@@ -45,6 +45,8 @@ public class TermsTemplateController {
             Map.entry("sewerMethod", "sewer_method"),
             Map.entry("sewerFlatAmount", "sewer_flat_amount"),
             Map.entry("trashMethod", "trash_method"),
+            Map.entry("securityDepositMethod", "security_deposit_method"),
+            Map.entry("securityDepositAmount", "security_deposit_amount"),
             Map.entry("trashFlatAmount", "trash_flat_amount"),
             Map.entry("note", "note")
     );
@@ -57,7 +59,7 @@ public class TermsTemplateController {
 
     public record CreateGlobalTemplateRequest(
             @NotBlank String name,
-            @NotNull AgreementType agreementType) {}
+            @NotNull AgreementType agreementType) { }
 
     public record CopyTemplateRequest(@NotNull UUID propertyId) {}
 
