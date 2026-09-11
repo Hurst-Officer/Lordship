@@ -2,6 +2,7 @@ package io.github.lordship.termstemplate;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 
 import java.math.BigDecimal;
@@ -48,6 +49,9 @@ public record TermsTemplate(
 
         UtilityMethod trashMethod,
         BigDecimal trashFlatAmount,
+
+        SecurityDepositMethod securityDepositMethod,
+        BigDecimal securityDepositAmount,
 
         String note,
         OffsetDateTime createdAt,

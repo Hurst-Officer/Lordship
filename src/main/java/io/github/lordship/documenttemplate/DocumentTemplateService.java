@@ -109,6 +109,7 @@ public class DocumentTemplateService {
         put(values, DocumentToken.POWER_METHOD, term.powerMethod());
         put(values, DocumentToken.SEWER_METHOD, term.sewerMethod());
         put(values, DocumentToken.TRASH_METHOD, term.trashMethod());
+        put(values, DocumentToken.SECURITY_DEPOSIT_METHOD, term.securityDepositMethod());
         put(values, DocumentToken.AGREEMENT_TYPE, term.agreementType());
         return values;
     }

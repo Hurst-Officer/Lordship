@@ -46,6 +46,8 @@ public class TenancyChargeTermController {
             Map.entry("sewerFlatAmount", "sewer_flat_amount"),
             Map.entry("trashMethod", "trash_method"),
             Map.entry("trashFlatAmount", "trash_flat_amount"),
+            Map.entry("securityDepositMethod", "security_deposit_method"),
+            Map.entry("securityDepositAmount", "security_deposit_amount"),
             Map.entry("note", "note"));
 
     private final TenancyChargeTermService tenancyChargeTermService;

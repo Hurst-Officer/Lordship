@@ -8,6 +8,7 @@ import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -31,6 +33,8 @@ import java.util.function.Function;
 
 @Service
 public class TenancyChargeTermService {
+
+    private static final BigDecimal MAX_DEPOSIT_MONTHS = new BigDecimal("5");
 
     private static final Set<String> LATE_FEE_METHODS = Set.of(
             FeeMethod.NONE.name(), FeeMethod.FLAT.name(), FeeMethod.PERCENT_OF_RENT.name());
@@ -49,11 +53,22 @@ public class TenancyChargeTermService {
     private static final Set<String> TRASH_METHODS = Set.of(
             UtilityMethod.NONE.name(), UtilityMethod.FLAT.name(), UtilityMethod.RUBS.name());
 
+    private static final Set<String> SECURITY_DEPOSIT_METHODS = Set.of(
+            SecurityDepositMethod.NONE.name(), SecurityDepositMethod.FLAT.name(),
+            SecurityDepositMethod.MULTIPLE_OF_RENT.name());
+
     private static final Set<String> FLAT_ONLY = Set.of(FeeMethod.FLAT.name());
 
-    // Fees and utilities are opposites. For a fee, only NONE means a zero
-    // amount. For a utility, only FLAT carries one -- RUBS and SUBMETERED are
-    // computed from real usage, so a flat amount alongside them is a mistake.
+    /**
+     * A method column and the amount column it governs.
+     *
+     * <p>Three different shapes of rule, which is why the amount-bearing set is
+     * per pair rather than shared. For a fee, only NONE means a zero amount. For
+     * a utility, only FLAT carries one -- RUBS and SUBMETERED are computed from
+     * real usage, so a flat amount alongside them is a mistake. For the deposit,
+     * both paying methods carry a figure, but they are not the same KIND of
+     * figure: FLAT holds dollars and MULTIPLE_OF_RENT holds a multiplier.
+     */
     private record MethodAmountPair(
             String methodColumn,
             String amountColumn,
@@ -91,7 +106,15 @@ public class TenancyChargeTermService {
 
             new MethodAmountPair("trash_method", "trash_flat_amount",
                     TRASH_METHODS, FLAT_ONLY,
-                    TenancyChargeTermRow::trashMethod, TenancyChargeTermRow::trashFlatAmount));
+                    TenancyChargeTermRow::trashMethod, TenancyChargeTermRow::trashFlatAmount),
+
+            // Not FLAT_ONLY: MULTIPLE_OF_RENT carries a multiplier, and zeroing it
+            // here would fail term_deposit_amount_matches_method at submission.
+            new MethodAmountPair("security_deposit_method", "security_deposit_amount",
+                    SECURITY_DEPOSIT_METHODS,
+                    Set.of(SecurityDepositMethod.FLAT.name(),
+                            SecurityDepositMethod.MULTIPLE_OF_RENT.name()),
+                    TenancyChargeTermRow::securityDepositMethod, TenancyChargeTermRow::securityDepositAmount));
 
     private final TenancyChargeTermRepository tenancyChargeTermRepository;
     private final TenancyService tenancyService;
@@ -405,6 +428,15 @@ public class TenancyChargeTermService {
                     + " on this lot or on the property's template");
         }
 
+        if (row.securityDepositMethod() == SecurityDepositMethod.MULTIPLE_OF_RENT
+                && row.securityDepositAmount().compareTo(MAX_DEPOSIT_MONTHS) > 0) {
+            problems.add("security_deposit_amount: " + row.securityDepositAmount()
+                    + " is a multiplier, not dollars -- at a rate of " + row.rate()
+                    + " that is a deposit of "
+                    + row.rate().multiply(row.securityDepositAmount()).setScale(2, RoundingMode.HALF_UP)
+                    + ". The most months' rent allowed is " + MAX_DEPOSIT_MONTHS);
+        }
+
         // term_cars_max_at_least_allowed
         if (row.carsMax() < row.allowedCars()) {
             problems.add("carsMax: cannot be lower than allowedCars ("
@@ -415,7 +447,7 @@ public class TenancyChargeTermService {
             String method = nameOf(pair.currentMethod().apply(row));
             BigDecimal amount = pair.currentAmount().apply(row);
 
-            if (pair.amountBearingMethods().contains(method)) {
+            if (method != null && pair.amountBearingMethods().contains(method)) {
                 if (amount.signum() <= 0) {
                     problems.add(pair.amountColumn() + ": must be greater than zero when "
                             + pair.methodColumn() + " is " + method);
@@ -455,14 +487,16 @@ public class TenancyChargeTermService {
             if (methodTouched) {
                 Object raw = changes.get(pair.methodColumn());
                 method = (raw == null) ? null : raw.toString().trim().toUpperCase(Locale.ROOT);
-                if (!pair.allowedMethods().contains(method)) {
+                // The null check is not decoration: Set.of(...) throws on a null
+                // probe rather than answering false.
+                if (method == null || !pair.allowedMethods().contains(method)) {
                     throw new IllegalArgumentException(
                             pair.methodColumn() + " must be one of " + pair.allowedMethods());
                 }
                 changes.put(pair.methodColumn(), method);
             }
 
-            if (!pair.amountBearingMethods().contains(method)) {
+            if (method == null || !pair.amountBearingMethods().contains(method)) {
                 changes.put(pair.amountColumn(), BigDecimal.ZERO);
                 continue;
             }

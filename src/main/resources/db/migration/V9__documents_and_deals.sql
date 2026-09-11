@@ -376,6 +376,11 @@ CREATE TABLE tenancy_charge_term (
                                          CONSTRAINT charge_term_trash_method_must_be_known CHECK (trash_method IN ('NONE','FLAT','RUBS')),
                                      trash_flat_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_trash_amount_must_not_be_negative CHECK (trash_flat_amount >= 0),
 
+                                     security_deposit_method   TEXT NOT NULL
+                                         CONSTRAINT charge_term_security_deposit_method_must_be_known CHECK(security_deposit_method IN ('NONE', 'FLAT', 'MULTIPLE_OF_RENT')),
+                                     security_deposit_amount   NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_security_deposit_amount_must_not_be_negative CHECK (security_deposit_amount >= 0),
+                                        -- note: security_deposit_amount can be a flat amount OR a multiple
+
                                      status            TEXT NOT NULL DEFAULT 'PROPOSED'
                                          CONSTRAINT charge_term_status_must_be_known CHECK (status IN ('PROPOSED','PENDING','ACTIVE','CANCELLED')),
     -- PROPOSED  - editable, filled in incrementally
@@ -447,6 +452,11 @@ CREATE TABLE tenancy_charge_term (
                                          status = 'PROPOSED' OR
                                          CASE WHEN trash_method = 'FLAT' THEN trash_flat_amount > 0
                                               ELSE trash_flat_amount = 0 END
+                                         ),
+                                     CONSTRAINT term_deposit_amount_matches_method CHECK (
+                                         status = 'PROPOSED' OR
+                                         CASE WHEN security_deposit_method IN ('FLAT', 'MULTIPLE_OF_RENT') THEN security_deposit_amount > 0
+                                              ELSE security_deposit_amount = 0 END
                                          ),
 
                                      CONSTRAINT term_in_force_needs_paper CHECK (

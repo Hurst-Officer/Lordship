@@ -132,6 +132,20 @@ public enum DocumentToken {
             "Trash charge, when the method is FLAT",
             "term.trash_method", Set.of("FLAT")),
 
+    SECURITY_DEPOSIT_METHOD("term.security_deposit_method", Source.CHARGE_TERM, Format.ENUM,
+            "NONE / FLAT / MULTIPLE_OF_RENT -- selects which deposit clause prints",
+            Set.of("NONE", "FLAT", "MULTIPLE_OF_RENT")),
+
+    // Resolved, not read: the column holds dollars under FLAT and a multiplier
+    // under MULTIPLE_OF_RENT, so printing it raw states a $1.00 deposit on a
+    // one-month-rent deal. This is the only deposit figure a clause may print.
+    SECURITY_DEPOSIT("term.security_deposit", Source.COMPUTED, Format.MONEY,
+            "The deposit in dollars -- the flat amount, or the multiple times the rate",
+            "term.security_deposit_method", Set.of("FLAT", "MULTIPLE_OF_RENT")),
+    SECURITY_DEPOSIT_IN_WORDS("term.security_deposit_in_words", Source.COMPUTED, Format.MONEY_WORDS,
+            "The deposit spelled out",
+            "term.security_deposit_method", Set.of("FLAT", "MULTIPLE_OF_RENT")),
+
     CHARGED_UTILITIES("term.charged_utilities", Source.COMPUTED, Format.LIST,
             "The utilities this tenant is charged for, derived from the four methods"),
 
@@ -231,7 +245,7 @@ public enum DocumentToken {
     // ---- landlord.* : the global_settings singleton --------------------------
     // Two address tokens, one column behind them for now: both resolve to the
     // main office. They are separate tokens because they are separate facts --
-    // where legal process is served, and where cheques go -- and a lockbox or a
+    // where legal process is served, and where checks go -- and a lockbox or a
     // payment processor pulls them apart the moment one is used. Splitting them
     // now means that day costs a column and a resolver line rather than
     // re-authoring every lease.
@@ -262,7 +276,7 @@ public enum DocumentToken {
     public enum Format {
         TEXT,
         MONEY,          // $725.00
-        MONEY_WORDS,    // seven hundred twenty five dollars
+        MONEY_WORDS,    // seven hundred twenty-five dollars
         INTEGER,        // 2
         INTEGER_WORDS,  // two
         ORDINAL,        // 1st

@@ -3,10 +3,7 @@ package io.github.lordship.lots;
 import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.internal.*;
-import io.github.lordship.shared.AgreementType;
-import io.github.lordship.shared.FeeMethod;
-import io.github.lordship.shared.SystemPrincipal;
-import io.github.lordship.shared.UtilityMethod;
+import io.github.lordship.shared.*;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.termstemplate.TermsTemplateService;
 import org.junit.jupiter.api.Test;
@@ -596,6 +593,7 @@ public class LotServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
+                SecurityDepositMethod.NONE, BigDecimal.ZERO,
                 null, now, now, SystemPrincipal.AGENT_UUID, null);
     }
 }

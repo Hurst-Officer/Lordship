@@ -32,6 +32,7 @@ public class TenancyChargeTermRepository {
             "power_method", "power_flat_amount",
             "sewer_method", "sewer_flat_amount",
             "trash_method", "trash_flat_amount",
+            "security_deposit_method", "security_deposit_amount",
             "note"
     );
 
@@ -67,9 +68,10 @@ public class TenancyChargeTermRepository {
             SELECT CAST(agreement_type AS text) AS agreement_type,
                    late_fee_method, nsf_fee_method, rule_violation_fee_method,
                    water_method, power_method, sewer_method, trash_method,
+                   security_deposit_method,
                    COUNT(*)::int AS tenancy_count
               FROM in_force
-             GROUP BY 1, 2, 3, 4, 5, 6, 7, 8
+             GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
              ORDER BY tenancy_count DESC
             """)
                 .param("propertyId", propertyId)
@@ -92,6 +94,7 @@ public class TenancyChargeTermRepository {
                     power_method, power_flat_amount,
                     sewer_method, sewer_flat_amount,
                     trash_method, trash_flat_amount,
+                    security_deposit_method, security_deposit_amount,
                     status, source, source_uuid, terms_template, batch,
                     note, created_by
                 ) VALUES (
@@ -105,6 +108,7 @@ public class TenancyChargeTermRepository {
                     :powerMethod, :powerFlatAmount,
                     :sewerMethod, :sewerFlatAmount,
                     :trashMethod, :trashFlatAmount,
+                    :securityDepositMethod, :securityDepositAmount,
                     :status, :source, :sourceUuid, :termsTemplate, :batch,
                     :note, :createdBy
                 ) RETURNING *
@@ -134,6 +138,8 @@ public class TenancyChargeTermRepository {
                 .param("sewerFlatAmount", row.sewerFlatAmount())
                 .param("trashMethod", nameOf(row.trashMethod()))
                 .param("trashFlatAmount", row.trashFlatAmount())
+                .param("securityDepositMethod", nameOf(row.securityDepositMethod()))
+                .param("securityDepositAmount", row.securityDepositAmount())
                 .param("status", nameOf(row.status()))
                 .param("source", nameOf(row.source()))
                 .param("sourceUuid", row.sourceUuid())

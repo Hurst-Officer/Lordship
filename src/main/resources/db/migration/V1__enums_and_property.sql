@@ -21,10 +21,9 @@ CREATE TYPE instrument_type AS ENUM (
 -- ── Global settings ──────────────────────────────────────────────────────────
 
 CREATE TABLE global_settings ( -- singleton
-                                 id         INT PRIMARY KEY DEFAULT 1 CONSTRAINT global_settings_must_be_a_singleton CHECK (id = 1),
-                                 compliance_email TEXT,
-
-                                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                         id         INT PRIMARY KEY DEFAULT 1 CONSTRAINT global_settings_must_be_a_singleton CHECK (id = 1),
+                         compliance_email TEXT,
+                         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 INSERT INTO global_settings (id) VALUES (1);
@@ -94,6 +93,10 @@ CREATE TABLE terms_template ( -- note when the property is NULL this is a global
                                 CONSTRAINT terms_template_trash_method_must_be_known CHECK (trash_method IN ('NONE','FLAT','RUBS')),
                             trash_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_trash_amount_must_not_be_negative CHECK (trash_flat_amount >= 0),
 
+                            security_deposit_method   TEXT NOT NULL DEFAULT 'NONE'
+                                CONSTRAINT terms_template_security_deposit_method_must_be_known CHECK(security_deposit_method IN ('NONE', 'FLAT', 'MULTIPLE_OF_RENT')),
+                            security_deposit_amount   NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_security_deposit_amount_must_not_be_negative CHECK (security_deposit_amount >= 0),
+                                -- note: security_deposit_amount can hold a percentage or a flat amount
                             note       TEXT,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), -- note: most other tables do not get this row
@@ -124,6 +127,11 @@ CREATE TABLE terms_template ( -- note when the property is NULL this is a global
                                 CASE WHEN nsf_fee_method IN ('FLAT','BANK_OR_FLAT')
                                          THEN nsf_fee_amount > 0
                                      ELSE nsf_fee_amount = 0 END
+                                ),
+                            CONSTRAINT terms_template_deposit_amount_must_match_method CHECK (
+                                CASE WHEN security_deposit_method IN ('FLAT', 'MULTIPLE_OF_RENT')
+                                         THEN security_deposit_amount > 0
+                                     ELSE security_deposit_amount = 0 END
                                 ),
                             CONSTRAINT terms_template_violation_amount_must_match_method CHECK (
                                 CASE WHEN rule_violation_fee_method = 'FLAT'
