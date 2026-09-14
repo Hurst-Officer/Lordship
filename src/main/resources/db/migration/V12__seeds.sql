@@ -127,6 +127,13 @@ INSERT INTO permission (uuid, permission_name) VALUES
     (uuidv7(), 'tenancy_term:activate'),
     (uuidv7(), 'tenancy_term:cancel'),
 
+    -- security deposits
+    (uuidv7(), 'security_deposit:create_migrations'),
+    (uuidv7(), 'security_deposit:view'),
+    (uuidv7(), 'security_deposit:create'),
+    (uuidv7(), 'security_deposit:edit'),
+    (uuidv7(), 'security_deposit:delete'),
+
     -- property document
     (uuidv7(), 'property_document:view'),
     (uuidv7(), 'property_document:assign'),
@@ -217,7 +224,10 @@ AND p.permission_name IN (
     'property_document:view',
     'homes:view',
     'homes:create',
-    'homes:edit'
+    'homes:edit',
+    'security_deposit:edit',
+    'security_deposit:view',
+    'security_deposit:create'
 );
 
 -- Property Manager
@@ -253,5 +263,6 @@ AND p.permission_name IN (
     'meters:view',
     'meterbills:view',
     'meterbills:edit',
-    'homes:view'
+    'homes:view',
+    'security_deposit:view'
 );

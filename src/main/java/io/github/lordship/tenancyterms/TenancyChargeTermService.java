@@ -22,13 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
+import java.time.format.DateTimeParseException;
+import java.util.*;
 import java.util.function.Function;
 
 @Service
@@ -237,7 +232,7 @@ public class TenancyChargeTermService {
             throw new IllegalArgumentException(
                     "This term is " + before.status() + " and can no longer be edited; create a new term instead");
         }
-
+        changes = coerce(changes);
         reconcileMethodAmountPairs(before, changes);
 
         Optional<TenancyChargeTermRow> afterOpt = tenancyChargeTermRepository.patch(uuid, changes);
@@ -508,6 +503,30 @@ public class TenancyChargeTermService {
                 }
                 changes.put(pair.amountColumn(), amount == null ? BigDecimal.ZERO : amount);
             }
+        }
+    }
+
+    private static Map<String, Object> coerce(Map<String, Object> changes) {
+        Map<String, Object> coerced = new LinkedHashMap<>(changes);
+        coerced.replaceAll((column, value) -> switch (column) {
+            case "valid_at" -> toDate(column, value);
+            default -> value;
+        });
+        return coerced;
+    }
+
+    private static Object toDate(String column, Object raw) {
+        if (raw == null || raw instanceof LocalDate) {
+            return raw;
+        }
+        String text = String.valueOf(raw).trim();
+        if (text.isEmpty()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(text);
+        } catch (DateTimeParseException e) {
+            throw new IllegalArgumentException(column + " must be a date as YYYY-MM-DD, not \"" + text + "\"");
         }
     }
 

@@ -6,6 +6,7 @@ public record PropertyCreateRequest(
         @NotBlank
         String propertyName,
 
+        @NotBlank
         String propertyAddress
 ) {
 }
