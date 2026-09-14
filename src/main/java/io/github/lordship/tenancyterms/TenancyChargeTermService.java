@@ -507,6 +507,7 @@ public class TenancyChargeTermService {
     }
 
     private static Map<String, Object> coerce(Map<String, Object> changes) {
+
         Map<String, Object> coerced = new LinkedHashMap<>(changes);
         coerced.replaceAll((column, value) -> switch (column) {
             case "valid_at" -> toDate(column, value);

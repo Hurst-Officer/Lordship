@@ -105,6 +105,31 @@ CREATE TABLE tenant (
                         FOREIGN KEY (tenancy_id) REFERENCES tenancy(uuid)
 );
 
+
+CREATE TABLE occupant (
+                          uuid       UUID PRIMARY KEY DEFAULT uuidv7(),
+                          tenancy_id UUID NOT NULL REFERENCES tenancy(uuid),
+                          person_id  UUID NOT NULL REFERENCES person(uuid),
+                          start_date DATE,
+                          end_date   DATE,
+                          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                          deleted_at TIMESTAMPTZ
+);
+
+
+-- A person is on a tenancy once at a time. Someone who moves out and later moves
+-- back gets a second row: the first one carries an end_date, so it is out of the
+-- index and the return does not collide with the stay it follows.
+CREATE UNIQUE INDEX uq_occupant_active_person
+    ON occupant(tenancy_id, person_id) WHERE end_date IS NULL AND deleted_at IS NULL;
+
+-- Serves "who lives here", which is the question this table exists to answer --
+-- the tenant table answers who is on the lease, which is not the same set.
+CREATE INDEX idx_occupant_tenancy_active
+    ON occupant(tenancy_id) WHERE end_date IS NULL AND deleted_at IS NULL;
+
+CREATE INDEX idx_occupant_person ON occupant(person_id) WHERE deleted_at IS NULL;
+
 -- A person is on a tenancy once at a time. Someone who moves out and later moves
 -- back gets a second row: the first one carries an end_date, so it is out of the
 -- index and the return does not collide with the stay it follows.
