@@ -275,8 +275,10 @@ public class TenancyChargeTermServiceTest {
         // Act
         tenancyChargeTermService.patchChargeTerm(uuid, changes);
 
-        // Assert
-        assertEquals(BigDecimal.ZERO, changes.get("water_flat_amount"));
+        // Assert -- on what the repository was handed, not on the caller's map:
+        // the service copies rather than rewrites its argument
+        verify(tenancyChargeTermRepository).patch(eq(uuid), argThat(
+                map -> BigDecimal.ZERO.equals(map.get("water_flat_amount"))));
     }
 
     @Test
@@ -318,7 +320,8 @@ public class TenancyChargeTermServiceTest {
         tenancyChargeTermService.patchChargeTerm(uuid, changes);
 
         // Assert
-        assertEquals("RUBS", changes.get("water_method"));
+        verify(tenancyChargeTermRepository).patch(eq(uuid), argThat(
+                map -> "RUBS".equals(map.get("water_method"))));
     }
 
     @Test
