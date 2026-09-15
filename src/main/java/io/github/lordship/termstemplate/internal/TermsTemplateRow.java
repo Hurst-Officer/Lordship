@@ -21,6 +21,9 @@ public record TermsTemplateRow(
         BigDecimal targetRate, // where existing tenancies are steered
         BigDecimal askingRate, // what a new applicant is quoted
 
+        BigDecimal escalationPercent, // null means a single rate for the whole term
+        Integer escalationMonths,     // how often it applies; 12 is annual
+
         BigDecimal carFee,
         Integer allowedCars, // cars allowed before being charged fees
         Integer carsMax, // max number of cars permissible (even with fees)
@@ -64,6 +67,7 @@ public record TermsTemplateRow(
     public TermsTemplate toTermsTemplate() {
         return new TermsTemplate(
                 uuid, property, copiedFrom, name, agreementType, targetRate, askingRate,
+                escalationPercent, escalationMonths,
                 carFee, allowedCars, carsMax, petFee, allowedPets,
                 paymentDueDay, gracePeriodDays,
                 ruleViolationFeeMethod, ruleViolationFeeAmount,
@@ -84,6 +88,7 @@ public record TermsTemplateRow(
     public TermsTemplateRow(UUID property, String name, AgreementType agreementType, UUID createdBy) {
         this(null, property, null, name, agreementType,
                 null, null,                    // targetRate, askingRate
+                null, null,                    // escalationPercent, escalationMonths
                 null, null, null,              // carFee, allowedCars, carsMax
                 null, null,                    // petFee, allowedPets
                 null, null,                    // paymentDueDay, gracePeriodDays
@@ -107,6 +112,7 @@ public record TermsTemplateRow(
     public TermsTemplateRow copyTo(UUID targetProperty, UUID copiedBy) {
         return new TermsTemplateRow(
                 null, targetProperty, uuid, name, agreementType, targetRate, askingRate,
+                escalationPercent, escalationMonths,
                 carFee, allowedCars, carsMax, petFee, allowedPets,
                 paymentDueDay, gracePeriodDays,
                 ruleViolationFeeMethod, ruleViolationFeeAmount,

@@ -177,43 +177,101 @@ public class TenancyChargeTermService {
                                                           LocalDate validAt,
                                                           TenancyTermSource source,
                                                           UUID batch) {
-        Optional<Tenancy> tenancyOpt = tenancyService.findTenancyById(tenancy);
-        if (tenancyOpt.isEmpty()) {
+        Optional<LeaseContext> contextOpt = contextFor(tenancy, agreementType);
+        if (contextOpt.isEmpty()) {
             return Optional.empty();
         }
+        LeaseContext context = contextOpt.get();
 
-        Lot lot = lotService.findById(tenancyOpt.get().lotId())
-                .orElseThrow(() -> new IllegalStateException(
-                        "Tenancy " + tenancy + " points at a lot that no longer exists"));
+        return Optional.of(saveStep(
+                tenancy,
+                context.template(),
+                new RentStep(validAt, resolveRate(context.lot(), context.template(), source)),
+                source,
+                batch));
+    }
 
-        // Two independent gates. This one asks whether the space can host the
-        // deal at all -- a park that does RV lots still cannot put an RV
-        // agreement on a storage locker. The template lookup below asks the
-        // separate question of whether the property offers that kind of deal.
-        if (!lot.permits(agreementType)) {
-            throw new IllegalStateException(
-                    "Lot " + lot.lotNumber() + " does not permit " + agreementType + " agreements");
+    /**
+     * The schedule the office worker is shown before committing to it. Pure
+     * arithmetic against the property's template -- nothing is written here.
+     *
+     * <p>A template with no escalation yields a single step, so an ordinary land
+     * lease and a five-year commercial lease take the same path; one just has a
+     * schedule of length one.
+     *
+     * <p>termMonths comes from the lease being written, not from the template.
+     * A template states how often rent escalates, never for how long, because
+     * the term belongs to the paper.
+     */
+    public Optional<List<RentStep>> previewSchedule(UUID tenancy,
+                                                    AgreementType agreementType,
+                                                    LocalDate start,
+                                                    int termMonths,
+                                                    TenancyTermSource source) {
+        return contextFor(tenancy, agreementType).map(context -> {
+            TermsTemplate template = context.template();
+            BigDecimal base = resolveRate(context.lot(), template, source);
+
+            if (!template.hasEscalation()) {
+                return List.of(new RentStep(start, base));
+            }
+            return buildSchedule(base, template.escalationPercent(), template.escalationMonths(),
+                    termMonths, start);
+        });
+    }
+
+    /**
+     * Writes the steps the office worker confirmed, one charge term each, all
+     * sharing one batch.
+     *
+     * <p>The steps are taken as given rather than recomputed. What was on the
+     * screen is what gets written, which is also what lets a lease drafted
+     * elsewhere be entered verbatim.
+     *
+     * <p>Every step is written now, at PROPOSED, rather than materialising later:
+     * source_uuid is set when the instrument is created, so the document can only
+     * print the schedule if the rows already exist. Generating them at activation
+     * would leave the renderer computing the figures a second time, which is how
+     * the paper and the ledger come to disagree by a penny.
+     */
+    @Transactional
+    public Optional<List<TenancyChargeTerm>> createSchedule(UUID tenancy,
+                                                            AgreementType agreementType,
+                                                            List<RentStep> steps,
+                                                            TenancyTermSource source,
+                                                            UUID batch) {
+
+        UUID scheduleBatch = (batch == null) ? UUID.randomUUID() : batch;
+
+        if (steps == null || steps.isEmpty()) {
+            throw new IllegalArgumentException("A schedule needs at least one step");
         }
 
-        TermsTemplate template = termsTemplateService
-                .findForProperty(lot.propertyId(), agreementType)
-                .orElseThrow(() -> new IllegalStateException(
-                        "This property has no terms template for " + agreementType
-                                + ", so it cannot host that kind of agreement"));
+        Optional<LeaseContext> contextOpt = contextFor(tenancy, agreementType);
+        if (contextOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        TermsTemplate template = contextOpt.get().template();
 
-        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(
-                TenancyChargeTermRow.fromTemplate(
-                        tenancy,
-                        template,
-                        resolveRate(lot, template, source),
-                        validAt,
-                        source,
-                        batch,
-                        ActingAgent.resolve(auditContext)));
-
-        auditService.recordInsert("tenancy_charge_term", saved.uuid(), AuditMapper.toMap(saved));
-        return Optional.of(saved.toTenancyChargeTerm());
+        List<TenancyChargeTerm> created = new ArrayList<>();
+        for (RentStep step : steps) {
+            created.add(saveStep(tenancy, template, step, source, scheduleBatch));
+        }
+        return Optional.of(created);
     }
+
+    /** Abandons a draft schedule. In-force steps are left alone by the repository guard. */
+    @Transactional
+    public int deleteBatch(UUID batch) {
+        int deleted = 0;
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
+            if (deleteChargeTerm(row.uuid())) {
+                deleted++;
+            }
+        }
+        return deleted;
+    }
+
 
     /**
      * Edits a draft. Only PROPOSED terms are editable: once a document is out
@@ -353,7 +411,157 @@ public class TenancyChargeTermService {
         }).orElse(false);
     }
 
+    // ---- whole-schedule operations -----------------------------------------
+    // A scheduled lease moves as one. Until the instrument exists, source_uuid
+    // is null on every step, so batch is the only handle that groups them --
+    // which is why all four of these key off it rather than off the document.
+    //
+    // Each one delegates to the single-term method so the guards, the audit
+    // entries and the error messages stay identical whether a term is moved on
+    // its own or as part of a schedule.
+
+    /** PROPOSED to PENDING for the whole schedule. */
+    @Transactional
+    public List<TenancyChargeTerm> submitBatch(UUID batch) {
+        List<TenancyChargeTerm> moved = new ArrayList<>();
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
+            submit(row.uuid()).ifPresent(moved::add);
+        }
+        return moved;
+    }
+
+    /** PENDING to ACTIVE for the whole schedule, once the paper is signed. */
+    @Transactional
+    public List<TenancyChargeTerm> activateBatch(UUID batch) {
+        List<TenancyChargeTerm> moved = new ArrayList<>();
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
+            activate(row.uuid()).ifPresent(moved::add);
+        }
+        return moved;
+    }
+
+    /** Points every step at the one instrument that produced them. */
+    @Transactional
+    public List<TenancyChargeTerm> attachSourceToBatch(UUID batch, UUID sourceUuid) {
+        List<TenancyChargeTerm> attached = new ArrayList<>();
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
+            attachSource(row.uuid(), sourceUuid).ifPresent(attached::add);
+        }
+        return attached;
+    }
+
+    /**
+     * Retires the steps of a schedule that have not taken effect yet -- what a
+     * lease ending early calls for.
+     *
+     * <p>Deliberately not every step. A term whose valid_at has passed WAS in
+     * force, and cancelling it would claim otherwise: it is excluded from
+     * resolution entirely, so the rent-history disclosure and the in-force
+     * configuration query would both lose a year that really happened. Ending a
+     * tenancy is tenancy.end_date; cancelling is for a deal that was retracted.
+     */
+    @Transactional
+    public List<TenancyChargeTerm> cancelFutureInBatch(UUID batch, String cancelReason) {
+        LocalDate today = LocalDate.now();
+        List<TenancyChargeTerm> cancelled = new ArrayList<>();
+
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
+            if (row.status() == TenancyTermStatus.ACTIVE && row.validAt().isAfter(today)) {
+                cancel(row.uuid(), cancelReason).ifPresent(cancelled::add);
+            }
+        }
+        return cancelled;
+    }
+
     // ---- internals ---------------------------------------------------------
+
+    /** The lot and template a charge term for this tenancy is built from. */
+    private record LeaseContext(Lot lot, TermsTemplate template) {}
+
+    /**
+     * Resolves the two things every create needs, and applies the two gates.
+     *
+     * <p>Empty means the tenancy does not exist. The gates throw instead,
+     * because they are rule violations rather than missing records: the lot
+     * gate asks whether the space can host the deal at all -- a park that does
+     * RV lots still cannot put an RV agreement on a storage locker -- while the
+     * template lookup asks the separate question of whether the property offers
+     * that kind of deal.
+     */
+    private Optional<LeaseContext> contextFor(UUID tenancy, AgreementType agreementType) {
+        Optional<Tenancy> tenancyOpt = tenancyService.findTenancyById(tenancy);
+        if (tenancyOpt.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Lot lot = lotService.findById(tenancyOpt.get().lotId())
+                .orElseThrow(() -> new IllegalStateException(
+                        "Tenancy " + tenancy + " points at a lot that no longer exists"));
+
+        if (!lot.permits(agreementType)) {
+            throw new IllegalStateException(
+                    "Lot " + lot.lotNumber() + " does not permit " + agreementType + " agreements");
+        }
+
+        TermsTemplate template = termsTemplateService
+                .findForProperty(lot.propertyId(), agreementType)
+                .orElseThrow(() -> new IllegalStateException(
+                        "This property has no terms template for " + agreementType
+                                + ", so it cannot host that kind of agreement"));
+
+        return Optional.of(new LeaseContext(lot, template));
+    }
+
+    /** One step written as one charge term, with its audit entry. */
+    private TenancyChargeTerm saveStep(UUID tenancy,
+                                       TermsTemplate template,
+                                       RentStep step,
+                                       TenancyTermSource source,
+                                       UUID batch) {
+        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(
+                TenancyChargeTermRow.fromTemplate(
+                        tenancy,
+                        template,
+                        step.rate(),
+                        step.validAt(),
+                        source,
+                        batch,
+                        ActingAgent.resolve(auditContext)));
+
+        auditService.recordInsert("tenancy_charge_term", saved.uuid(), AuditMapper.toMap(saved));
+        return saved.toTenancyChargeTerm();
+    }
+
+    /**
+     * The dated rates a lease with an escalation clause will bill.
+     *
+     * <p>Each step compounds on the previous step's ROUNDED figure, not on the
+     * base rate raised to a power. That is how the schedule is drafted -- year
+     * three is year two's stated rent plus the percentage -- and the stated
+     * figures are what the tenant signs.
+     *
+     * <p>The loop also handles a term that is not a whole number of escalation
+     * periods: a thirty month lease escalating annually gets three steps, the
+     * last of which runs six months.
+     *
+     * <p>public and static so it can be tested as the arithmetic it is, without
+     * standing up the service.
+     */
+    public static List<RentStep> buildSchedule(BigDecimal baseRate,
+                                               BigDecimal escalationPercent,
+                                               int escalationMonths,
+                                               int termMonths,
+                                               LocalDate start) {
+        List<RentStep> steps = new ArrayList<>();
+        BigDecimal rate = baseRate.setScale(2, RoundingMode.HALF_UP);
+        BigDecimal multiplier = BigDecimal.ONE.add(escalationPercent.movePointLeft(2));
+
+        for (int month = 0; month < termMonths; month += escalationMonths) {
+            steps.add(new RentStep(start.plusMonths(month), rate));
+            rate = rate.multiply(multiplier).setScale(2, RoundingMode.HALF_UP);
+        }
+        return steps;
+    }
 
     private Optional<TenancyChargeTerm> transition(UUID uuid,
                                                    TenancyTermStatus from,

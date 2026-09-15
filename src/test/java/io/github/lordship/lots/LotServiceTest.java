@@ -583,6 +583,7 @@ public class LotServiceTest {
         return new TermsTemplate(
                 UUID.randomUUID(), UUID.randomUUID(), null, "Test Terms",
                 AgreementType.LAND, targetRate, askingRate,
+                null, null,
                 new BigDecimal("45.00"), 2, 4,
                 new BigDecimal("45.00"), 2,
                 1, 5,

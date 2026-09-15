@@ -27,6 +27,9 @@ public class TermsTemplateRowMapper implements RowMapper<TermsTemplateRow> {
                 rs.getBigDecimal("target_rate"),
                 rs.getBigDecimal("asking_rate"),
 
+                rs.getBigDecimal("escalation_percent"),
+                rs.getObject("escalation_months", Integer.class),
+
                 rs.getBigDecimal("car_fee"),
                 rs.getObject("allowed_cars", Integer.class),
                 rs.getObject("cars_max", Integer.class),
