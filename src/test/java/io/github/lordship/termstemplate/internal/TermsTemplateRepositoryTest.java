@@ -392,6 +392,8 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         return Map.ofEntries(
                 Map.entry("name", "RT Renamed"),
                 Map.entry("target_rate", new BigDecimal("321.00")),
+                Map.entry("escalation_percent", new BigDecimal("4.00")),
+                Map.entry("escalation_months", 12),
                 Map.entry("car_fee", new BigDecimal("11.00")),
                 Map.entry("allowed_cars", 3),
                 Map.entry("cars_max", 7),

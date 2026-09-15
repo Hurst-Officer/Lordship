@@ -25,6 +25,8 @@ public class TermsTemplateController {
             Map.entry("name", "name"),
             Map.entry("targetRate", "target_rate"),
             Map.entry("askingRate", "asking_rate"),
+            Map.entry("escalationPercent", "escalation_percent"),
+            Map.entry("escalationMonths", "escalation_months"),
             Map.entry("carFee", "car_fee"),
             Map.entry("allowedCars", "allowed_cars"),
             Map.entry("carsMax", "cars_max"),

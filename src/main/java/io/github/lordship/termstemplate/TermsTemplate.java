@@ -19,6 +19,9 @@ public record TermsTemplate(
         BigDecimal targetRate, // where existing tenancies are steered
         BigDecimal askingRate, // what a new applicant is quoted
 
+        BigDecimal escalationPercent, // null means a single rate for the whole term
+        Integer escalationMonths,     // how often it applies; 12 is annual
+
         BigDecimal carFee,
         int allowedCars, // cars allowed before being charged fees
         int carsMax, // max number of cars permissible (even with fees)
@@ -61,6 +64,10 @@ public record TermsTemplate(
 ) {
     public boolean isGlobalTemplate() {
         return property == null;
+    }
+
+    public boolean hasEscalation() {
+        return escalationPercent != null && escalationMonths != null;
     }
 
     public boolean isSoftDeleted() {

@@ -523,6 +523,7 @@ public class TermsTemplateServiceTest {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         return new TermsTemplateRow(
                 uuid, null, null, name, agreementType, null, null,
+                null, null,
                 new BigDecimal("45.00"), 2, 4,
                 new BigDecimal("45.00"), 2,
                 1, 7,
@@ -541,6 +542,7 @@ public class TermsTemplateServiceTest {
         return new TermsTemplateRow(
                 row.uuid(), row.property(), row.copiedFrom(), row.name(), row.agreementType(),
                 row.targetRate(), row.askingRate(),
+                row.escalationPercent(), row.escalationMonths(),
                 row.carFee(), row.allowedCars(), row.carsMax(), row.petFee(), row.allowedPets(),
                 row.paymentDueDay(), row.gracePeriodDays(),
                 row.ruleViolationFeeMethod(), row.ruleViolationFeeAmount(),
@@ -558,6 +560,7 @@ public class TermsTemplateServiceTest {
         return new TermsTemplateRow(
                 row.uuid(), row.property(), row.copiedFrom(), row.name(), row.agreementType(),
                 targetRate, row.askingRate(),
+                row.escalationPercent(), row.escalationMonths(),
                 row.carFee(), row.allowedCars(), row.carsMax(), row.petFee(), row.allowedPets(),
                 row.paymentDueDay(), row.gracePeriodDays(),
                 row.ruleViolationFeeMethod(), row.ruleViolationFeeAmount(),
@@ -576,6 +579,7 @@ public class TermsTemplateServiceTest {
         return new TermsTemplateRow(
                 row.uuid(), row.property(), row.copiedFrom(), row.name(), row.agreementType(),
                 row.targetRate(), row.askingRate(),
+                row.escalationPercent(), row.escalationMonths(),
                 row.carFee(), row.allowedCars(), row.carsMax(), row.petFee(), row.allowedPets(),
                 row.paymentDueDay(), row.gracePeriodDays(),
                 row.ruleViolationFeeMethod(), row.ruleViolationFeeAmount(),

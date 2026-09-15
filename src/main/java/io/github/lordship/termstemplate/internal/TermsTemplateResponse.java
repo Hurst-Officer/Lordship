@@ -16,8 +16,12 @@ public record TermsTemplateResponse(
         UUID property, // NOTE: A null property means this is a global template.
         String name,
         AgreementType agreementType,
+
         BigDecimal targetRate, // where existing tenancies are steered
         BigDecimal askingRate, // what a new applicant is quoted
+
+        BigDecimal escalationPercent, // null means a single rate for the whole term
+        Integer escalationMonths,     // how often it applies; 12 is annual
 
         BigDecimal carFee,
         int allowedCars,
@@ -62,6 +66,7 @@ public record TermsTemplateResponse(
         return new TermsTemplateResponse(
                 terms.uuid(), terms.property(), terms.name(), terms.agreementType(),
                 terms.targetRate(), terms.askingRate(),
+                terms.escalationPercent(), terms.escalationMonths(),
                 terms.carFee(), terms.allowedCars(), terms.carsMax(), terms.petFee(), terms.allowedPets(),
                 terms.paymentDueDay(), terms.gracePeriodDays(),
                 terms.ruleViolationFeeMethod(), terms.ruleViolationFeeAmount(),

@@ -51,93 +51,96 @@ CREATE TABLE property (
 
 
 CREATE TABLE terms_template ( -- note when the property is NULL this is a global default accessible to admins to copy towards properties
-                            uuid     UUID PRIMARY KEY DEFAULT uuidv7(),
-                            property UUID REFERENCES property(uuid), -- note only an admin can copy this to a property
-                            copied_from UUID REFERENCES terms_template(uuid), -- provenance only; may point at a retired set
-                            name     TEXT NOT NULL CONSTRAINT terms_template_name_must_not_be_blank CHECK (length(trim(name)) > 0),
-                            agreement_type agreement_type NOT NULL, -- do not patch
-                            target_rate NUMERIC(12,2) CONSTRAINT terms_template_target_rate_must_not_be_negative CHECK (target_rate >= 0), -- keep zero for global terms
-                            asking_rate NUMERIC(12,2) CONSTRAINT terms_template_asking_rate_must_not_be_negative CHECK (asking_rate >= 0),
+                                uuid     UUID PRIMARY KEY DEFAULT uuidv7(),
+                                property UUID REFERENCES property(uuid), -- note only an admin can copy this to a property
+                                copied_from UUID REFERENCES terms_template(uuid), -- provenance only; may point at a retired set
+                                name     TEXT NOT NULL CONSTRAINT terms_template_name_must_not_be_blank CHECK (length(trim(name)) > 0),
+                                agreement_type agreement_type NOT NULL, -- do not patch
+                                target_rate NUMERIC(12,2) CONSTRAINT terms_template_target_rate_must_not_be_negative CHECK (target_rate >= 0), -- keep zero for global terms
+                                asking_rate NUMERIC(12,2) CONSTRAINT terms_template_asking_rate_must_not_be_negative CHECK (asking_rate >= 0),
 
-                            car_fee           NUMERIC(12,2) NOT NULL DEFAULT 65.0 CONSTRAINT terms_template_car_fee_must_not_be_negative CHECK (car_fee >= 0),
-                            allowed_cars      INT           NOT NULL DEFAULT 2    CONSTRAINT terms_template_allowed_cars_must_not_be_negative CHECK (allowed_cars >= 0),
-                            cars_max          INT           NOT NULL DEFAULT 4    CONSTRAINT terms_template_cars_max_at_least_allowed_cars CHECK (cars_max >= allowed_cars),
-                            pet_fee           NUMERIC(12,2) NOT NULL DEFAULT 45.0 CONSTRAINT terms_template_pet_fee_must_not_be_negative CHECK (pet_fee >= 0),
-                            allowed_pets      INT           NOT NULL DEFAULT 2    CONSTRAINT terms_template_allowed_pets_must_not_be_negative CHECK (allowed_pets >= 0),
+                                escalation_percent NUMERIC(5,2),
+                                escalation_months  INT,
 
-                            payment_due_day   INT           NOT NULL DEFAULT 1    CONSTRAINT terms_template_payment_due_day_must_be_1_to_28 CHECK (payment_due_day BETWEEN 1 AND 28),
-                            grace_period_days INT           NOT NULL DEFAULT 7    CONSTRAINT terms_template_grace_period_days_not_negative CHECK (grace_period_days >= 0),
+                                car_fee           NUMERIC(12,2) NOT NULL DEFAULT 65.0 CONSTRAINT terms_template_car_fee_must_not_be_negative CHECK (car_fee >= 0),
+                                allowed_cars      INT           NOT NULL DEFAULT 2    CONSTRAINT terms_template_allowed_cars_must_not_be_negative CHECK (allowed_cars >= 0),
+                                cars_max          INT           NOT NULL DEFAULT 4    CONSTRAINT terms_template_cars_max_at_least_allowed_cars CHECK (cars_max >= allowed_cars),
+                                pet_fee           NUMERIC(12,2) NOT NULL DEFAULT 45.0 CONSTRAINT terms_template_pet_fee_must_not_be_negative CHECK (pet_fee >= 0),
+                                allowed_pets      INT           NOT NULL DEFAULT 2    CONSTRAINT terms_template_allowed_pets_must_not_be_negative CHECK (allowed_pets >= 0),
 
-                            rule_violation_fee_method TEXT NOT NULL DEFAULT 'FLAT'
-                                CONSTRAINT terms_template_violation_fee_method_must_be_known CHECK (rule_violation_fee_method IN ('NONE','FLAT')),
-                            rule_violation_fee_amount NUMERIC(12,2) NOT NULL DEFAULT 65 CONSTRAINT terms_template_violation_fee_amount_not_negative CHECK (rule_violation_fee_amount >= 0),
+                                payment_due_day   INT           NOT NULL DEFAULT 1    CONSTRAINT terms_template_payment_due_day_must_be_1_to_28 CHECK (payment_due_day BETWEEN 1 AND 28),
+                                grace_period_days INT           NOT NULL DEFAULT 7    CONSTRAINT terms_template_grace_period_days_not_negative CHECK (grace_period_days >= 0),
 
-                            nsf_fee_method    TEXT          NOT NULL DEFAULT 'FLAT'
-                                CONSTRAINT terms_template_nsf_fee_method_must_be_known CHECK (nsf_fee_method IN ('NONE','FLAT','BANK_OR_FLAT')), -- BANK_OR_FLAT: either the flat amt or the bank fee if the bank fee is greater
-                            nsf_fee_amount    NUMERIC(12,2) NOT NULL DEFAULT 25.0 CONSTRAINT terms_template_nsf_fee_amount_must_not_be_negative CHECK (nsf_fee_amount >= 0),
+                                rule_violation_fee_method TEXT NOT NULL DEFAULT 'FLAT'
+                                    CONSTRAINT terms_template_violation_fee_method_must_be_known CHECK (rule_violation_fee_method IN ('NONE','FLAT')),
+                                rule_violation_fee_amount NUMERIC(12,2) NOT NULL DEFAULT 65 CONSTRAINT terms_template_violation_fee_amount_not_negative CHECK (rule_violation_fee_amount >= 0),
 
-                            late_fee_method   TEXT          NOT NULL DEFAULT 'FLAT'
-                                CONSTRAINT terms_template_late_fee_method_must_be_known CHECK (late_fee_method IN ('NONE','FLAT', 'PERCENT_OF_RENT')),
-                            late_fee_amount   NUMERIC(12,2) NOT NULL DEFAULT 65.0 CONSTRAINT terms_template_late_fee_amount_must_not_be_negative CHECK (late_fee_amount >= 0), -- can be a percent OR a flat rate
+                                nsf_fee_method    TEXT          NOT NULL DEFAULT 'FLAT'
+                                    CONSTRAINT terms_template_nsf_fee_method_must_be_known CHECK (nsf_fee_method IN ('NONE','FLAT','BANK_OR_FLAT')), -- BANK_OR_FLAT: either the flat amt or the bank fee if the bank fee is greater
+                                nsf_fee_amount    NUMERIC(12,2) NOT NULL DEFAULT 25.0 CONSTRAINT terms_template_nsf_fee_amount_must_not_be_negative CHECK (nsf_fee_amount >= 0),
 
-                            water_method      TEXT          NOT NULL DEFAULT 'NONE'
-                                CONSTRAINT terms_template_water_method_must_be_known CHECK (water_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
-                            water_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_water_amount_must_not_be_negative CHECK (water_flat_amount >= 0),
-                            power_method      TEXT          NOT NULL DEFAULT 'NONE'
-                                CONSTRAINT terms_template_power_method_must_be_known CHECK (power_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
-                            power_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_power_amount_must_not_be_negative CHECK (power_flat_amount >= 0),
-                            sewer_method      TEXT          NOT NULL DEFAULT 'NONE'
-                                CONSTRAINT terms_template_sewer_method_must_be_known CHECK (sewer_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
-                            sewer_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_sewer_amount_must_not_be_negative CHECK (sewer_flat_amount >= 0),
-                            trash_method      TEXT          NOT NULL DEFAULT 'NONE'
-                                CONSTRAINT terms_template_trash_method_must_be_known CHECK (trash_method IN ('NONE','FLAT','RUBS')),
-                            trash_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_trash_amount_must_not_be_negative CHECK (trash_flat_amount >= 0),
+                                late_fee_method   TEXT          NOT NULL DEFAULT 'FLAT'
+                                    CONSTRAINT terms_template_late_fee_method_must_be_known CHECK (late_fee_method IN ('NONE','FLAT', 'PERCENT_OF_RENT')),
+                                late_fee_amount   NUMERIC(12,2) NOT NULL DEFAULT 65.0 CONSTRAINT terms_template_late_fee_amount_must_not_be_negative CHECK (late_fee_amount >= 0), -- can be a percent OR a flat rate
 
-                            security_deposit_method   TEXT NOT NULL DEFAULT 'NONE'
-                                CONSTRAINT terms_template_security_deposit_method_must_be_known CHECK(security_deposit_method IN ('NONE', 'FLAT', 'MULTIPLE_OF_RENT')),
-                            security_deposit_amount   NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_security_deposit_amount_must_not_be_negative CHECK (security_deposit_amount >= 0),
-                                -- note: security_deposit_amount can hold a percentage or a flat amount
-                            note       TEXT,
-                            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), -- note: most other tables do not get this row
-                            created_by UUID NOT NULL,  -- FK added in V3 after agent table exists
-                            deleted_at TIMESTAMPTZ,
+                                water_method      TEXT          NOT NULL DEFAULT 'NONE'
+                                    CONSTRAINT terms_template_water_method_must_be_known CHECK (water_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                water_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_water_amount_must_not_be_negative CHECK (water_flat_amount >= 0),
+                                power_method      TEXT          NOT NULL DEFAULT 'NONE'
+                                    CONSTRAINT terms_template_power_method_must_be_known CHECK (power_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                power_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_power_amount_must_not_be_negative CHECK (power_flat_amount >= 0),
+                                sewer_method      TEXT          NOT NULL DEFAULT 'NONE'
+                                    CONSTRAINT terms_template_sewer_method_must_be_known CHECK (sewer_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                sewer_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_sewer_amount_must_not_be_negative CHECK (sewer_flat_amount >= 0),
+                                trash_method      TEXT          NOT NULL DEFAULT 'NONE'
+                                    CONSTRAINT terms_template_trash_method_must_be_known CHECK (trash_method IN ('NONE','FLAT','RUBS')),
+                                trash_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_trash_amount_must_not_be_negative CHECK (trash_flat_amount >= 0),
 
-                            CONSTRAINT terms_template_late_fee_amount_must_match_method CHECK (
-                                CASE WHEN late_fee_method IN ('FLAT', 'PERCENT_OF_RENT')  THEN late_fee_amount > 0
-                                     ELSE late_fee_amount = 0 END
-                                ),
-                            CONSTRAINT terms_template_water_amount_must_match_method CHECK (
-                                CASE WHEN water_method = 'FLAT' THEN water_flat_amount > 0
-                                     ELSE water_flat_amount = 0 END
-                                ),
-                            CONSTRAINT terms_template_power_amount_must_match_method CHECK (
-                                CASE WHEN power_method = 'FLAT' THEN power_flat_amount > 0
-                                     ELSE power_flat_amount = 0 END
-                                ),
-                            CONSTRAINT terms_template_sewer_amount_must_match_method CHECK (
-                                CASE WHEN sewer_method = 'FLAT' THEN sewer_flat_amount > 0
-                                     ELSE sewer_flat_amount = 0 END
-                                ),
-                            CONSTRAINT terms_template_trash_amount_must_match_method CHECK (
-                                CASE WHEN trash_method = 'FLAT' THEN trash_flat_amount > 0
-                                     ELSE trash_flat_amount = 0 END
-                                ),
-                            CONSTRAINT terms_template_nsf_amount_must_match_method CHECK (
-                                CASE WHEN nsf_fee_method IN ('FLAT','BANK_OR_FLAT')
-                                         THEN nsf_fee_amount > 0
-                                     ELSE nsf_fee_amount = 0 END
-                                ),
-                            CONSTRAINT terms_template_deposit_amount_must_match_method CHECK (
-                                CASE WHEN security_deposit_method IN ('FLAT', 'MULTIPLE_OF_RENT')
-                                         THEN security_deposit_amount > 0
-                                     ELSE security_deposit_amount = 0 END
-                                ),
-                            CONSTRAINT terms_template_violation_amount_must_match_method CHECK (
-                                CASE WHEN rule_violation_fee_method = 'FLAT'
-                                         THEN rule_violation_fee_amount IS NOT NULL AND rule_violation_fee_amount > 0
-                                     ELSE COALESCE(rule_violation_fee_amount, 0) = 0 END
-                                )
+                                security_deposit_method   TEXT NOT NULL DEFAULT 'NONE'
+                                    CONSTRAINT terms_template_security_deposit_method_must_be_known CHECK(security_deposit_method IN ('NONE', 'FLAT', 'MULTIPLE_OF_RENT')),
+                                security_deposit_amount   NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_security_deposit_amount_must_not_be_negative CHECK (security_deposit_amount >= 0),
+    -- note: security_deposit_amount can hold a percentage or a flat amount
+                                note       TEXT,
+                                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), -- note: most other tables do not get this row
+                                created_by UUID NOT NULL,  -- FK added in V3 after agent table exists
+                                deleted_at TIMESTAMPTZ,
+
+                                CONSTRAINT terms_template_late_fee_amount_must_match_method CHECK (
+                                    CASE WHEN late_fee_method IN ('FLAT', 'PERCENT_OF_RENT')  THEN late_fee_amount > 0
+                                         ELSE late_fee_amount = 0 END
+                                    ),
+                                CONSTRAINT terms_template_water_amount_must_match_method CHECK (
+                                    CASE WHEN water_method = 'FLAT' THEN water_flat_amount > 0
+                                         ELSE water_flat_amount = 0 END
+                                    ),
+                                CONSTRAINT terms_template_power_amount_must_match_method CHECK (
+                                    CASE WHEN power_method = 'FLAT' THEN power_flat_amount > 0
+                                         ELSE power_flat_amount = 0 END
+                                    ),
+                                CONSTRAINT terms_template_sewer_amount_must_match_method CHECK (
+                                    CASE WHEN sewer_method = 'FLAT' THEN sewer_flat_amount > 0
+                                         ELSE sewer_flat_amount = 0 END
+                                    ),
+                                CONSTRAINT terms_template_trash_amount_must_match_method CHECK (
+                                    CASE WHEN trash_method = 'FLAT' THEN trash_flat_amount > 0
+                                         ELSE trash_flat_amount = 0 END
+                                    ),
+                                CONSTRAINT terms_template_nsf_amount_must_match_method CHECK (
+                                    CASE WHEN nsf_fee_method IN ('FLAT','BANK_OR_FLAT')
+                                             THEN nsf_fee_amount > 0
+                                         ELSE nsf_fee_amount = 0 END
+                                    ),
+                                CONSTRAINT terms_template_deposit_amount_must_match_method CHECK (
+                                    CASE WHEN security_deposit_method IN ('FLAT', 'MULTIPLE_OF_RENT')
+                                             THEN security_deposit_amount > 0
+                                         ELSE security_deposit_amount = 0 END
+                                    ),
+                                CONSTRAINT terms_template_violation_amount_must_match_method CHECK (
+                                    CASE WHEN rule_violation_fee_method = 'FLAT'
+                                             THEN rule_violation_fee_amount IS NOT NULL AND rule_violation_fee_amount > 0
+                                         ELSE COALESCE(rule_violation_fee_amount, 0) = 0 END
+                                    )
 );
 
 
