@@ -7,6 +7,9 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.DomainProblem;
+import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
@@ -244,7 +247,7 @@ public class TenancyChargeTermService {
         UUID scheduleBatch = (batch == null) ? UUID.randomUUID() : batch;
 
         if (steps == null || steps.isEmpty()) {
-            throw new IllegalArgumentException("A schedule needs at least one step");
+            throw InvalidRequest.of("term.schedule_needs_a_step");
         }
 
         Optional<LeaseContext> contextOpt = contextFor(tenancy, agreementType);
@@ -287,8 +290,7 @@ public class TenancyChargeTermService {
         TenancyChargeTermRow before = beforeOpt.get();
 
         if (!before.status().isEditable()) {
-            throw new IllegalArgumentException(
-                    "This term is " + before.status() + " and can no longer be edited; create a new term instead");
+            throw InvalidRequest.of("term.not_editable", before.status());
         }
         changes = coerce(changes);
         reconcileMethodAmountPairs(before, changes);
@@ -331,9 +333,7 @@ public class TenancyChargeTermService {
     public Optional<TenancyChargeTerm> activate(UUID uuid) {
         return transition(uuid, TenancyTermStatus.PENDING, TenancyTermStatus.ACTIVE, row -> {
             if (row.source() != TenancyTermSource.MIGRATION && row.sourceUuid() == null) {
-                throw new IllegalArgumentException(
-                        "This term cannot go into force: no instrument is attached, and only "
-                                + "migrated terms are allowed to have none");
+                throw InvalidRequest.of("term.no_instrument");
             }
         });
     }
@@ -348,7 +348,7 @@ public class TenancyChargeTermService {
     @Transactional
     public Optional<TenancyChargeTerm> cancel(UUID uuid, String cancelReason) {
         if (cancelReason == null || cancelReason.isBlank()) {
-            throw new IllegalArgumentException("A cancellation needs a reason");
+            throw InvalidRequest.of("term.cancel_needs_reason");
         }
 
         Optional<TenancyChargeTermRow> beforeOpt = tenancyChargeTermRepository.findById(uuid);
@@ -495,19 +495,15 @@ public class TenancyChargeTermService {
         }
 
         Lot lot = lotService.findById(tenancyOpt.get().lotId())
-                .orElseThrow(() -> new IllegalStateException(
-                        "Tenancy " + tenancy + " points at a lot that no longer exists"));
+                .orElseThrow(() -> RuleConflict.of("lot.no_longer_exists", tenancy));
 
         if (!lot.permits(agreementType)) {
-            throw new IllegalStateException(
-                    "Lot " + lot.lotNumber() + " does not permit " + agreementType + " agreements");
+            throw RuleConflict.of("lot.does_not_permit", lot.lotNumber(), agreementType);
         }
 
         TermsTemplate template = termsTemplateService
                 .findForProperty(lot.propertyId(), agreementType)
-                .orElseThrow(() -> new IllegalStateException(
-                        "This property has no terms template for " + agreementType
-                                + ", so it cannot host that kind of agreement"));
+                .orElseThrow(() -> RuleConflict.of("property.no_template", agreementType));
 
         return Optional.of(new LeaseContext(lot, template));
     }
@@ -574,8 +570,7 @@ public class TenancyChargeTermService {
         TenancyChargeTermRow before = beforeOpt.get();
 
         if (before.status() != from) {
-            throw new IllegalArgumentException(
-                    "This term is " + before.status() + "; only a " + from + " term can become " + to);
+            throw InvalidRequest.of("term.wrong_status", before.status(), from, to);
         }
 
         guard.accept(before);
@@ -624,26 +619,27 @@ public class TenancyChargeTermService {
      * fixes the whole form at once instead of one field per round trip.
      */
     private static void validateForSubmission(TenancyChargeTermRow row) {
-        List<String> problems = new ArrayList<>();
+        List<DomainProblem.Problem> problems = new ArrayList<>();
 
         if (row.rate().signum() <= 0) {
-            problems.add("rate: no target rate is set for " + row.agreementType()
-                    + " on this lot or on the property's template");
+            problems.add(DomainProblem.Problem.onField(
+                    "rate", "term.rate_not_set", row.agreementType()));
         }
 
         if (row.securityDepositMethod() == SecurityDepositMethod.MULTIPLE_OF_RENT
                 && row.securityDepositAmount().compareTo(MAX_DEPOSIT_MONTHS) > 0) {
-            problems.add("security_deposit_amount: " + row.securityDepositAmount()
-                    + " is a multiplier, not dollars -- at a rate of " + row.rate()
-                    + " that is a deposit of "
-                    + row.rate().multiply(row.securityDepositAmount()).setScale(2, RoundingMode.HALF_UP)
-                    + ". The most months' rent allowed is " + MAX_DEPOSIT_MONTHS);
+            problems.add(DomainProblem.Problem.onField(
+                    "security_deposit_amount", "term.deposit_above_ceiling",
+                    row.securityDepositAmount(),
+                    row.rate(),
+                    row.rate().multiply(row.securityDepositAmount()).setScale(2, RoundingMode.HALF_UP),
+                    MAX_DEPOSIT_MONTHS));
         }
 
         // term_cars_max_at_least_allowed
         if (row.carsMax() < row.allowedCars()) {
-            problems.add("carsMax: cannot be lower than allowedCars ("
-                    + row.carsMax() + " < " + row.allowedCars() + ")");
+            problems.add(DomainProblem.Problem.onField(
+                    "cars_max", "term.cars_max_below_allowed", row.carsMax(), row.allowedCars()));
         }
 
         for (MethodAmountPair pair : METHOD_AMOUNT_PAIRS) {
@@ -652,18 +648,17 @@ public class TenancyChargeTermService {
 
             if (method != null && pair.amountBearingMethods().contains(method)) {
                 if (amount.signum() <= 0) {
-                    problems.add(pair.amountColumn() + ": must be greater than zero when "
-                            + pair.methodColumn() + " is " + method);
+                    problems.add(DomainProblem.Problem.onField(pair.amountColumn(),
+                            "term.amount_required", pair.methodColumn(), method));
                 }
             } else if (amount.signum() != 0) {
-                problems.add(pair.amountColumn() + ": must be zero when "
-                        + pair.methodColumn() + " is " + method);
+                problems.add(DomainProblem.Problem.onField(pair.amountColumn(),
+                        "term.amount_must_be_zero", pair.methodColumn(), method));
             }
         }
 
         if (!problems.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "This term is not ready to submit -- " + String.join("; ", problems));
+            throw InvalidRequest.withDetails("term.not_ready_to_submit", problems);
         }
     }
 
@@ -693,8 +688,8 @@ public class TenancyChargeTermService {
                 // The null check is not decoration: Set.of(...) throws on a null
                 // probe rather than answering false.
                 if (method == null || !pair.allowedMethods().contains(method)) {
-                    throw new IllegalArgumentException(
-                            pair.methodColumn() + " must be one of " + pair.allowedMethods());
+                    throw InvalidRequest.onField(pair.methodColumn(),
+                            "term.method_not_allowed", pair.allowedMethods());
                 }
                 changes.put(pair.methodColumn(), method);
             }
@@ -707,7 +702,7 @@ public class TenancyChargeTermService {
             if (amountTouched) {
                 BigDecimal amount = toAmount(changes.get(pair.amountColumn()), pair.amountColumn());
                 if (amount != null && amount.signum() < 0) {
-                    throw new IllegalArgumentException(pair.amountColumn() + " cannot be negative");
+                    throw InvalidRequest.onField(pair.amountColumn(), "term.amount_negative");
                 }
                 changes.put(pair.amountColumn(), amount == null ? BigDecimal.ZERO : amount);
             }
@@ -735,7 +730,7 @@ public class TenancyChargeTermService {
         try {
             return LocalDate.parse(text);
         } catch (DateTimeParseException e) {
-            throw new IllegalArgumentException(column + " must be a date as YYYY-MM-DD, not \"" + text + "\"");
+            throw InvalidRequest.onField(column, "term.not_a_date", text);
         }
     }
 
@@ -750,7 +745,7 @@ public class TenancyChargeTermService {
             String text = raw.toString().trim();
             return text.isEmpty() ? null : new BigDecimal(text);
         } catch (NumberFormatException e) {
-            throw new IllegalArgumentException(column + " must be a number");
+            throw InvalidRequest.onField(column, "term.not_a_number");
         }
     }
 

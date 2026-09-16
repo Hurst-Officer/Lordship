@@ -4,6 +4,7 @@ import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -23,6 +24,10 @@ import java.util.UUID;
  * assignment rather than read through the template, so a unique index can stop
  * one park holding two documents that both answer to "the lease". A composite
  * foreign key keeps them honest against the template they came from.
+ *
+ * <p>{@code customizations} rides along because the freeze needs the document
+ * and this park's changes to it at the same moment. Fetching them separately
+ * invites the case where one is stale.
  */
 public record PropertyDocumentAssignment(
         UUID uuid,
@@ -32,8 +37,13 @@ public record PropertyDocumentAssignment(
         String note,
         OffsetDateTime createdAt,
         OffsetDateTime deletedAt,
-        DocumentTemplate document
+        DocumentTemplate document,
+        List<PropertyDocumentCustomization> customizations
 ) {
+    public PropertyDocumentAssignment {
+        customizations = (customizations == null) ? List.of() : List.copyOf(customizations);
+    }
+
     public boolean isSoftDeleted() {
         return deletedAt != null;
     }
@@ -46,5 +56,10 @@ public record PropertyDocumentAssignment(
     /** The wording version in force for this park today, which a render will freeze. */
     public Integer documentVersion() {
         return document == null ? null : document.version();
+    }
+
+    /** Whether this park takes the document as written, which most do. */
+    public boolean isCustomized() {
+        return !customizations.isEmpty();
     }
 }

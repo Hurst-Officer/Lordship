@@ -412,7 +412,7 @@ public class TenancyChargeTermServiceTest {
                 () -> tenancyChargeTermService.submit(uuid));
 
         // Assert
-        assertTrue(e.getMessage().contains("carsMax"), e.getMessage());
+        assertTrue(e.getMessage().contains("cars_max"), e.getMessage());
     }
 
     @Test
@@ -492,7 +492,7 @@ public class TenancyChargeTermServiceTest {
 
         // Assert
         assertTrue(e.getMessage().contains("rate"), e.getMessage());
-        assertTrue(e.getMessage().contains("carsMax"), e.getMessage());
+        assertTrue(e.getMessage().contains("cars_max"), e.getMessage());
         assertTrue(e.getMessage().contains("late_fee_amount"), e.getMessage());
     }
 

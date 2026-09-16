@@ -5,8 +5,12 @@ import io.github.lordship.audit.AuditContext;
 import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.documenttemplate.internal.*;
+import io.github.lordship.shared.ClauseBodyRules;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.DocumentToken;
+import io.github.lordship.shared.DomainProblem;
+import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
 import io.github.lordship.tenancyterms.TenancyChargeTermService;
@@ -124,24 +128,20 @@ public class DocumentTemplateService {
     // is exactly the failure preview exists to catch.
     private static void validateMethodValues(Map<String, String> methodValues) {
         methodValues.forEach((field, value) -> {
-            DocumentToken token = DocumentToken.of(field).orElseThrow(() ->
-                    new IllegalArgumentException("No such token: {{" + field + "}}" + suggestionFor(field)));
+            DocumentToken token = DocumentToken.of(field).orElseThrow(() -> ClauseBodyRules.unknownToken(field));
 
             if (!token.canCondition()) {
-                throw new IllegalArgumentException(
-                        "{{" + field + "}} is " + token.format() + ", not a method -- nothing branches on it");
+                throw InvalidRequest.of("token.not_a_method", ClauseBodyRules.placeholder(field), token.format());
             }
             // Same trap as appliesTo: Set.of(...) throws on a null probe. Leave
             // a method out of the map to say "unset"; naming it with no value
             // is a mistake worth reporting.
             if (value == null) {
-                throw new IllegalArgumentException(
-                        "{{" + field + "}} was given no value. Omit it entirely to preview it as unset");
+                throw InvalidRequest.of("token.value_omitted", ClauseBodyRules.placeholder(field));
             }
             if (!token.allowedValues().contains(value)) {
-                throw new IllegalArgumentException(
-                        "{{" + field + "}} does not take " + value + ". Allowed: "
-                                + token.allowedValues().stream().sorted().collect(Collectors.joining(", ")));
+                throw InvalidRequest.of("token.value_not_allowed",
+                        ClauseBodyRules.placeholder(field), value, ClauseBodyRules.sorted(token.allowedValues()));
             }
         });
     }
@@ -180,10 +180,7 @@ public class DocumentTemplateService {
     public boolean deleteTemplate(UUID uuid) {
         return documentTemplateRepository.findById(uuid).map(existing -> {
             if (documentTemplateRepository.isAssignedToAnyProperty(uuid)) {
-                throw new IllegalStateException(
-                        "\"" + existing.name() + "\" is still assigned to at least one property."
-                                + " Unassign it there first, or the next lease for that park has"
-                                + " nothing to generate from");
+                throw RuleConflict.of("template.still_assigned", existing.name());
             }
             if (!documentTemplateRepository.softDelete(uuid)) {
                 return false;
@@ -233,10 +230,10 @@ public class DocumentTemplateService {
     public boolean deleteSection(UUID sectionUuid) {
         return documentSectionRepository.findById(sectionUuid).map(existing -> {
             if (existing.required()) {
-                throw new IllegalStateException(
-                        "\"" + existing.name() + "\" is a required section"
-                                + (existing.statuteRef() == null ? "" : " (" + existing.statuteRef() + ")")
-                                + ". Clear its required flag first if it genuinely no longer applies");
+                throw existing.statuteRef() == null
+                        ? RuleConflict.of("section.is_required", existing.name())
+                        : RuleConflict.of("section.is_required_by_statute",
+                        existing.name(), existing.statuteRef());
             }
             if (!documentSectionRepository.softDelete(sectionUuid)) {
                 return false;
@@ -273,10 +270,11 @@ public class DocumentTemplateService {
         }
         TemplateClauseRow before = beforeOpt.get();
 
-        Map<String, Object> effective = withConditionClearing(changes);
+        Map<String, Object> effective = ClauseBodyRules.withConditionClearing(changes);
 
-        validateBody(effective);
-        validateCondition(before, effective);
+        ClauseBodyRules.validateBody(effective);
+        ClauseBodyRules.validateCondition(
+                before.conditionField(), before.conditionValues(), effective);
 
         Optional<TemplateClauseRow> afterOpt = templateClauseRepository.patch(clauseUuid, effective);
         if (afterOpt.isEmpty()) {
@@ -297,10 +295,9 @@ public class DocumentTemplateService {
     public boolean deleteClause(UUID clauseUuid) {
         return templateClauseRepository.findById(clauseUuid).map(existing -> {
             if (existing.required()) {
-                throw new IllegalStateException(
-                        "This clause is marked required"
-                                + (existing.statuteRef() == null ? "" : " (" + existing.statuteRef() + ")")
-                                + ". Clear the flag first if it genuinely no longer applies");
+                throw existing.statuteRef() == null
+                        ? RuleConflict.of("clause.is_required")
+                        : RuleConflict.of("clause.is_required_by_statute", existing.statuteRef());
             }
             if (!templateClauseRepository.softDelete(clauseUuid)) {
                 return false;
@@ -313,156 +310,6 @@ public class DocumentTemplateService {
     }
 
     // ---- validation ----------------------------------------------------------
-
-    /**
-     * Every {@code {{token}}} in the body has to be one the renderer can
-     * resolve. Caught here rather than at generate, and answered with a
-     * suggestion, because the person on the other end is writing a lease clause
-     * and a bare rejection tells them nothing.
-     */
-    private static void validateBody(Map<String, Object> changes) {
-        if (!changes.containsKey("body")) {
-            return;
-        }
-        Object raw = changes.get("body");
-        if (raw == null) {
-            return;
-        }
-
-        List<String> problems = new ArrayList<>();
-        for (String name : TemplateClause.tokenNamesIn(String.valueOf(raw))) {
-            if (DocumentToken.of(name).isEmpty()) {
-                problems.add("{{" + name + "}}" + suggestionFor(name));
-            }
-        }
-        if (!problems.isEmpty()) {
-            throw new IllegalArgumentException(
-                    (problems.size() == 1 ? "No such token: " : "No such tokens: ")
-                            + String.join("; ", problems));
-        }
-    }
-
-    /**
-     * Unchecking the last value and clearing the field are the same act: the
-     * clause is no longer conditional. The two columns are stored together, so
-     * clearing either one clears the other, rather than being refused for
-     * leaving the pair half-set -- an editor that unticks the last checkbox
-     * should not have to know it must also null the field.
-     *
-     * <p>Only when the other half is not being set in the same request. Sending
-     * a field with an empty list, or values with a null field, is still a
-     * mistake worth reporting: it asks for a clause that could never print.
-     */
-    private static Map<String, Object> withConditionClearing(Map<String, Object> changes) {
-        boolean fieldSet = changes.containsKey("condition_field")
-                && asStringOrNull(changes.get("condition_field")) != null;
-        boolean valuesSet = changes.containsKey("condition_values")
-                && !asStringList(changes.get("condition_values")).isEmpty();
-
-        boolean fieldCleared = changes.containsKey("condition_field") && !fieldSet;
-        boolean valuesCleared = changes.containsKey("condition_values") && !valuesSet;
-
-        if (!(fieldCleared && !valuesSet) && !(valuesCleared && !fieldSet)) {
-            return changes;
-        }
-
-        Map<String, Object> effective = new LinkedHashMap<>(changes);
-        effective.put("condition_field", null);
-        effective.put("condition_values", List.of());
-        return effective;
-    }
-
-    /**
-     * A clause may only branch on a method, and only on values that column
-     * permits. Conditioning on {@code term.rate} is a category error --
-     * "print this when the rate is 725" is not a rule anyone means -- and
-     * {@code BANK_OR_FLTA} is a typo that would otherwise show up as a clause
-     * that silently never prints.
-     *
-     * <p>Both halves move together: a field with no values matches nothing, and
-     * values with no field have nothing to test.
-     */
-    private static void validateCondition(TemplateClauseRow before, Map<String, Object> changes) {
-        boolean touched = changes.containsKey("condition_field") || changes.containsKey("condition_values");
-        if (!touched) {
-            return;
-        }
-
-        String field = changes.containsKey("condition_field")
-                ? asStringOrNull(changes.get("condition_field"))
-                : before.conditionField();
-
-        List<String> values = changes.containsKey("condition_values")
-                ? asStringList(changes.get("condition_values"))
-                : before.conditionValues();
-
-        if (field == null && values.isEmpty()) {
-            return; // unconditional, which is most clauses
-        }
-        if (field == null) {
-            throw new IllegalArgumentException(
-                    "conditionValues were given with no conditionField to test them against");
-        }
-        if (values.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "conditionField \"" + field + "\" was given with no values, so the clause would never print");
-        }
-
-        DocumentToken token = DocumentToken.of(field).orElseThrow(() ->
-                new IllegalArgumentException("No such token: {{" + field + "}}" + suggestionFor(field)));
-
-        if (!token.canCondition()) {
-            throw new IllegalArgumentException(
-                    "A clause cannot be conditioned on {{" + field + "}}: it is "
-                            + token.format() + ", and only a method can decide whether a clause prints. "
-                            + "Conditionable tokens: " + conditionableTokens());
-        }
-
-        Set<String> allowed = token.allowedValues();
-        List<String> unknown = values.stream().filter(v -> !allowed.contains(v)).toList();
-        if (!unknown.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "{{" + field + "}} does not take " + String.join(", ", unknown)
-                            + ". Allowed: " + allowed.stream().sorted().collect(Collectors.joining(", ")));
-        }
-    }
-
-    private static String conditionableTokens() {
-        return java.util.Arrays.stream(DocumentToken.values())
-                .filter(DocumentToken::canCondition)
-                .map(DocumentToken::placeholder)
-                .sorted()
-                .collect(Collectors.joining(", "));
-    }
-
-    // "did you mean" or nothing -- a wrong suggestion is worse than none.
-    private static String suggestionFor(String unknown) {
-        return DocumentToken.tokenNames().stream()
-                .map(known -> Map.entry(known, editDistance(unknown, known)))
-                .filter(e -> e.getValue() <= 3)
-                .min(Comparator.comparingInt(Map.Entry::getValue))
-                .map(e -> " -- did you mean {{" + e.getKey() + "}}?")
-                .orElse("");
-    }
-
-    private static int editDistance(String a, String b) {
-        int[] previous = new int[b.length() + 1];
-        int[] current = new int[b.length() + 1];
-        for (int j = 0; j <= b.length(); j++) {
-            previous[j] = j;
-        }
-        for (int i = 1; i <= a.length(); i++) {
-            current[0] = i;
-            for (int j = 1; j <= b.length(); j++) {
-                int substitute = previous[j - 1] + (a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1);
-                current[j] = Math.min(substitute, Math.min(previous[j] + 1, current[j - 1] + 1));
-            }
-            int[] swap = previous;
-            previous = current;
-            current = swap;
-        }
-        return previous[b.length()];
-    }
 
     // ---- internals -----------------------------------------------------------
 
@@ -546,24 +393,4 @@ public class DocumentTemplateService {
         return changedFields.stream().anyMatch(field -> !NON_PRINTING_FIELDS.contains(field));
     }
 
-    private static String asStringOrNull(Object value) {
-        if (value == null) {
-            return null;
-        }
-        String text = String.valueOf(value).trim();
-        return text.isEmpty() ? null : text;
-    }
-
-    private static List<String> asStringList(Object value) {
-        if (value == null) {
-            return List.of();
-        }
-        if (value instanceof Collection<?> collection) {
-            return collection.stream()
-                    .filter(Objects::nonNull)
-                    .map(String::valueOf)
-                    .toList();
-        }
-        throw new IllegalArgumentException("conditionValues must be a list of strings");
-    }
 }

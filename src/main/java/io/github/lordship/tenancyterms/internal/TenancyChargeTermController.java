@@ -301,17 +301,10 @@ public class TenancyChargeTermController {
                 : ResponseEntity.notFound().build();
     }
 
-    // Unlike the other controllers this one returns the message. A term that is
-    // not ready to submit fails against seven method/amount pairs at once, and
-    // an empty 400 would leave the office worker guessing which field is wrong.
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("message", String.valueOf(e.getMessage())));
-    }
-
-    @ExceptionHandler(IllegalStateException.class)
-    ResponseEntity<Map<String, String>> conflict(IllegalStateException e) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("message", String.valueOf(e.getMessage())));
-    }
+    // No local @ExceptionHandler anymore. These used to exist because a term
+    // that is not ready to submit fails against seven method/amount pairs at
+    // once and the global handler was swallowing the detail. Now the failure
+    // carries its own structure, so ApiExceptionHandler answers with every
+    // problem AND the field each one belongs to -- which is more than this
+    // could, and in whatever language the request asked for.
 }

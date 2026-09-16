@@ -306,7 +306,7 @@ CREATE TABLE instrument_clause (
                                    body          TEXT NOT NULL, -- the words on the page, amounts and all
                                    body_template TEXT NOT NULL, -- the same words with the tokens still in them
                                    statute_ref   TEXT, -- copied down so a generate-time completeness check has something to test
-                                   origin        TEXT NOT NULL CONSTRAINT instrument_clause_origin_must_be_known CHECK (origin IN ('TEMPLATE','PROPERTY')),
+                                   origin        TEXT NOT NULL CONSTRAINT instrument_clause_origin_must_be_known CHECK (origin IN ('TEMPLATE','PROPERTY','INSTRUMENT')),
 
     -- Deliberately NOT a foreign key: the clause it came from may be
     -- edited, retired or soft-deleted later, and this snapshot has to
@@ -327,6 +327,30 @@ CREATE INDEX instrument_clause_key_idx ON instrument_clause (clause_key);
 -- table that makes thousands of leases searchable instead of sitting in PDFs.
 -- TODO: a trigger could require a GENERATED instrument to have clauses; the
 -- CHECK constraints above cannot reach another table.
+
+
+-- A clause the office worker typed onto ONE agreement while it was still a
+-- draft. Not global, not the park's -- this lease only.
+--
+-- Lives outside instrument_clause on purpose. A draft can be re-frozen when the
+-- deal changes, and the freeze throws its previous output away; a typed clause
+-- stored in the snapshot would go with it. Kept here it is an INPUT to the
+-- freeze, like the template and the park's customizations.
+--
+-- Additions only. Removing a clause is not offered at this level: a mandated
+-- disclosure that an assistant deleted is not a defense anyone can make.
+CREATE TABLE instrument_addition (
+                                     uuid       UUID PRIMARY KEY DEFAULT uuidv7(),
+                                     instrument UUID NOT NULL REFERENCES instrument(uuid),
+                                     section    UUID NOT NULL REFERENCES document_section(uuid), -- shares template_clause's ordinal space
+                                     ordinal    NUMERIC(10,4) NOT NULL,
+                                     title      TEXT,
+                                     body       TEXT, -- filled in by a patch: add clause is a button, not a form
+                                     note       TEXT,
+                                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                                     created_by UUID NOT NULL REFERENCES agent(uuid),
+                                     deleted_at TIMESTAMPTZ
+);
 
 
 -- ── Charge term ──────────────────────────────────────────────────────────────
@@ -379,7 +403,7 @@ CREATE TABLE tenancy_charge_term (
                                      security_deposit_method   TEXT NOT NULL
                                          CONSTRAINT charge_term_security_deposit_method_must_be_known CHECK(security_deposit_method IN ('NONE', 'FLAT', 'MULTIPLE_OF_RENT')),
                                      security_deposit_amount   NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_security_deposit_amount_must_not_be_negative CHECK (security_deposit_amount >= 0),
-                                        -- note: security_deposit_amount can be a flat amount OR a multiple
+    -- note: security_deposit_amount can be a flat amount OR a multiple
 
                                      status            TEXT NOT NULL DEFAULT 'PROPOSED'
                                          CONSTRAINT charge_term_status_must_be_known CHECK (status IN ('PROPOSED','PENDING','ACTIVE','CANCELLED')),
