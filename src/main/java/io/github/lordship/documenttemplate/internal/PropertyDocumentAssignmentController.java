@@ -11,7 +11,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,8 +33,9 @@ import java.util.UUID;
  * words say, and they are done by different people at different times.
  *
  * <p>Assignment is a reference, not a copy -- an edit to the global document
- * reaches every park assigned to it. Only the assignment itself lives here;
- * a park's own clause exclusions and additions are a separate feature.
+ * reaches every park assigned to it. A park's own exclusions and added
+ * clauses live here too, because they are the same act: deciding what this
+ * park's version of the document is.
  */
 @RestController
 @RequestMapping("/api/property-documents")
@@ -156,14 +157,116 @@ public class PropertyDocumentAssignmentController {
                 : ResponseEntity.notFound().build();
     }
 
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("message", String.valueOf(e.getMessage())));
+    // ---- what this park changes ---------------------------------------------
+
+    public record ExcludeSectionRequest(@NotNull UUID sectionId) { }
+
+    public record ExcludeClauseRequest(@NotNull UUID clauseId) { }
+
+    public record AddClauseRequest(@NotNull UUID sectionId) { }
+
+    private static final Map<String, String> CUSTOMIZATION_COLUMNS = Map.ofEntries(
+            Map.entry("ordinal", "ordinal"),
+            Map.entry("title", "title"),
+            Map.entry("body", "body"),
+            Map.entry("conditionField", "condition_field"),
+            Map.entry("conditionValues", "condition_values"),
+            Map.entry("note", "note"));
+
+    /**
+     * This park does not use that sub-document -- city sewer, no septic
+     * addendum. 409 when the section is required: it exists to satisfy the
+     * statute named on it and no park may drop it.
+     */
+    @PreAuthorize("hasAuthority('property_document:assign')")
+    @PostMapping("/{uuid}/exclusions/sections")
+    public ResponseEntity<PropertyDocumentAssignmentResponse> excludeSection(
+            @PathVariable UUID uuid,
+            @Valid @RequestBody ExcludeSectionRequest request) {
+
+        return assignmentService.excludeSection(uuid, request.sectionId())
+                .map(PropertyDocumentAssignmentResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 
-    @ExceptionHandler(IllegalStateException.class)
-    ResponseEntity<Map<String, String>> conflict(IllegalStateException e) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("message", String.valueOf(e.getMessage())));
+    /** This park keeps the section but not that one paragraph of it. */
+    @PreAuthorize("hasAuthority('property_document:assign')")
+    @PostMapping("/{uuid}/exclusions/clauses")
+    public ResponseEntity<PropertyDocumentAssignmentResponse> excludeClause(
+            @PathVariable UUID uuid,
+            @Valid @RequestBody ExcludeClauseRequest request) {
+
+        return assignmentService.excludeClause(uuid, request.clauseId())
+                .map(PropertyDocumentAssignmentResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // Added empty, filled in by the PATCH below -- the same shape as adding a
+    // template clause, so "add clause" is a button on both screens.
+    @PreAuthorize("hasAuthority('property_document:assign')")
+    @PostMapping("/{uuid}/clauses")
+    public ResponseEntity<PropertyDocumentAssignmentResponse> addClause(
+            @PathVariable UUID uuid,
+            @Valid @RequestBody AddClauseRequest request) {
+
+        return assignmentService.addClause(uuid, request.sectionId())
+                .map(PropertyDocumentAssignmentResponse::from)
+                .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * The wording of a clause this park wrote. 400 when the body names a token
+     * that does not exist, or puts a row token where it cannot resolve -- a
+     * park writing lease wording answers to the same rules the template does.
+     *
+     * <p>Ordinal arrives as a number and stays one: the ordinals are sparse, so
+     * 12.5 moves this clause between the template's twelfth and thirteenth and
+     * nothing else shifts.
+     */
+    @PreAuthorize("hasAuthority('property_document:assign')")
+    @PatchMapping("/customizations/{customizationUuid}")
+    public ResponseEntity<PropertyDocumentAssignmentResponse> patchCustomization(
+            @PathVariable UUID customizationUuid,
+            @RequestBody Map<String, Object> request) {
+
+        Map<String, Object> changes = new HashMap<>();
+        CUSTOMIZATION_COLUMNS.forEach((jsonField, column) -> {
+            if (request.containsKey(jsonField)) {
+                changes.put(column, request.get(jsonField));
+            }
+        });
+        if (changes.containsKey("ordinal")) {
+            changes.put("ordinal", asOrdinal(changes.get("ordinal")));
+        }
+
+        return assignmentService.patchCustomization(customizationUuid, changes)
+                .map(PropertyDocumentAssignmentResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /** Undoes one change, putting the document back the way the template wrote it. */
+    @PreAuthorize("hasAuthority('property_document:assign')")
+    @DeleteMapping("/customizations/{customizationUuid}")
+    public ResponseEntity<Void> removeCustomization(@PathVariable UUID customizationUuid) {
+        return assignmentService.removeCustomization(customizationUuid)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
+
+    // JSON hands us a Double or an Integer; the column is NUMERIC(10,4). Going
+    // through the string form keeps 12.5 as 12.5 rather than 12.500000000000002.
+    private static BigDecimal asOrdinal(Object value) {
+        if (value == null) {
+            return null;
+        }
+        try {
+            return new BigDecimal(String.valueOf(value));
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("ordinal must be a number");
+        }
     }
 }

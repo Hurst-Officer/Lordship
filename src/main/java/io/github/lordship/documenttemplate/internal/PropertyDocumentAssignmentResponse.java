@@ -5,6 +5,7 @@ import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -14,6 +15,11 @@ import java.util.UUID;
  * park's document list is readable without a second call per row. The version
  * is worth showing: it is the wording in force for this park today, and it is
  * what a render will freeze onto the instrument.
+ *
+ * <p>{@code customizations} comes along because a park's document is the
+ * template plus its changes, and a list that showed only the name would tell an
+ * admin the five parks use the same document when one of them has dropped a
+ * section.
  */
 public record PropertyDocumentAssignmentResponse(
         UUID uuid,
@@ -23,6 +29,8 @@ public record PropertyDocumentAssignmentResponse(
         UUID documentTemplateId,
         String documentName,
         Integer documentVersion,
+        boolean customized,
+        List<PropertyDocumentCustomizationResponse> customizations,
         String note,
         OffsetDateTime createdAt
 ) {
@@ -36,6 +44,10 @@ public record PropertyDocumentAssignmentResponse(
                 assignment.document() == null ? null : assignment.document().uuid(),
                 assignment.documentName(),
                 assignment.documentVersion(),
+                assignment.isCustomized(),
+                assignment.customizations().stream()
+                        .map(PropertyDocumentCustomizationResponse::from)
+                        .toList(),
                 assignment.note(),
                 assignment.createdAt());
     }

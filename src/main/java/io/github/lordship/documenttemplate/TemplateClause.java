@@ -1,16 +1,14 @@
 package io.github.lordship.documenttemplate;
 
 import io.github.lordship.shared.DocumentToken;
+import io.github.lordship.shared.TokenSyntax;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * One clause of a sub-document. {@code body} carries {@code {{tokens}}} and
@@ -37,10 +35,6 @@ public record TemplateClause(
         OffsetDateTime createdAt,
         OffsetDateTime deletedAt
 ) {
-    // Token names are namespaced -- term.rate, lot.lot_number -- so the dot is
-    // part of the name, not a separator this pattern should split on.
-    private static final Pattern TOKEN = Pattern.compile("\\{\\{\\s*([a-z0-9_]+(?:\\.[a-z0-9_]+)+)\\s*}}");
-
     public TemplateClause {
         conditionValues = (conditionValues == null) ? List.of() : List.copyOf(conditionValues);
     }
@@ -121,14 +115,26 @@ public record TemplateClause(
      * than stored.
      */
     public static Set<String> tokenNamesIn(String body) {
-        Set<String> found = new LinkedHashSet<>();
-        if (body == null) {
-            return found;
-        }
-        Matcher matcher = TOKEN.matcher(body);
-        while (matcher.find()) {
-            found.add(matcher.group(1));
-        }
-        return found;
+        return TokenSyntax.tokenNamesIn(body);
+    }
+
+    /**
+     * Row tokens this body uses where they cannot resolve -- outside a repeat
+     * block, or inside one over the wrong list.
+     *
+     * <p>Unlike {@link #unguardedTokens()} this is an error, not a warning.
+     * An unguarded token at least has a value; a misplaced row token has none,
+     * and would print as a stranded {@code {{rent_step.rate}}} on a lease.
+     */
+    public List<String> misplacedRowTokens() {
+        return misplacedRowTokensIn(body);
+    }
+
+    /**
+     * The same parse against a body that is not a clause yet -- what the
+     * service validates before a save, alongside {@link #tokenNamesIn(String)}.
+     */
+    public static List<String> misplacedRowTokensIn(String body) {
+        return TokenSyntax.misplacedRowTokens(body);
     }
 }

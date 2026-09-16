@@ -10,6 +10,7 @@ import io.github.lordship.documenttemplate.internal.TemplateClauseRepository;
 import io.github.lordship.documenttemplate.internal.TemplateClauseRow;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
+import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.tenancyterms.TenancyChargeTermService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -297,12 +298,13 @@ public class DocumentTemplateServiceTest {
         when(templateClauseRepository.findById(clauseId)).thenReturn(Optional.of(clauseRow(null, List.of())));
 
         // Act
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        InvalidRequest e = assertThrows(InvalidRequest.class,
                 () -> documentTemplateService.patchClause(
                         clauseId, change("condition_field", "term.late_fee_method")));
 
         // Assert: a field with no values matches nothing, so the clause would never print
-        assertTrue(e.getMessage().contains("never print"));
+        assertEquals("clause.field_without_values", e.problem().code());
+        assertEquals("conditionValues", e.problem().field());
     }
 
     @Test
@@ -396,11 +398,11 @@ public class DocumentTemplateServiceTest {
         methodValues.put("term.trash_method", null);
 
         // Act
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        InvalidRequest  e = assertThrows(InvalidRequest.class,
                 () -> documentTemplateService.preview(templateId, methodValues));
 
         // Assert
-        assertTrue(e.getMessage().contains("Omit it entirely"));
+        assertEquals("token.value_omitted", e.problem().code());
     }
 
     // ---- delete guards -------------------------------------------------------

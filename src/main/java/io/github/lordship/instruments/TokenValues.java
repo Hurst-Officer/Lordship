@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Everything one document has to say, already formatted as it will print.
+ * The values used to fill an authored document template.
  *
  * <p>The seam between fetching and rendering. Whoever builds this has done all
  * the reading -- charge term, instrument, lot, property, global settings -- and

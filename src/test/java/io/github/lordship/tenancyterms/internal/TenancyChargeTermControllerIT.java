@@ -257,7 +257,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
         submit(uuid)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value(containsString("rate")))
-                .andExpect(jsonPath("$.message").value(containsString("carsMax")));
+                .andExpect(jsonPath("$.message").value(containsString("cars_max")));
     }
 
     @Test

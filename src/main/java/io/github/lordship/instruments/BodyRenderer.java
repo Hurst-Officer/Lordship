@@ -1,6 +1,7 @@
 package io.github.lordship.instruments;
 
-import java.util.ArrayList;
+import io.github.lordship.shared.TokenSyntax;
+
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -37,18 +38,11 @@ import java.util.regex.Pattern;
  */
 public final class BodyRenderer {
 
-    // Matches the authored form. Token names are namespaced -- term.rate,
-    // lot.lot_number -- so the dot belongs to the name. Deliberately identical
-    // to TemplateClause.TOKEN: what an author may write is one rule, and the
-    // save-time validator and this must not drift apart.
-    private static final Pattern TOKEN =
-            Pattern.compile("\\{\\{\\s*([a-z0-9_]+(?:\\.[a-z0-9_]+)+)\\s*}}");
-
-    // {{#each term.rent_schedule}} ... {{/each}}. DOTALL because a repeated row
-    // spans lines; reluctant quantifier so two blocks in one body stay separate.
-    private static final Pattern REPEAT = Pattern.compile(
-            "\\{\\{#each\\s+([a-z0-9_]+(?:\\.[a-z0-9_]+)+)\\s*}}(.*?)\\{\\{/each}}",
-            Pattern.DOTALL);
+    // The patterns live in TokenSyntax, not here. What an author may write is
+    // one rule, and a renderer that read it differently from the save-time
+    // validator would let a clause save clean and print wrong.
+    private static final Pattern TOKEN = TokenSyntax.TOKEN;
+    private static final Pattern REPEAT = TokenSyntax.REPEAT;
 
     private BodyRenderer() {}
 
@@ -152,22 +146,8 @@ public final class BodyRenderer {
         return out.toString();
     }
 
-    /**
-     * The list tokens a body repeats over, in the order they appear.
-     *
-     * <p>What the save-time validator needs in order to tell a legal row token
-     * from a typo: a row token is only meaningful inside a block over its own
-     * list.
-     */
+    /** The list tokens a body repeats over, in the order they appear. */
     public static List<String> repeatedLists(String bodyTemplate) {
-        List<String> found = new ArrayList<>();
-        if (bodyTemplate == null) {
-            return List.of();
-        }
-        Matcher block = REPEAT.matcher(bodyTemplate);
-        while (block.find()) {
-            found.add(block.group(1));
-        }
-        return List.copyOf(found);
+        return TokenSyntax.repeatedListsIn(bodyTemplate);
     }
 }

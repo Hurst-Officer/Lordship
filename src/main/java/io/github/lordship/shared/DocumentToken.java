@@ -2,6 +2,7 @@ package io.github.lordship.shared;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -155,6 +156,35 @@ public enum DocumentToken {
     VALID_AT("term.valid_at", Source.CHARGE_TERM, Format.DATE,
             "Date these figures take effect"),
 
+    // ---- term.rent_schedule : a lease that fixes rent years ahead -------------
+    // Five dated rents where an ordinary lease has one. RENT_SCHEDULE is the
+    // list a clause repeats over; the rent_step.* tokens are its columns and
+    // mean nothing outside that block. RENT_SCHEDULE_TYPE is what a clause
+    // branches on, so the one-rate sentence and the table are authored as two
+    // clauses rather than one with a hole in it.
+
+    RENT_SCHEDULE("term.rent_schedule", Source.COMPUTED, Format.REPEAT,
+            "The dated rents of a stepped lease -- repeat a clause over this to print the table"),
+    RENT_SCHEDULE_TYPE("term.rent_schedule_type", Source.COMPUTED, Format.ENUM,
+            "SINGLE / SCHEDULED -- selects the one-rate sentence or the schedule table",
+            Set.of("SINGLE", "SCHEDULED")),
+
+    RENT_STEP_PERIOD("rent_step.period", Source.COMPUTED, Format.TEXT,
+            "One step's span, as November 1, 2026 - October 31, 2027",
+            "term.rent_schedule"),
+    RENT_STEP_STARTS_ON("rent_step.starts_on", Source.COMPUTED, Format.DATE,
+            "First day of this step",
+            "term.rent_schedule"),
+    RENT_STEP_ENDS_ON("rent_step.ends_on", Source.COMPUTED, Format.DATE,
+            "Last day of this step; the final step ends when the lease does",
+            "term.rent_schedule"),
+    RENT_STEP_RATE("rent_step.rate", Source.COMPUTED, Format.MONEY,
+            "Monthly rent during this step",
+            "term.rent_schedule"),
+    RENT_STEP_RATE_IN_WORDS("rent_step.rate_in_words", Source.COMPUTED, Format.MONEY_WORDS,
+            "Monthly rent during this step, spelled out",
+            "term.rent_schedule"),
+
     // ---- instrument.* : this piece of paper ----------------------------------
 
     SERIAL("instrument.serial", Source.INSTRUMENT, Format.TEXT,
@@ -284,7 +314,8 @@ public enum DocumentToken {
         PERCENT_WORDS,  // one and one half percent
         DATE,
         LIST,           // water, sewer and trash
-        ENUM            // the only format a clause condition may test
+        ENUM,           // the only format a clause condition may test
+        REPEAT          // not printed: a clause repeats over it, once per row
     }
 
     /**
@@ -310,6 +341,14 @@ public enum DocumentToken {
     // moment a broken link would otherwise show up.
     static {
         for (DocumentToken t : values()) {
+            if (t.repeatsOverToken != null) {
+                DocumentToken list = BY_NAME.get(t.repeatsOverToken);
+                if (list == null || !list.isRepeatable()) {
+                    throw new IllegalStateException(
+                            t + " is a column of " + t.repeatsOverToken
+                                    + ", which is not a repeatable list");
+                }
+            }
             if (t.governedByToken == null) {
                 continue;
             }
@@ -337,29 +376,37 @@ public enum DocumentToken {
     private final Set<InstrumentType> resolvesOn;
     private final String governedByToken;
     private final Set<String> populatedWhen;
+    private final String repeatsOverToken;
 
     DocumentToken(String token, Source source, Format format, String description) {
-        this(token, source, format, description, Set.of(), Set.of(), null, Set.of());
+        this(token, source, format, description, Set.of(), Set.of(), null, Set.of(), null);
     }
 
     DocumentToken(String token, Source source, Format format, String description,
                   Set<String> allowedValues) {
-        this(token, source, format, description, allowedValues, Set.of(), null, Set.of());
+        this(token, source, format, description, allowedValues, Set.of(), null, Set.of(), null);
     }
 
     DocumentToken(String token, Source source, Format format, String description,
                   Set<String> allowedValues, Set<InstrumentType> resolvesOn) {
-        this(token, source, format, description, allowedValues, resolvesOn, null, Set.of());
+        this(token, source, format, description, allowedValues, resolvesOn, null, Set.of(), null);
     }
 
     DocumentToken(String token, Source source, Format format, String description,
                   String governedByToken, Set<String> populatedWhen) {
-        this(token, source, format, description, Set.of(), Set.of(), governedByToken, populatedWhen);
+        this(token, source, format, description, Set.of(), Set.of(), governedByToken, populatedWhen, null);
+    }
+
+    /** A column of a repeated list. repeatsOverToken names the list it belongs to. */
+    DocumentToken(String token, Source source, Format format, String description,
+                  String repeatsOverToken) {
+        this(token, source, format, description, Set.of(), Set.of(), null, Set.of(), repeatsOverToken);
     }
 
     DocumentToken(String token, Source source, Format format, String description,
                   Set<String> allowedValues, Set<InstrumentType> resolvesOn,
-                  String governedByToken, Set<String> populatedWhen) {
+                  String governedByToken, Set<String> populatedWhen,
+                  String repeatsOverToken) {
         this.token = token;
         this.source = source;
         this.format = format;
@@ -368,6 +415,7 @@ public enum DocumentToken {
         this.resolvesOn = Set.copyOf(resolvesOn);
         this.governedByToken = governedByToken;
         this.populatedWhen = Set.copyOf(populatedWhen);
+        this.repeatsOverToken = repeatsOverToken;
     }
 
     /** The name as it appears between the braces, without them. */
@@ -452,6 +500,36 @@ public enum DocumentToken {
     /** The governing method's values under which this token actually has a figure. */
     public Set<String> populatedWhen() {
         return populatedWhen;
+    }
+
+    /**
+     * Whether a clause repeats over this token rather than printing it.
+     *
+     * <p>A repeatable token has no value of its own -- {@code {{term.rent_schedule}}}
+     * on its own prints nothing. It is written as
+     * {@code {{#each term.rent_schedule}}...{{/each}}}, and the rent_step.*
+     * tokens inside resolve once per row.
+     */
+    public boolean isRepeatable() {
+        return format == Format.REPEAT;
+    }
+
+    /**
+     * The list this token is a column of. Empty for every ordinary token.
+     *
+     * <p>What the clause validator needs in order to tell a legal row token from
+     * a typo: rent_step.rate is meaningful inside a repeat over
+     * term.rent_schedule and nowhere else.
+     */
+    public Optional<DocumentToken> repeatsOver() {
+        return repeatsOverToken == null ? Optional.empty() : of(repeatsOverToken);
+    }
+
+    /** The columns a clause may use inside a repeat over this list, in declaration order. */
+    public static List<DocumentToken> rowTokensOf(DocumentToken list) {
+        return Arrays.stream(values())
+                .filter(t -> t.repeatsOver().orElse(null) == list)
+                .toList();
     }
 
     public static Optional<DocumentToken> of(String token) {

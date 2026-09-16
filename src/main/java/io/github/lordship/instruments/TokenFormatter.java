@@ -60,6 +60,9 @@ public final class TokenFormatter {
             case DATE -> date((LocalDate) value);
             case LIST -> list(asStrings(value));
             case TEXT, ENUM -> String.valueOf(value);
+            // A repeatable list has no scalar form: {{term.rent_schedule}} on its
+            // own prints nothing, and the renderer expands it as a block instead.
+            case REPEAT -> null;
         };
     }
 

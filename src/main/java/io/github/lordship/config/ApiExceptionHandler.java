@@ -1,5 +1,10 @@
 package io.github.lordship.config;
 
+import io.github.lordship.shared.DomainProblem;
+import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RuleConflict;
+import org.springframework.context.MessageSource;
+import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -11,6 +16,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.sql.SQLException;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -29,8 +36,80 @@ import java.util.stream.Collectors;
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
+    private final MessageSource messages;
+
+    public ApiExceptionHandler(MessageSource messages) {
+        this.messages = messages;
+    }
+
     private static ResponseEntity<Map<String, String>> of(HttpStatus status, String message) {
         return ResponseEntity.status(status).body(Map.of("message", message));
+    }
+
+    /**
+     * A rule the domain refused, said as a code and its arguments.
+     *
+     * <p>Answers with the sentence AND the structure: {@code message} keeps every
+     * existing caller working, while {@code problems} lets a form highlight the
+     * input at fault instead of printing a paragraph, and lets a frontend render
+     * its own wording if it would rather.
+     *
+     * <p>The sentence is resolved against the request's Accept-Language, so the
+     * day {@code messages_es.properties} exists a Spanish-reading property
+     * manager gets Spanish here with no other change anywhere.
+     *
+     * <p>Status comes from which exception it is, which is the same distinction
+     * the two handlers below already make: a bad request is 400, a conflict with
+     * existing state is 409.
+     */
+    @ExceptionHandler({InvalidRequest.class, RuleConflict.class})
+    ResponseEntity<Map<String, Object>> domainProblem(RuntimeException e) {
+        DomainProblem refused = (DomainProblem) e;
+        HttpStatus status = (e instanceof RuleConflict) ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST;
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message", sentence(refused));
+        body.put("code", refused.problem().code());
+        if (refused.problem().field() != null) {
+            body.put("field", refused.problem().field());
+        }
+        if (!refused.details().isEmpty()) {
+            body.put("problems", refused.details().stream().map(ApiExceptionHandler::describe).toList());
+        }
+        return ResponseEntity.status(status).body(body);
+    }
+
+    /** The umbrella, then whichever details failed -- one sentence to read and fix from. */
+    private String sentence(DomainProblem refused) {
+        String headline = resolve(refused.problem());
+        if (refused.details().isEmpty()) {
+            return headline;
+        }
+        return headline + " -- " + refused.details().stream()
+                .map(this::resolve)
+                .collect(Collectors.joining("; "));
+    }
+
+    /**
+     * A detail names its own field, because "must be greater than zero" is no
+     * use without knowing which box. The field is the API's own name for it, so
+     * a form can match it without translating anything.
+     */
+    private String resolve(DomainProblem.Problem problem) {
+        String text = messages.getMessage(
+                problem.code(), problem.args().toArray(), problem.code(),
+                LocaleContextHolder.getLocale());
+        return problem.field() == null ? text : problem.field() + ": " + text;
+    }
+
+    private static Map<String, Object> describe(DomainProblem.Problem problem) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("code", problem.code());
+        if (problem.field() != null) {
+            out.put("field", problem.field());
+        }
+        out.put("args", List.copyOf(problem.args()));
+        return out;
     }
 
     // @Valid on a request body failed
@@ -60,6 +139,9 @@ public class ApiExceptionHandler {
         return of(HttpStatus.BAD_REQUEST, "Missing required parameter: " + e.getParameterName());
     }
 
+    // Fallback for the throw sites not yet converted to InvalidRequest. Spring
+    // picks the closest match in the hierarchy, so a converted throw lands on
+    // the handler above rather than here.
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
         return of(HttpStatus.BAD_REQUEST, String.valueOf(e.getMessage()));
