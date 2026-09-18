@@ -27,7 +27,7 @@ public class PropertyDocumentCustomizationRepository {
     // what it does it to are its identity. Only the added clause's own content
     // moves.
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
-            "ordinal", "title", "body", "condition_field", "condition_values", "note"
+            "ordinal", "title", "body", "condition_field", "condition_values", "note", "parent"
     );
 
     private final JdbcClient jdbc;
@@ -216,6 +216,25 @@ public class PropertyDocumentCustomizationRepository {
                 .params(params)
                 .query(rowMapper)
                 .optional();
+    }
+
+    /**
+     * Whether a park's own clause still leans on this template clause -- sits
+     * under it, or cites it. Deleting the template clause would silently drop or
+     * break that park's rule.
+     */
+    public boolean existsLeaningOn(UUID templateClause) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1 FROM property_document_customization
+                             WHERE deleted_at IS NULL
+                               AND action = 'ADD_CLAUSE'
+                               AND (parent = :clause OR body LIKE '%ref:' || CAST(:clause AS text) || '%')
+                        )
+                        """)
+                .param("clause", templateClause)
+                .query(Boolean.class)
+                .single();
     }
 
     /** Undoing a customization puts the document back the way the template wrote it. */

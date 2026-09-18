@@ -23,6 +23,7 @@ public class InstrumentClauseRowMapper implements RowMapper<InstrumentClauseRow>
                 rs.getBigDecimal("ordinal"),
                 rs.getString("clause_key"),
                 rs.getString("title"),
+                rs.getString("label"),
                 rs.getString("body"),
                 rs.getString("body_template"),
                 rs.getString("statute_ref"),

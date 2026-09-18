@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -102,5 +103,25 @@ public class TokenSyntaxTest {
     @Test
     void misplacedRowTokens_shouldHandleANullBody() {
         assertTrue(TokenSyntax.misplacedRowTokens(null).isEmpty());
+    }
+
+    @Test
+    void refsIn_shouldFindEachCitedClauseOnce() {
+        // Arrange
+        UUID rent = UUID.fromString("0192f000-0000-7000-8000-000000000001");
+        UUID pets = UUID.fromString("0192f000-0000-7000-8000-000000000002");
+        String body = "See {{ref:" + rent + "}} and {{ ref:" + pets + " }}, and again {{ref:" + rent + "}}.";
+
+        // Act / Assert
+        assertEquals(List.of(rent, pets), TokenSyntax.refsIn(body));
+    }
+
+    @Test
+    void refsIn_shouldNotBeMistakenForATokenName() {
+        // Arrange -- a ref must never reach the unknown-token check
+        String body = "See {{ref:0192f000-0000-7000-8000-000000000001}}.";
+
+        // Act / Assert
+        assertTrue(TokenSyntax.tokenNamesIn(body).isEmpty());
     }
 }

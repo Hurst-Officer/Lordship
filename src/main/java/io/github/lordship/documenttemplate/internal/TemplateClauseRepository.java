@@ -17,7 +17,8 @@ public class TemplateClauseRepository {
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
             "ordinal", "clause_key", "title", "body",
             "condition_field", "condition_values",
-            "required", "statute_ref", "note"
+            "required", "statute_ref", "note",
+            "parent", "variant_of", "numbered", "requires_next", "style"
     );
 
     private final JdbcClient jdbc;

@@ -12,7 +12,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -63,6 +62,10 @@ public class DocumentTemplateController {
             Map.entry("listedAsAddendum", "listed_as_addendum"),
             Map.entry("required", "required"),
             Map.entry("statuteRef", "statute_ref"),
+            Map.entry("numberFormats", "number_formats"),
+            Map.entry("citeFormats", "cite_formats"),
+            Map.entry("styleId", "style"),
+            Map.entry("titleStyleId", "title_style"),
             Map.entry("note", "note"));
 
     private static final Map<String, String> CLAUSE_PATCHABLE = Map.ofEntries(
@@ -74,6 +77,17 @@ public class DocumentTemplateController {
             Map.entry("conditionValues", "condition_values"),
             Map.entry("required", "required"),
             Map.entry("statuteRef", "statute_ref"),
+            Map.entry("parentId", "parent"),
+            Map.entry("variantOfId", "variant_of"),
+            Map.entry("numbered", "numbered"),
+            Map.entry("requiresNextId", "requires_next"),
+            Map.entry("styleId", "style"),
+            Map.entry("note", "note"));
+
+    private static final Map<String, String> STYLE_PATCHABLE = Map.ofEntries(
+            Map.entry("name", "name"),
+            Map.entry("css", "css"),
+            Map.entry("target", "target"),
             Map.entry("note", "note"));
 
     private final DocumentTemplateService documentTemplateService;
@@ -91,6 +105,9 @@ public class DocumentTemplateController {
     // A section has to be called something. Everything else -- the signature
     // block, the addenda checkbox, whether a park may drop it -- is PATCH.
     public record CreateSectionRequest(@NotBlank String name) { }
+
+    // Same shape: a style is called something, and its css arrives by PATCH.
+    public record CreateStyleRequest(@NotBlank String name) { }
 
     // ---- templates -----------------------------------------------------------
 
@@ -221,6 +238,43 @@ public class DocumentTemplateController {
                 : ResponseEntity.notFound().build();
     }
 
+    // ---- styles --------------------------------------------------------------
+
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @PostMapping("/{templateUuid}/styles")
+    public ResponseEntity<DocumentTemplateResponse> createStyle(
+            @PathVariable UUID templateUuid,
+            @Valid @RequestBody CreateStyleRequest request) {
+
+        return documentTemplateService.createStyle(templateUuid, request.name())
+                .map(DocumentTemplateResponse::from)
+                .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // target set = restyle that part of every page (the admin's edit to the
+    // built-in look); target null = a named style clauses and sections pick.
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @PatchMapping("/styles/{styleUuid}")
+    public ResponseEntity<DocumentTemplateResponse> patchStyle(
+            @PathVariable UUID styleUuid,
+            @RequestBody Map<String, Object> request) {
+
+        return documentTemplateService.patchStyle(styleUuid, columns(request, STYLE_PATCHABLE))
+                .map(DocumentTemplateResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // 409 while a clause or section still wears it.
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @DeleteMapping("/styles/{styleUuid}")
+    public ResponseEntity<Void> deleteStyle(@PathVariable UUID styleUuid) {
+        return documentTemplateService.deleteStyle(styleUuid)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
+
     // ---- preview -------------------------------------------------------------
 
     // Supply one or the other. methodValues is typed by hand and works on a
@@ -337,19 +391,5 @@ public class DocumentTemplateController {
             }
         });
         return changes;
-    }
-
-    // This controller returns the message, like TenancyChargeTermController and
-    // unlike the older ones. "no such token {{raet}} -- did you mean {{rate}}?"
-    // is the entire value of the refusal, and an empty 400 throws it away.
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("message", String.valueOf(e.getMessage())));
-    }
-
-    @ExceptionHandler(IllegalStateException.class)
-    ResponseEntity<Map<String, String>> conflict(IllegalStateException e) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("message", String.valueOf(e.getMessage())));
     }
 }

@@ -39,7 +39,8 @@ public class PropertyDocumentCustomizationRowMapper implements RowMapper<Propert
                 rs.getString("note"),
                 rs.getObject("created_at", OffsetDateTime.class),
                 rs.getObject("created_by", UUID.class),
-                rs.getObject("deleted_at", OffsetDateTime.class)
+                rs.getObject("deleted_at", OffsetDateTime.class),
+                rs.getObject("parent", UUID.class)
         );
     }
 

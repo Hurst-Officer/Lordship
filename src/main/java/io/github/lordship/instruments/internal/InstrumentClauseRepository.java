@@ -29,10 +29,10 @@ public class InstrumentClauseRepository {
     public InstrumentClauseRow save(InstrumentClauseRow row) {
         return jdbc.sql("""
                         INSERT INTO instrument_clause (
-                            instrument, section, ordinal, clause_key, title,
+                            instrument, section, ordinal, clause_key, title, label,
                             body, body_template, statute_ref, origin, source_clause
                         ) VALUES (
-                            :instrument, :section, :ordinal, :clauseKey, :title,
+                            :instrument, :section, :ordinal, :clauseKey, :title, :label,
                             :body, :bodyTemplate, :statuteRef, :origin, :sourceClause
                         )
                         RETURNING *
@@ -42,6 +42,7 @@ public class InstrumentClauseRepository {
                 .param("ordinal", row.ordinal())
                 .param("clauseKey", row.clauseKey())
                 .param("title", row.title())
+                .param("label", row.label())
                 .param("body", row.body())
                 .param("bodyTemplate", row.bodyTemplate())
                 .param("statuteRef", row.statuteRef())

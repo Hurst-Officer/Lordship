@@ -23,7 +23,8 @@ public record PropertyDocumentCustomizationRow(
         String note,
         OffsetDateTime createdAt,
         UUID createdBy,
-        OffsetDateTime deletedAt
+        OffsetDateTime deletedAt,
+        UUID parent
 ) {
 
     public PropertyDocumentCustomization toPropertyDocumentCustomization() {
@@ -40,7 +41,8 @@ public record PropertyDocumentCustomizationRow(
                 this.conditionValues,
                 this.note,
                 this.createdAt,
-                this.deletedAt
+                this.deletedAt,
+                this.parent
         );
     }
 }

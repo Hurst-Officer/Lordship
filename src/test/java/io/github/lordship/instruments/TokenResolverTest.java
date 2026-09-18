@@ -20,6 +20,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -65,6 +66,16 @@ public class TokenResolverTest {
         assertEquals("Harbor View", values.scalar("property.community_name"));
         assertEquals("Vine Villa", values.scalar("property.city"));
         assertEquals("Ada Lovelace and Grace Hopper", values.scalar("tenancy.tenant_names"));
+    }
+
+    @Test
+    void resolve_shouldGiveEachTenantTheirOwnSignatureRow() {
+        // Arrange / Act
+        TokenValues values = TokenResolver.resolve(facts(scheduleOfFive()));
+
+        // Assert -- one row per signer, in the order they were named
+        assertEquals(List.of(Map.of("signer.name", "Ada Lovelace"), Map.of("signer.name", "Grace Hopper")),
+                values.list("tenancy.signers"));
     }
 
     // ---- the traps -----------------------------------------------------------
@@ -435,6 +446,50 @@ public class TokenResolverTest {
         // Assert
         assertNull(values.scalar("lot.rent_history_year_1"));
         assertNull(values.scalar("lot.rent_history_rate_1"));
+    }
+
+    // ---- the WA lease anniversary --------------------------------------------
+
+    @Test
+    void anniversary_shouldBeTheStartDate_forATwelveMonthTerm() {
+        // Arrange -- starts September 16, runs a year
+        Instrument lease = withTerm(LocalDate.of(2026, 9, 16), 12);
+
+        // Act / Assert
+        assertEquals(LocalDate.of(2026, 9, 16), TokenResolver.anniversary(lease).orElseThrow());
+    }
+
+    @Test
+    void anniversary_shouldBeTheFirstOfTheMonthAfterTheEnd_forAnyOtherLength() {
+        // Arrange -- 18 months from September 16 2026 last covers March 15 2028
+        Instrument lease = withTerm(LocalDate.of(2026, 9, 16), 18);
+
+        // Act / Assert
+        assertEquals(LocalDate.of(2028, 4, 1), TokenResolver.anniversary(lease).orElseThrow());
+    }
+
+    @Test
+    void anniversary_shouldLandOnTheFirst_whenTheTermEndsAtAMonthEnd() {
+        // Arrange -- 60 months from November 1 2026 last covers October 31 2031
+        TokenValues values = TokenResolver.resolve(facts(scheduleOfFive()));
+
+        // Assert -- printed without a year: it recurs
+        assertEquals("November 1", values.scalar("instrument.anniversary"));
+    }
+
+    @Test
+    void anniversary_shouldBeUnset_onPaperWithNoTerm() {
+        assertTrue(TokenResolver.anniversary(noticeWithNoTerm()).isEmpty());
+    }
+
+    private static Instrument withTerm(LocalDate start, int months) {
+        Instrument i = instrument();
+        return new Instrument(i.uuid(), i.tenancy(), i.type(), i.status(),
+                i.serial(), i.amends(), start, months, i.onExpiry(),
+                i.template(), i.templateVersion(), i.documentAssignment(),
+                i.generatedAt(), i.generatedFile(), i.sentAt(), i.sentBy(),
+                i.servedOn(), i.serviceMethod(), i.servedBy(), i.proofFile(),
+                i.returnedOn(), i.returnedFile(), i.note(), i.createdAt(), i.createdBy());
     }
 
     private static List<RentHistoryYear> history() {

@@ -34,9 +34,9 @@ public class TermsTemplateService {
     private static final Set<String> VIOLATION_FEE_METHODS = Set.of(
             FeeMethod.NONE.name(), FeeMethod.FLAT.name());
 
-    private static final Set<String> UTILITY_METHODS = Set.of("NONE", "FLAT", "RUBS", "SUBMETERED");
+    private static final Set<String> UTILITY_METHODS = Set.of("NONE", "INCLUDED", "FLAT", "RUBS", "SUBMETERED");
 
-    private static final Set<String> TRASH_METHODS = Set.of("NONE", "FLAT", "RUBS");
+    private static final Set<String> TRASH_METHODS = Set.of("NONE", "INCLUDED", "FLAT", "RUBS");
 
     private static final Set<String> SECURITY_DEPOSIT_METHODS = Set.of("NONE", "FLAT", "MULTIPLE_OF_RENT");
 
@@ -305,4 +305,4 @@ public class TermsTemplateService {
     private static String nameOf(Enum<?> value) {
         return value == null ? null : value.name();
     }
-}
+}

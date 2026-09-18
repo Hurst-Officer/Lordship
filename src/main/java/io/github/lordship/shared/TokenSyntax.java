@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -44,7 +45,28 @@ public final class TokenSyntax {
             "\\{\\{#each\\s+([a-z0-9_]+(?:\\.[a-z0-9_]+)+)\\s*}}(.*?)\\{\\{/each}}",
             Pattern.DOTALL);
 
+    /**
+     * A citation of another clause, {@code {{ref:<uuid>}}}. Prints as that
+     * clause's number for this deal. Kept apart from {@link #TOKEN} so a uuid
+     * never reaches the token vocabulary check.
+     */
+    public static final Pattern REF = Pattern.compile(
+            "\\{\\{\\s*ref:([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\\s*}}");
+
     private TokenSyntax() {}
+
+    /** Every clause this body cites, in the order they appear. */
+    public static List<UUID> refsIn(String body) {
+        Set<UUID> found = new LinkedHashSet<>();
+        if (body == null) {
+            return List.of();
+        }
+        Matcher matcher = REF.matcher(body);
+        while (matcher.find()) {
+            found.add(UUID.fromString(matcher.group(1)));
+        }
+        return List.copyOf(found);
+    }
 
     /** Every token named in this body, without braces, in the order they appear. */
     public static Set<String> tokenNamesIn(String body) {

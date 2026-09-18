@@ -21,7 +21,12 @@ public record TemplateClauseRow(
         String note,
         OffsetDateTime createdAt,
         UUID createdBy,
-        OffsetDateTime deletedAt
+        OffsetDateTime deletedAt,
+        UUID parent,
+        UUID variantOf,
+        boolean numbered,
+        UUID requiresNext,
+        UUID style
 ) {
 
     public TemplateClause toTemplateClause() {
@@ -37,7 +42,12 @@ public record TemplateClauseRow(
                 this.statuteRef,
                 this.note,
                 this.createdAt,
-                this.deletedAt
+                this.deletedAt,
+                this.parent,
+                this.variantOf,
+                this.numbered,
+                this.requiresNext,
+                this.style
         );
     }
 }

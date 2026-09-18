@@ -85,16 +85,16 @@ CREATE TABLE terms_template ( -- note when the property is NULL this is a global
                                 late_fee_amount   NUMERIC(12,2) NOT NULL DEFAULT 65.0 CONSTRAINT terms_template_late_fee_amount_must_not_be_negative CHECK (late_fee_amount >= 0), -- can be a percent OR a flat rate
 
                                 water_method      TEXT          NOT NULL DEFAULT 'NONE'
-                                    CONSTRAINT terms_template_water_method_must_be_known CHECK (water_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                    CONSTRAINT terms_template_water_method_must_be_known CHECK (water_method IN ('NONE','INCLUDED','FLAT','RUBS','SUBMETERED')),
                                 water_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_water_amount_must_not_be_negative CHECK (water_flat_amount >= 0),
                                 power_method      TEXT          NOT NULL DEFAULT 'NONE'
-                                    CONSTRAINT terms_template_power_method_must_be_known CHECK (power_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                    CONSTRAINT terms_template_power_method_must_be_known CHECK (power_method IN ('NONE','INCLUDED','FLAT','RUBS','SUBMETERED')),
                                 power_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_power_amount_must_not_be_negative CHECK (power_flat_amount >= 0),
                                 sewer_method      TEXT          NOT NULL DEFAULT 'NONE'
-                                    CONSTRAINT terms_template_sewer_method_must_be_known CHECK (sewer_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                    CONSTRAINT terms_template_sewer_method_must_be_known CHECK (sewer_method IN ('NONE','INCLUDED','FLAT','RUBS','SUBMETERED')),
                                 sewer_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_sewer_amount_must_not_be_negative CHECK (sewer_flat_amount >= 0),
                                 trash_method      TEXT          NOT NULL DEFAULT 'NONE'
-                                    CONSTRAINT terms_template_trash_method_must_be_known CHECK (trash_method IN ('NONE','FLAT','RUBS')),
+                                    CONSTRAINT terms_template_trash_method_must_be_known CHECK (trash_method IN ('NONE','INCLUDED','FLAT','RUBS')),
                                 trash_flat_amount NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_trash_amount_must_not_be_negative CHECK (trash_flat_amount >= 0),
 
                                 security_deposit_method   TEXT NOT NULL DEFAULT 'NONE'

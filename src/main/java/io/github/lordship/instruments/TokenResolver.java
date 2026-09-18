@@ -167,7 +167,7 @@ public final class TokenResolver {
     }
 
     private static boolean isCharged(UtilityMethod method) {
-        return method != null && method != UtilityMethod.NONE;
+        return method != null && method != UtilityMethod.NONE && method != UtilityMethod.INCLUDED;
     }
 
     // ---- instrument.* --------------------------------------------------------
@@ -183,12 +183,27 @@ public final class TokenResolver {
         // months from November 1 2026 ends October 31 2031, and printing
         // November 1 would give the tenant a free day.
         instrument.lastCoveredDay().ifPresent(day -> put(out, DocumentToken.TERM_END, day));
+        anniversary(instrument).ifPresent(day -> put(out, DocumentToken.ANNIVERSARY, TokenFormatter.monthAndDay(day)));
 
         if (instrument.generatedAt() != null) {
             LocalDate generatedOn = instrument.generatedAt().toLocalDate();
             put(out, DocumentToken.GENERATED_ON, generatedOn);
             put(out, DocumentToken.EXECUTION_YEAR, generatedOn.getYear());
         }
+    }
+
+    /**
+     * The WA lease anniversary. A 12-month term's is the day it starts; any
+     * other length's is the first of the month after its last covered day.
+     */
+    static java.util.Optional<LocalDate> anniversary(Instrument instrument) {
+        if (instrument.termStart() == null || instrument.termMonths() == null) {
+            return java.util.Optional.empty();
+        }
+        if (instrument.termMonths() == 12) {
+            return java.util.Optional.of(instrument.termStart());
+        }
+        return instrument.lastCoveredDay().map(last -> last.plusMonths(1).withDayOfMonth(1));
     }
 
     // ---- lot.* and property.* ------------------------------------------------
@@ -281,6 +296,12 @@ public final class TokenResolver {
     private static void putTenancy(TokenValues.Builder out, LeaseFacts facts) {
         put(out, DocumentToken.TENANT_NAMES, facts.tenantNames());
         put(out, DocumentToken.OCCUPANCY_DATE, facts.tenancy().startDate());
+
+        List<Map<String, String>> signers = new ArrayList<>();
+        for (String name : facts.tenantNames()) {
+            signers.add(Map.of(DocumentToken.SIGNER_NAME.token(), name));
+        }
+        out.putList(DocumentToken.SIGNERS.token(), signers);
     }
 
     // ---- the rent schedule ---------------------------------------------------
@@ -360,4 +381,4 @@ public final class TokenResolver {
             put(out, token, value);
         }
     }
-}
+}

@@ -17,6 +17,10 @@ import java.util.Set;
  * a line somebody writes on is a thing a lease needs and no amount of plain
  * text draws one that holds its width.
  *
+ * <p>Three line-level blocks as well: a line starting {@code - } is a bullet,
+ * {@code # } a numbered item, and {@code | a | b |} a table row. Their contents
+ * go through the same inline scan, so they add places to put text, not markup.
+ *
  * <p>Deliberately four. The allowlist is what makes rendering a stored body
  * safe, and it is safe because nothing in it takes a URL, a style, a class or
  * an event -- the one attribute there is is read as an integer and thrown away.
@@ -99,6 +103,21 @@ public final class ClauseMarkup {
             problems.add(DomainProblem.Problem.of("markup.never_closed", tag(open.pop())));
         }
 
+        // A table row with a cell more or less than the one above it prints a
+        // column out of line with its heading.
+        Integer width = null;
+        for (String line : body.split("\\n", -1)) {
+            if (kindOf(line) != Line.ROW) {
+                width = kindOf(line) == Line.BLANK ? width : null;
+                continue;
+            }
+            int cells = cells(line).size();
+            if (width != null && cells != width) {
+                problems.add(DomainProblem.Problem.of("markup.table_ragged", width, cells));
+            }
+            width = cells;
+        }
+
         if (!problems.isEmpty()) {
             throw InvalidRequest.withDetails("clause.body_has_bad_markup", problems);
         }
@@ -132,7 +151,132 @@ public final class ClauseMarkup {
         if (body == null) {
             return "";
         }
+        if (!hasBlocks(body)) {
+            return inline(body);
+        }
+        return blocks(body);
+    }
 
+    // ---- line-level blocks: bullets, numbered items, tables --------------------
+    //
+    // "- " starts a bullet, "# " a numbered item, and a line written | a | b | is
+    // a table row. Consecutive lines of one kind make one list or table; blank
+    // lines between them do not break it. The inside of every item and cell goes
+    // through the same inline scan, so nothing new can reach the page here.
+
+    private enum Line { TEXT, BULLET, NUMBERED, ROW, BLANK }
+
+    private static Line kindOf(String line) {
+        if (line.isBlank()) return Line.BLANK;
+        if (line.startsWith("- ")) return Line.BULLET;
+        if (line.startsWith("# ")) return Line.NUMBERED;
+        String t = line.strip();
+        if (t.startsWith("|") && t.endsWith("|") && t.length() > 1) return Line.ROW;
+        return Line.TEXT;
+    }
+
+    /** Whether this body has a list or a table in it -- a renderer wraps those in a block, not a paragraph. */
+    public static boolean hasBlocks(String body) {
+        if (body == null) {
+            return false;
+        }
+        for (String line : body.split("\n", -1)) {
+            Line kind = kindOf(line);
+            if (kind != Line.TEXT && kind != Line.BLANK) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String blocks(String body) {
+        String[] lines = body.split("\n", -1);
+        StringBuilder out = new StringBuilder(body.length() + 64);
+        List<String> text = new ArrayList<>();
+        int i = 0;
+        while (i < lines.length) {
+            Line kind = kindOf(lines[i]);
+            if (kind == Line.TEXT || kind == Line.BLANK) {
+                text.add(lines[i]);
+                i++;
+                continue;
+            }
+            flushText(out, text);
+
+            List<String> items = new ArrayList<>();
+            while (i < lines.length) {
+                Line here = kindOf(lines[i]);
+                if (here == kind) {
+                    items.add(lines[i]);
+                    i++;
+                } else if (here == Line.BLANK && nextNonBlank(lines, i) == kind) {
+                    i++;
+                } else {
+                    break;
+                }
+            }
+            switch (kind) {
+                case BULLET -> list(out, "ul", "bullets", items);
+                case NUMBERED -> list(out, "ol", "numbered", items);
+                default -> table(out, items);
+            }
+        }
+        flushText(out, text);
+        return out.toString();
+    }
+
+    private static Line nextNonBlank(String[] lines, int from) {
+        for (int j = from; j < lines.length; j++) {
+            Line kind = kindOf(lines[j]);
+            if (kind != Line.BLANK) return kind;
+        }
+        return Line.BLANK;
+    }
+
+    /** Plain lines between blocks, trimmed of the blank lines that only separated them. */
+    private static void flushText(StringBuilder out, List<String> text) {
+        int from = 0;
+        int to = text.size();
+        while (from < to && text.get(from).isBlank()) from++;
+        while (to > from && text.get(to - 1).isBlank()) to--;
+        if (from < to) {
+            out.append("<div class=\"seg\">").append(inline(String.join("\n", text.subList(from, to)))).append("</div>");
+        }
+        text.clear();
+    }
+
+    private static void list(StringBuilder out, String tag, String cls, List<String> items) {
+        out.append('<').append(tag).append(" class=\"").append(cls).append("\">");
+        for (String item : items) {
+            out.append("<li>").append(inline(item.substring(2))).append("</li>");
+        }
+        out.append("</").append(tag).append('>');
+    }
+
+    private static void table(StringBuilder out, List<String> rows) {
+        out.append("<table class=\"grid\">");
+        for (String row : rows) {
+            out.append("<tr>");
+            for (String cell : cells(row)) {
+                out.append("<td>").append(inline(cell)).append("</td>");
+            }
+            out.append("</tr>");
+        }
+        out.append("</table>");
+    }
+
+    private static List<String> cells(String row) {
+        String t = row.strip();
+        t = t.substring(1, t.length() - 1);
+        List<String> out = new ArrayList<>();
+        for (String cell : t.split("\\|", -1)) {
+            out.add(cell.strip());
+        }
+        return out;
+    }
+
+    /** The inline marks alone -- one stretch of text, closing whatever it opened. */
+    private static String inline(String body) {
         StringBuilder out = new StringBuilder(body.length() + 32);
         Deque<String> open = new ArrayDeque<>();
 

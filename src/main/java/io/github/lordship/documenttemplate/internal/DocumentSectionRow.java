@@ -7,7 +7,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
-/** All simple types, so JdbcClient maps this one without a RowMapper. */
+/** Mapped by {@link DocumentSectionRowMapper}: the two format columns are TEXT[]. */
 public record DocumentSectionRow(
         UUID uuid,
         UUID template,
@@ -21,7 +21,11 @@ public record DocumentSectionRow(
         String note,
         OffsetDateTime createdAt,
         UUID createdBy,
-        OffsetDateTime deletedAt
+        OffsetDateTime deletedAt,
+        List<String> numberFormats,
+        List<String> citeFormats,
+        UUID style,
+        UUID titleStyle
 ) {
 
     public DocumentSection toDocumentSection(List<TemplateClauseRow> clauseRows) {
@@ -37,7 +41,11 @@ public record DocumentSectionRow(
                 this.note,
                 this.createdAt,
                 this.deletedAt,
-                clauseRows.stream().map(TemplateClauseRow::toTemplateClause).toList()
+                clauseRows.stream().map(TemplateClauseRow::toTemplateClause).toList(),
+                this.numberFormats,
+                this.citeFormats,
+                this.style,
+                this.titleStyle
         );
     }
 

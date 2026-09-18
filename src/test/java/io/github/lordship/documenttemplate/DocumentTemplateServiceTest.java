@@ -4,6 +4,8 @@ import io.github.lordship.audit.AuditContext;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.documenttemplate.internal.DocumentSectionRepository;
 import io.github.lordship.documenttemplate.internal.DocumentSectionRow;
+import io.github.lordship.documenttemplate.internal.DocumentStyleRepository;
+import io.github.lordship.documenttemplate.internal.PropertyDocumentCustomizationRepository;
 import io.github.lordship.documenttemplate.internal.DocumentTemplateRepository;
 import io.github.lordship.documenttemplate.internal.DocumentTemplateRow;
 import io.github.lordship.documenttemplate.internal.TemplateClauseRepository;
@@ -43,6 +45,8 @@ public class DocumentTemplateServiceTest {
     private DocumentTemplateRepository documentTemplateRepository;
     private DocumentSectionRepository documentSectionRepository;
     private TemplateClauseRepository templateClauseRepository;
+    private DocumentStyleRepository documentStyleRepository;
+    private PropertyDocumentCustomizationRepository customizationRepository;
     private TenancyChargeTermService tenancyChargeTermService;
     private AuditService auditService;
     private AuditContext auditContext;
@@ -57,6 +61,8 @@ public class DocumentTemplateServiceTest {
         documentTemplateRepository = mock(DocumentTemplateRepository.class);
         documentSectionRepository = mock(DocumentSectionRepository.class);
         templateClauseRepository = mock(TemplateClauseRepository.class);
+        documentStyleRepository = mock(DocumentStyleRepository.class);
+        customizationRepository = mock(PropertyDocumentCustomizationRepository.class);
         tenancyChargeTermService = mock(TenancyChargeTermService.class);
         auditService = mock(AuditService.class);
         auditContext = mock(AuditContext.class);
@@ -65,6 +71,8 @@ public class DocumentTemplateServiceTest {
                 documentTemplateRepository,
                 documentSectionRepository,
                 templateClauseRepository,
+                documentStyleRepository,
+                customizationRepository,
                 tenancyChargeTermService,
                 auditService,
                 auditContext);
@@ -77,13 +85,15 @@ public class DocumentTemplateServiceTest {
     private TemplateClauseRow clauseRow(String conditionField, List<String> conditionValues) {
         return new TemplateClauseRow(
                 clauseId, sectionId, BigDecimal.valueOf(1000), "TEST", null, "body",
-                conditionField, conditionValues, false, null, null, null, null, null);
+                conditionField, conditionValues, false, null, null, null, null, null,
+                null, null, true, null, null);
     }
 
     private DocumentSectionRow sectionRow(boolean required) {
         return new DocumentSectionRow(
                 sectionId, templateId, BigDecimal.valueOf(1000), "Septic", "SEPTIC",
-                false, false, required, "RCW 59.20", null, null, null, null);
+                false, false, required, "RCW 59.20", null, null, null, null,
+                List.of(), List.of(), null, null);
     }
 
     private DocumentTemplateRow templateRow() {
@@ -113,13 +123,15 @@ public class DocumentTemplateServiceTest {
     private TemplateClauseRow clauseRowWithNote(String note) {
         return new TemplateClauseRow(
                 clauseId, sectionId, BigDecimal.valueOf(1000), "TEST", null, "body",
-                null, List.of(), false, null, note, null, null, null);
+                null, List.of(), false, null, note, null, null, null,
+                null, null, true, null, null);
     }
 
     private TemplateClauseRow clauseRowWithBody(String body) {
         return new TemplateClauseRow(
                 clauseId, sectionId, BigDecimal.valueOf(1000), "TEST", null, body,
-                null, List.of(), false, null, null, null, null, null);
+                null, List.of(), false, null, null, null, null, null,
+                null, null, true, null, null);
     }
 
     private static Map<String, Object> change(String key, Object value) {

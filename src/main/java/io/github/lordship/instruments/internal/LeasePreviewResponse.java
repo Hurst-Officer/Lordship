@@ -13,9 +13,10 @@ import java.util.UUID;
 /**
  * The lease as it would come out, and everything wrong with it.
  *
- * <p>{@code complete} is the one field the Generate button reads. The two
- * problem lists are what the office worker reads: a value nothing could fill,
- * and a section the statute requires that ended up with nothing in it.
+ * <p>{@code complete} is the one field the Generate button reads. The problem
+ * lists are what the office worker reads: a value nothing could fill, a section
+ * the statute requires that ended up with nothing in it, a reference to a
+ * clause that did not print, and a pair of clauses that came apart.
  *
  * <p>Each missing value carries the {@code source} it would have come from,
  * because {@code landlord.name} names the hole and not the fix. A property
@@ -41,6 +42,8 @@ public record LeasePreviewResponse(
         boolean complete,
         List<MissingValue> unresolved,
         List<String> omittedRequired,
+        List<String> brokenReferences,
+        List<String> separatedPairs,
         List<Section> sections
 ) {
 
@@ -77,6 +80,9 @@ public record LeasePreviewResponse(
             BigDecimal ordinal,
             String clauseKey,
             String title,
+            String number,
+            String label,
+            int depth,
             String body,
             String statuteRef,
             String origin,
@@ -92,6 +98,8 @@ public record LeasePreviewResponse(
                 preview.isComplete(),
                 frozen.unresolved().stream().map(token -> MissingValue.of(token, messages)).toList(),
                 frozen.omittedRequired(),
+                frozen.brokenReferences(),
+                frozen.separatedPairs(),
                 frozen.sections().stream().map(LeasePreviewResponse::section).toList());
     }
 
@@ -102,7 +110,8 @@ public record LeasePreviewResponse(
     }
 
     private static Clause clause(DocumentFreeze.FrozenClause c) {
-        return new Clause(c.ordinal(), c.clauseKey(), c.title(), c.body(), c.statuteRef(),
+        return new Clause(c.ordinal(), c.clauseKey(), c.title(), c.number(), c.label(), c.depth(),
+                c.body(), c.statuteRef(),
                 c.origin() == null ? null : c.origin().name(), c.unresolved());
     }
 }

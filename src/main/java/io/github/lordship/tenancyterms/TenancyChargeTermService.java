@@ -44,12 +44,13 @@ public class TenancyChargeTermService {
             FeeMethod.NONE.name(), FeeMethod.FLAT.name());
 
     private static final Set<String> UTILITY_METHODS = Set.of(
-            UtilityMethod.NONE.name(), UtilityMethod.FLAT.name(),
+            UtilityMethod.NONE.name(), UtilityMethod.INCLUDED.name(), UtilityMethod.FLAT.name(),
             UtilityMethod.RUBS.name(), UtilityMethod.SUBMETERED.name());
 
     // Trash is collected per container, so there is nothing to submeter.
     private static final Set<String> TRASH_METHODS = Set.of(
-            UtilityMethod.NONE.name(), UtilityMethod.FLAT.name(), UtilityMethod.RUBS.name());
+            UtilityMethod.NONE.name(), UtilityMethod.INCLUDED.name(), UtilityMethod.FLAT.name(),
+            UtilityMethod.RUBS.name());
 
     private static final Set<String> SECURITY_DEPOSIT_METHODS = Set.of(
             SecurityDepositMethod.NONE.name(), SecurityDepositMethod.FLAT.name(),
@@ -768,4 +769,4 @@ public class TenancyChargeTermService {
     private static String nameOf(Enum<?> value) {
         return value == null ? null : value.name();
     }
-}
+}
