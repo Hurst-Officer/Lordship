@@ -33,13 +33,18 @@ public class TemplateClauseRowMapper implements RowMapper<TemplateClauseRow> {
                 rs.getString("note"),
                 rs.getObject("created_at", OffsetDateTime.class),
                 rs.getObject("created_by", UUID.class),
-                rs.getObject("deleted_at", OffsetDateTime.class)
+                rs.getObject("deleted_at", OffsetDateTime.class),
+                rs.getObject("parent", UUID.class),
+                rs.getObject("variant_of", UUID.class),
+                rs.getBoolean("numbered"),
+                rs.getObject("requires_next", UUID.class),
+                rs.getObject("style", UUID.class)
         );
     }
 
     // A null array and an empty one both mean "no condition", so both come back
     // as an empty list rather than making every caller null-check.
-    private static List<String> textArray(ResultSet rs, String column) throws SQLException {
+    static List<String> textArray(ResultSet rs, String column) throws SQLException {
         Array array = rs.getArray(column);
         if (array == null) {
             return List.of();

@@ -32,7 +32,8 @@ public record InstrumentAddition(
         String body,
         String note,
         OffsetDateTime createdAt,
-        OffsetDateTime deletedAt
+        OffsetDateTime deletedAt,
+        UUID parent
 ) {
     public boolean isSoftDeleted() {
         return deletedAt != null;

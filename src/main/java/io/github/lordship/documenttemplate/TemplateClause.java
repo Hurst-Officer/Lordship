@@ -20,6 +20,14 @@ import java.util.UUID;
  * clause is three rows: one for BANK_OR_FLAT, one for FLAT, and none at all for
  * NONE. Every body stays editable; what an author cannot do is attach
  * whichever-is-greater wording to a flat-fee deal.
+ *
+ * <p>Those rows are one clause as far as anyone citing it is concerned: the FLAT
+ * row carries {@code variantOf} = the BANK_OR_FLAT row, and a reference to either
+ * finds whichever one printed.
+ *
+ * <p>{@code parent} nests a clause under another ("9. Water" over A, B, C).
+ * {@code requiresNext} names the clause that must print directly after this one,
+ * on the same page. {@code style} is a {@code document_style} of this template.
  */
 public record TemplateClause(
         UUID uuid,
@@ -33,7 +41,12 @@ public record TemplateClause(
         String statuteRef,
         String note,
         OffsetDateTime createdAt,
-        OffsetDateTime deletedAt
+        OffsetDateTime deletedAt,
+        UUID parent,
+        UUID variantOf,
+        boolean numbered,
+        UUID requiresNext,
+        UUID style
 ) {
     public TemplateClause {
         conditionValues = (conditionValues == null) ? List.of() : List.copyOf(conditionValues);
@@ -41,6 +54,16 @@ public record TemplateClause(
 
     public boolean isSoftDeleted() {
         return deletedAt != null;
+    }
+
+    /** The uuid every variant of this clause shares -- what a reference resolves through. */
+    public UUID variantGroup() {
+        return variantOf != null ? variantOf : uuid;
+    }
+
+    /** Every clause this body cites. */
+    public List<UUID> refs() {
+        return TokenSyntax.refsIn(body);
     }
 
     public boolean isConditional() {

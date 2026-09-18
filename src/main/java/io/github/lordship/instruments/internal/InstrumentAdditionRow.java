@@ -20,7 +20,8 @@ public record InstrumentAdditionRow(
         String note,
         OffsetDateTime createdAt,
         UUID createdBy,
-        OffsetDateTime deletedAt
+        OffsetDateTime deletedAt,
+        UUID parent
 ) {
 
     public InstrumentAddition toInstrumentAddition() {
@@ -33,7 +34,8 @@ public record InstrumentAdditionRow(
                 this.body,
                 this.note,
                 this.createdAt,
-                this.deletedAt
+                this.deletedAt,
+                this.parent
         );
     }
 }

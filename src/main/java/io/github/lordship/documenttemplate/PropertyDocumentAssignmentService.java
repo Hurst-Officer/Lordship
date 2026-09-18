@@ -10,6 +10,7 @@ import io.github.lordship.documenttemplate.internal.PropertyDocumentCustomizatio
 import io.github.lordship.documenttemplate.internal.PropertyDocumentCustomizationRow;
 import io.github.lordship.properties.PropertyService;
 import io.github.lordship.shared.ClauseBodyRules;
+import io.github.lordship.shared.DomainProblem;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.InvalidRequest;
@@ -18,16 +19,19 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
  * Which documents a park may generate, and what it changes about them.
  *
- * <p>Assigning is the act that authorises a property to produce a kind of paper
+ * <p>Assigning is the act that authorizes a property to produce a kind of paper
  * at all -- a park with no LEASE assignment cannot generate a lease, however
  * complete the global template is.
  *
@@ -230,6 +234,7 @@ public class PropertyDocumentAssignmentService {
                         section.name(), section.statuteRef());
             }
             refuseDuplicateExclusion(assignmentUuid, sectionUuid);
+            refuseIfNeeded(document, assignmentUuid, ClauseLinks.clausesOf(document, sectionUuid), "section");
 
             PropertyDocumentCustomizationRow saved = customizationRepository.excludeSection(
                     assignmentUuid, sectionUuid, ActingAgent.resolve(auditContext));
@@ -250,6 +255,7 @@ public class PropertyDocumentAssignmentService {
                         : RuleConflict.of("clause.is_required_by_statute", clause.statuteRef());
             }
             refuseDuplicateExclusion(assignmentUuid, clauseUuid);
+            refuseIfNeeded(document, assignmentUuid, Set.of(clauseUuid), "clause");
 
             PropertyDocumentCustomizationRow saved = customizationRepository.excludeClause(
                     assignmentUuid, clauseUuid, ActingAgent.resolve(auditContext));
@@ -299,15 +305,33 @@ public class PropertyDocumentAssignmentService {
             throw InvalidRequest.of("customization.not_editable", before.action());
         }
 
-        Map<String, Object> effective = ClauseBodyRules.withConditionClearing(changes);
+        Map<String, Object> effective = new HashMap<>(ClauseBodyRules.withConditionClearing(changes));
         ClauseBodyRules.validateBody(effective);
         ClauseBodyRules.validateCondition(
                 before.conditionField(), before.conditionValues(), effective);
+        if (effective.get("parent") != null && !(effective.get("parent") instanceof UUID)) {
+            try {
+                effective.put("parent", UUID.fromString(String.valueOf(effective.get("parent"))));
+            } catch (IllegalArgumentException e) {
+                throw InvalidRequest.onField("parent", "request.not_a_uuid", effective.get("parent"));
+            }
+        }
 
         Optional<PropertyDocumentCustomizationRow> afterOpt =
                 customizationRepository.patch(customizationUuid, effective);
         if (afterOpt.isEmpty()) {
             return Optional.empty();
+        }
+
+        // Against the document as it stands; a refusal rolls the write back.
+        DocumentTemplate document = assignmentRepository.findById(before.assignment())
+                .map(this::fullTemplateFor)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Customization " + customizationUuid + " points at an assignment that no longer exists"));
+        List<DomainProblem.Problem> problems = ClauseLinks.problemsWithParkClause(
+                document, afterOpt.get().toPropertyDocumentCustomization());
+        if (!problems.isEmpty()) {
+            throw InvalidRequest.withDetails("customization.not_saved", problems);
         }
 
         AuditMapper.Diff diff = AuditMapper.diff(before, afterOpt.get());
@@ -392,6 +416,27 @@ public class PropertyDocumentAssignmentService {
         });
     }
 
+    /**
+     * A park may not drop a clause that another clause it keeps still cites, or
+     * must sit directly above -- the lease would come out refused at generate, and
+     * it is better to hear that now than when an office worker is in a hurry.
+     */
+    private void refuseIfNeeded(DocumentTemplate document, UUID assignmentUuid, Set<UUID> dropping, String kind) {
+        Set<UUID> alreadyDropped = new HashSet<>();
+        for (PropertyDocumentCustomization existing : customizationsOf(assignmentUuid)) {
+            if (existing.excludedClause() != null) {
+                alreadyDropped.add(existing.excludedClause());
+            }
+            if (existing.excludedSection() != null
+                    && document.sections().stream().anyMatch(s -> s.uuid().equals(existing.excludedSection()))) {
+                alreadyDropped.addAll(ClauseLinks.clausesOf(document, existing.excludedSection()));
+            }
+        }
+        ClauseLinks.exclusionBlocker(document, dropping, alreadyDropped, kind).ifPresent(problem -> {
+            throw RuleConflict.of(problem.code(), problem.args().toArray());
+        });
+    }
+
     private void recordInsert(PropertyDocumentCustomizationRow saved) {
         auditService.recordInsert(
                 "property_document_customization", saved.uuid(), AuditMapper.toMap(saved));
@@ -436,6 +481,7 @@ public class PropertyDocumentAssignmentService {
                 template.note(),
                 template.createdAt(),
                 template.deletedAt(),
+                List.of(),
                 List.of());
     }
 }

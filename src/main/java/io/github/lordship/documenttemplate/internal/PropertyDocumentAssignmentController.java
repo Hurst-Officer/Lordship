@@ -171,6 +171,7 @@ public class PropertyDocumentAssignmentController {
             Map.entry("body", "body"),
             Map.entry("conditionField", "condition_field"),
             Map.entry("conditionValues", "condition_values"),
+            Map.entry("parentId", "parent"),
             Map.entry("note", "note"));
 
     /**

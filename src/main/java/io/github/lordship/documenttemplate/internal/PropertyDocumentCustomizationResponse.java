@@ -26,7 +26,8 @@ public record PropertyDocumentCustomizationResponse(
         String conditionField,
         List<String> conditionValues,
         String note,
-        OffsetDateTime createdAt
+        OffsetDateTime createdAt,
+        UUID parentId
 ) {
 
     public static PropertyDocumentCustomizationResponse from(PropertyDocumentCustomization c) {
@@ -41,6 +42,7 @@ public record PropertyDocumentCustomizationResponse(
                 c.conditionField(),
                 c.conditionValues(),
                 c.note(),
-                c.createdAt());
+                c.createdAt(),
+                c.parent());
     }
 }

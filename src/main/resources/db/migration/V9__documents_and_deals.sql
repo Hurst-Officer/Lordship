@@ -9,6 +9,12 @@
 --     inside the body
 --   * instrument_clause keeps body_template alongside body, so a served
 --     document can be re-checked against the term it was printed from
+--   * clauses nest (parent), have variants (variant_of), can be glued to the
+--     next clause (requires_next) and styled (document_style). Numbers are
+--     assigned at freeze from the section's formats, never typed into a body
+--   * document_style.target: a style with a target restyles that part of every
+--     page (the admin's edit to the built-in look); without one it is a named
+--     style a clause or section picks
 
 -- Every blob, in and out: rendered PDFs, proof of service, signed returns,
 -- scanned legacy leases. Not clauses -- clauses live in template_clause.
@@ -55,6 +61,21 @@ CREATE TABLE document_template (
 );
 
 
+-- NEW. Styles an admin writes for one template. A clause points at a style by
+-- uuid, so renaming a style never strips it off the clauses using it.
+CREATE TABLE document_style (
+                                uuid       UUID PRIMARY KEY DEFAULT uuidv7(),
+                                template   UUID NOT NULL REFERENCES document_template(uuid),
+                                name       TEXT NOT NULL, -- "statutory-notice"
+                                css        TEXT NOT NULL, -- declarations only; no @import, no url()
+                                target     TEXT, -- PAGE, BODY, SECTION_TITLE, CLAUSE_TITLE, NUMBER, STATUTE; null = named style
+                                note       TEXT,
+                                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                                created_by UUID NOT NULL REFERENCES agent(uuid),
+                                deleted_at TIMESTAMPTZ
+);
+
+
 -- One packet is several sub-documents -- Checklist, Tenant Information, Lot
 -- Rental Agreement, Rules and Regulations, Vehicle Agreement, Pet Agreement,
 -- Septic Addendum -- each signed separately and each with its own line in the
@@ -69,6 +90,14 @@ CREATE TABLE document_section (
                                   listed_as_addendum BOOLEAN NOT NULL DEFAULT FALSE, -- gets a checkbox in the packet's addenda list
                                   required        BOOLEAN NOT NULL DEFAULT FALSE, -- a property cannot drop it
                                   statute_ref     TEXT,
+
+    -- one entry per level. {1} {2} {3} name a level; :A :a :I :i pick letters or roman
+                                  number_formats  TEXT[] NOT NULL DEFAULT ARRAY['{1}.', '{2:A}.', '({3:i})'], -- as printed beside the clause: 9.  A.  (ii)
+                                  cite_formats    TEXT[] NOT NULL DEFAULT ARRAY['{1}', '{1}{2:A}', '{1}{2:A}({3:i})'], -- as printed by a reference: 9  9C  9C(ii)
+
+                                  style           UUID REFERENCES document_style(uuid), -- the whole sub-document
+                                  title_style     UUID REFERENCES document_style(uuid), -- its heading only
+
                                   note            TEXT,
                                   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
                                   created_by      UUID NOT NULL REFERENCES agent(uuid),
@@ -93,9 +122,15 @@ CREATE TABLE template_clause (
                                  uuid        UUID PRIMARY KEY DEFAULT uuidv7(),
                                  section     UUID NOT NULL REFERENCES document_section(uuid),
                                  ordinal     NUMERIC(10,4) NOT NULL, -- sparse sort key within the section: 12.5 slots between 12 and 13
-                                 clause_key  TEXT, -- stable identity across versions, e.g. RENT_AND_FEES
+                                 clause_key  TEXT, -- handle for seeds and cross-lease search; never shown to the admin, never what a ref points at
                                  title       TEXT,
-                                 body        TEXT, -- tokens only, never a literal amount
+                                 body        TEXT, -- tokens only, never a literal amount; cites other clauses as {{ref:<uuid>}}
+
+                                 parent        UUID REFERENCES template_clause(uuid), -- null = top level; "Water" is the parent of A, B, C
+                                 variant_of    UUID REFERENCES template_clause(uuid), -- the FLAT nsf clause is variant_of the BANK_OR_FLAT one; a ref to either finds whichever printed
+                                 numbered      BOOLEAN NOT NULL DEFAULT TRUE, -- false for intros, signature lines
+                                 requires_next UUID REFERENCES template_clause(uuid), -- must print directly after this one, same page
+                                 style         UUID REFERENCES document_style(uuid),
 
                                  condition_field  TEXT,   -- a name from the code-side token registry; null means always include
                                  condition_values TEXT[], -- include when the term's value for that field is in this set
@@ -154,6 +189,7 @@ CREATE TABLE property_document_customization (
                                                  clause      UUID REFERENCES template_clause(uuid),  -- EXCLUDE_CLAUSE only
 
                                                  ordinal     NUMERIC(10,4), -- ADD_CLAUSE: shares the coordinate space with template_clause.ordinal
+                                                 parent      UUID REFERENCES template_clause(uuid), -- ADD_CLAUSE: a park rule can go under "Water"
                                                  title       TEXT,
                                                  body        TEXT,
 
@@ -303,6 +339,7 @@ CREATE TABLE instrument_clause (
                                    ordinal       NUMERIC(10,4) NOT NULL,
                                    clause_key    TEXT, -- carried through so "the rent clause" is findable across leases
                                    title         TEXT,
+                                   label         TEXT, -- the cited number, "9C"; null when unnumbered
                                    body          TEXT NOT NULL, -- the words on the page, amounts and all
                                    body_template TEXT NOT NULL, -- the same words with the tokens still in them
                                    statute_ref   TEXT, -- copied down so a generate-time completeness check has something to test
@@ -344,6 +381,7 @@ CREATE TABLE instrument_addition (
                                      instrument UUID NOT NULL REFERENCES instrument(uuid),
                                      section    UUID NOT NULL REFERENCES document_section(uuid), -- shares template_clause's ordinal space
                                      ordinal    NUMERIC(10,4) NOT NULL,
+                                     parent     UUID REFERENCES template_clause(uuid),
                                      title      TEXT,
                                      body       TEXT, -- filled in by a patch: add clause is a button, not a form
                                      note       TEXT,
@@ -388,16 +426,16 @@ CREATE TABLE tenancy_charge_term (
                                      late_fee_amount   NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_late_fee_amount_must_not_be_negative CHECK (late_fee_amount >= 0), -- can be a percent OR a flat rate
 
                                      water_method      TEXT NOT NULL
-                                         CONSTRAINT charge_term_water_method_must_be_known CHECK (water_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                         CONSTRAINT charge_term_water_method_must_be_known CHECK (water_method IN ('NONE','INCLUDED','FLAT','RUBS','SUBMETERED')),
                                      water_flat_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_water_amount_must_not_be_negative CHECK (water_flat_amount >= 0),
                                      power_method      TEXT NOT NULL
-                                         CONSTRAINT charge_term_power_method_must_be_known CHECK (power_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                         CONSTRAINT charge_term_power_method_must_be_known CHECK (power_method IN ('NONE','INCLUDED','FLAT','RUBS','SUBMETERED')),
                                      power_flat_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_power_amount_must_not_be_negative CHECK (power_flat_amount >= 0),
                                      sewer_method      TEXT NOT NULL
-                                         CONSTRAINT charge_term_sewer_method_must_be_known CHECK (sewer_method IN ('NONE','FLAT','RUBS','SUBMETERED')),
+                                         CONSTRAINT charge_term_sewer_method_must_be_known CHECK (sewer_method IN ('NONE','INCLUDED','FLAT','RUBS','SUBMETERED')),
                                      sewer_flat_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_sewer_amount_must_not_be_negative CHECK (sewer_flat_amount >= 0),
                                      trash_method      TEXT NOT NULL
-                                         CONSTRAINT charge_term_trash_method_must_be_known CHECK (trash_method IN ('NONE','FLAT','RUBS')),
+                                         CONSTRAINT charge_term_trash_method_must_be_known CHECK (trash_method IN ('NONE','INCLUDED','FLAT','RUBS')),
                                      trash_flat_amount NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_trash_amount_must_not_be_negative CHECK (trash_flat_amount >= 0),
 
                                      security_deposit_method   TEXT NOT NULL

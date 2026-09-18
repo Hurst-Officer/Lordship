@@ -17,7 +17,8 @@ import java.util.UUID;
  * <ul>
  *   <li>EXCLUDE_SECTION -- {@code section}
  *   <li>EXCLUDE_CLAUSE -- {@code clause}
- *   <li>ADD_CLAUSE -- {@code section} receives it, plus ordinal, title, body
+ *   <li>ADD_CLAUSE -- {@code section} receives it, plus ordinal, title, body,
+ *       and optionally {@code parent} to put it under a template clause
  * </ul>
  *
  * <p>A park-authored clause may be conditional on the same terms a template
@@ -37,7 +38,8 @@ public record PropertyDocumentCustomization(
         List<String> conditionValues,
         String note,
         OffsetDateTime createdAt,
-        OffsetDateTime deletedAt
+        OffsetDateTime deletedAt,
+        UUID parent
 ) {
     public PropertyDocumentCustomization {
         conditionValues = (conditionValues == null) ? List.of() : List.copyOf(conditionValues);

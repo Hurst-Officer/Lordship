@@ -190,6 +190,11 @@ public final class TokenFormatter {
     // ---- dates and lists -----------------------------------------------------
 
     /** November 1, 2026. */
+    /** "November 1" -- an anniversary recurs, so it has no year. */
+    public static String monthAndDay(LocalDate value) {
+        return value.format(DateTimeFormatter.ofPattern("MMMM d", Locale.US));
+    }
+
     public static String date(LocalDate value) {
         return value.format(DATE);
     }

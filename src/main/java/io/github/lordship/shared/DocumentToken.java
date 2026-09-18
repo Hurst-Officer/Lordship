@@ -109,26 +109,26 @@ public enum DocumentToken {
             "term.rule_violation_fee_method", Set.of("FLAT")),
 
     WATER_METHOD("term.water_method", Source.CHARGE_TERM, Format.ENUM,
-            "NONE / FLAT / RUBS / SUBMETERED -- selects the water clause",
-            Set.of("NONE", "FLAT", "RUBS", "SUBMETERED")),
+            "NONE / INCLUDED / FLAT / RUBS / SUBMETERED -- selects the water clause",
+            Set.of("NONE", "INCLUDED", "FLAT", "RUBS", "SUBMETERED")),
     WATER_FLAT_AMOUNT("term.water_flat_amount", Source.CHARGE_TERM, Format.MONEY,
             "Water charge, when the method is FLAT",
             "term.water_method", Set.of("FLAT")),
     POWER_METHOD("term.power_method", Source.CHARGE_TERM, Format.ENUM,
-            "NONE / FLAT / RUBS / SUBMETERED",
-            Set.of("NONE", "FLAT", "RUBS", "SUBMETERED")),
+            "NONE / INCLUDED / FLAT / RUBS / SUBMETERED",
+            Set.of("NONE", "INCLUDED", "FLAT", "RUBS", "SUBMETERED")),
     POWER_FLAT_AMOUNT("term.power_flat_amount", Source.CHARGE_TERM, Format.MONEY,
             "Power charge, when the method is FLAT",
             "term.power_method", Set.of("FLAT")),
     SEWER_METHOD("term.sewer_method", Source.CHARGE_TERM, Format.ENUM,
-            "NONE / FLAT / RUBS / SUBMETERED -- also selects the septic vs city sewer addendum",
-            Set.of("NONE", "FLAT", "RUBS", "SUBMETERED")),
+            "NONE / INCLUDED / FLAT / RUBS / SUBMETERED",
+            Set.of("NONE", "INCLUDED", "FLAT", "RUBS", "SUBMETERED")),
     SEWER_FLAT_AMOUNT("term.sewer_flat_amount", Source.CHARGE_TERM, Format.MONEY,
             "Sewer charge, when the method is FLAT",
             "term.sewer_method", Set.of("FLAT")),
     TRASH_METHOD("term.trash_method", Source.CHARGE_TERM, Format.ENUM,
-            "NONE / FLAT / RUBS",
-            Set.of("NONE", "FLAT", "RUBS")),
+            "NONE / INCLUDED / FLAT / RUBS",
+            Set.of("NONE", "INCLUDED", "FLAT", "RUBS")),
     TRASH_FLAT_AMOUNT("term.trash_flat_amount", Source.CHARGE_TERM, Format.MONEY,
             "Trash charge, when the method is FLAT",
             "term.trash_method", Set.of("FLAT")),
@@ -207,6 +207,11 @@ public enum DocumentToken {
     ON_EXPIRY("instrument.on_expiry", Source.INSTRUMENT, Format.ENUM,
             "MONTH_TO_MONTH / AUTO_RENEW / TERMINATE -- selects the renewal clause",
             Set.of("MONTH_TO_MONTH", "AUTO_RENEW", "TERMINATE"), On.TERM_CARRYING),
+    // WA: a 12-month term's anniversary is its first day; any other length's is
+    // the first of the month after it ends.
+    ANNIVERSARY("instrument.anniversary", Source.COMPUTED, Format.TEXT,
+            "The lease anniversary as month and day, e.g. November 1",
+            Set.of(), On.TERM_CARRYING),
     GENERATED_ON("instrument.generated_on", Source.INSTRUMENT, Format.DATE,
             "Date this document was produced"),
     EXECUTION_YEAR("instrument.execution_year", Source.INSTRUMENT, Format.INTEGER,
@@ -271,6 +276,22 @@ public enum DocumentToken {
             Set.of(), On.INTRODUCES_A_TENANT),
     OCCUPANCY_DATE("tenancy.occupancy_date", Source.TENANCY, Format.DATE,
             "Possession date -- tenancy.start_date, not the lease term"),
+
+    // ---- packet.* : the envelope this document goes out in ------------------
+
+    // Filled in by the freeze, not the resolver: which sub-documents are attached
+    // is only known once park exclusions and empty sections have been applied.
+    PACKET_ADDENDA("packet.addenda", Source.COMPUTED, Format.LIST,
+            "The addenda attached to this packet, by name"),
+
+    // One row per tenant who signs, so a signature block prints a line per
+    // person instead of the author guessing how many to draw. Co-signers are
+    // tenants in Lordship, so they get a line too.
+    SIGNERS("tenancy.signers", Source.COMPUTED, Format.REPEAT,
+            "Everyone who signs as a tenant -- repeat a signature line over this"),
+    SIGNER_NAME("signer.name", Source.COMPUTED, Format.TEXT,
+            "This signer's full name, printed under their line",
+            "tenancy.signers"),
 
     // sql: LANDLORD_NAME is payable_to in property
     LANDLORD_NAME("landlord.name", Source.PROPERTY, Format.TEXT,
@@ -534,4 +555,4 @@ public enum DocumentToken {
     public static Set<String> tokenNames() {
         return BY_NAME.keySet();
     }
-}
+}

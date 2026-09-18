@@ -10,6 +10,8 @@ import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.DocumentToken;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.RuleConflict;
+import io.github.lordship.shared.StyleTarget;
+import io.github.lordship.shared.DomainProblem.Problem;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
 import io.github.lordship.tenancyterms.TenancyChargeTermService;
@@ -17,6 +19,9 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +47,8 @@ public class DocumentTemplateService {
     private final DocumentTemplateRepository documentTemplateRepository;
     private final DocumentSectionRepository documentSectionRepository;
     private final TemplateClauseRepository templateClauseRepository;
+    private final DocumentStyleRepository documentStyleRepository;
+    private final PropertyDocumentCustomizationRepository customizationRepository;
     private final TenancyChargeTermService tenancyChargeTermService;
     private final AuditService auditService;
     private final AuditContext auditContext;
@@ -49,12 +56,16 @@ public class DocumentTemplateService {
     public DocumentTemplateService(DocumentTemplateRepository documentTemplateRepository,
                                    DocumentSectionRepository documentSectionRepository,
                                    TemplateClauseRepository templateClauseRepository,
+                                   DocumentStyleRepository documentStyleRepository,
+                                   PropertyDocumentCustomizationRepository customizationRepository,
                                    TenancyChargeTermService tenancyChargeTermService,
                                    AuditService auditService,
                                    AuditContext auditContext) {
         this.documentTemplateRepository = documentTemplateRepository;
         this.documentSectionRepository = documentSectionRepository;
         this.templateClauseRepository = templateClauseRepository;
+        this.documentStyleRepository = documentStyleRepository;
+        this.customizationRepository = customizationRepository;
         this.tenancyChargeTermService = tenancyChargeTermService;
         this.auditService = auditService;
         this.auditContext = auditContext;
@@ -209,10 +220,19 @@ public class DocumentTemplateService {
         }
         DocumentSectionRow before = beforeOpt.get();
 
-        Optional<DocumentSectionRow> afterOpt = documentSectionRepository.patch(sectionUuid, changes);
+        Map<String, Object> effective = new HashMap<>(changes);
+        asUuids(effective, "style", "title_style");
+        asFormats(effective, "number_formats", "cite_formats");
+
+        DocumentTemplate beforeDoc = hydrateById(before.template());
+        Optional<DocumentSectionRow> afterOpt = documentSectionRepository.patch(sectionUuid, effective);
         if (afterOpt.isEmpty()) {
             return Optional.empty();
         }
+
+        refuseNew("section.not_saved",
+                ClauseLinks.problemsWithSection(beforeDoc, sectionUuid),
+                ClauseLinks.problemsWithSection(hydrateById(before.template()), sectionUuid));
 
         Set<String> changed = recordUpdate("document_section", sectionUuid, before, afterOpt.get());
         return Optional.of(reload(before.template(), affectsPrintedOutput(changed)));
@@ -270,19 +290,30 @@ public class DocumentTemplateService {
         ClauseBodyRules.validateBody(effective);
         ClauseBodyRules.validateCondition(
                 before.conditionField(), before.conditionValues(), effective);
-
-        Optional<TemplateClauseRow> afterOpt = templateClauseRepository.patch(clauseUuid, effective);
-        if (afterOpt.isEmpty()) {
-            return Optional.empty();
-        }
-
-        Set<String> changed = recordUpdate("template_clause", clauseUuid, before, afterOpt.get());
+        asUuids(effective, "parent", "variant_of", "requires_next", "style");
 
         UUID templateId = documentSectionRepository.findById(before.section())
                 .map(DocumentSectionRow::template)
                 .orElseThrow(() -> new IllegalStateException(
                         "Clause " + clauseUuid + " points at a section that no longer exists"));
 
+        DocumentTemplate beforeDoc = hydrateById(templateId);
+        Optional<TemplateClauseRow> afterOpt = templateClauseRepository.patch(clauseUuid, effective);
+        if (afterOpt.isEmpty()) {
+            return Optional.empty();
+        }
+
+        // Checked against the document as it now stands, inside the transaction:
+        // a refusal rolls the write back. Only problems this edit introduced are
+        // refused, so a clause seeded with a broken link can still have its note fixed.
+        DocumentTemplate afterDoc = hydrateById(templateId);
+        List<Problem> was = new ArrayList<>(ClauseLinks.problemsWith(beforeDoc, clauseUuid));
+        was.addAll(ClauseLinks.brokenPairsIn(beforeDoc, before.section()));
+        List<Problem> now = new ArrayList<>(ClauseLinks.problemsWith(afterDoc, clauseUuid));
+        now.addAll(ClauseLinks.brokenPairsIn(afterDoc, before.section()));
+        refuseNew("clause.not_saved", was, now);
+
+        Set<String> changed = recordUpdate("template_clause", clauseUuid, before, afterOpt.get());
         return Optional.of(reload(templateId, affectsPrintedOutput(changed)));
     }
 
@@ -294,6 +325,15 @@ public class DocumentTemplateService {
                         ? RuleConflict.of("clause.is_required")
                         : RuleConflict.of("clause.is_required_by_statute", existing.statuteRef());
             }
+            documentSectionRepository.findById(existing.section())
+                    .map(section -> hydrateById(section.template()))
+                    .flatMap(doc -> ClauseLinks.deleteBlocker(doc, clauseUuid))
+                    .ifPresent(problem -> {
+                        throw RuleConflict.of(problem.code(), problem.args().toArray());
+                    });
+            if (customizationRepository.existsLeaningOn(clauseUuid)) {
+                throw RuleConflict.of("clause.used_by_property");
+            }
             if (!templateClauseRepository.softDelete(clauseUuid)) {
                 return false;
             }
@@ -304,7 +344,115 @@ public class DocumentTemplateService {
         }).orElse(false);
     }
 
+    // ---- styles --------------------------------------------------------------
+
+    // A name and nothing else; the css arrives by PATCH, like a clause body.
+    @Transactional
+    public Optional<DocumentTemplate> createStyle(UUID templateId, String name) {
+        if (documentTemplateRepository.findById(templateId).isEmpty()) {
+            return Optional.empty();
+        }
+        DocumentStyleRow saved = documentStyleRepository.save(templateId, name, ActingAgent.resolve(auditContext));
+        auditService.recordInsert("document_style", saved.uuid(), AuditMapper.toMap(saved));
+        return Optional.of(reload(templateId, false));
+    }
+
+    /**
+     * Name, css, target, note. No version bump for any of them: the version says
+     * which wording an instrument was cut from, and a style changes no wording.
+     */
+    @Transactional
+    public Optional<DocumentTemplate> patchStyle(UUID styleUuid, Map<String, Object> changes) {
+        Optional<DocumentStyleRow> beforeOpt = documentStyleRepository.findById(styleUuid);
+        if (beforeOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        DocumentStyleRow before = beforeOpt.get();
+
+        if (changes.containsKey("target") && changes.get("target") != null) {
+            String target = String.valueOf(changes.get("target"));
+            if (StyleTarget.of(target).isEmpty()) {
+                throw InvalidRequest.onField("target", "style.target_unknown", target,
+                        Arrays.stream(StyleTarget.values()).map(Enum::name).toList());
+            }
+            if (before.target() == null && documentStyleRepository.isInUse(styleUuid)) {
+                throw RuleConflict.of("style.in_use", before.name());
+            }
+        }
+        if (changes.containsKey("css") && changes.get("css") == null) {
+            changes = new HashMap<>(changes);
+            changes.put("css", "");
+        }
+
+        Optional<DocumentStyleRow> afterOpt = documentStyleRepository.patch(styleUuid, changes);
+        if (afterOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        DocumentStyle after = afterOpt.get().toDocumentStyle();
+
+        List<Problem> problems = ClauseLinks.problemsWithStyle(after);
+        if (!problems.isEmpty()) {
+            throw InvalidRequest.withDetails("style.not_saved", problems);
+        }
+        ClauseLinks.duplicateTarget(hydrateById(before.template()), after).ifPresent(problem -> {
+            throw RuleConflict.of(problem.code(), problem.args().toArray());
+        });
+
+        recordUpdate("document_style", styleUuid, before, afterOpt.get());
+        return Optional.of(reload(before.template(), false));
+    }
+
+    @Transactional
+    public boolean deleteStyle(UUID styleUuid) {
+        return documentStyleRepository.findById(styleUuid).map(existing -> {
+            if (documentStyleRepository.isInUse(styleUuid)) {
+                throw RuleConflict.of("style.in_use", existing.name());
+            }
+            if (!documentStyleRepository.softDelete(styleUuid)) {
+                return false;
+            }
+            auditService.recordDelete("document_style", styleUuid, AuditMapper.toMap(existing));
+            return true;
+        }).orElse(false);
+    }
+
     // ---- validation ----------------------------------------------------------
+
+    /** Refuses whatever {@code after} has that {@code before} did not. */
+    private static void refuseNew(String code, List<Problem> before, List<Problem> after) {
+        List<Problem> introduced = after.stream().filter(problem -> !before.contains(problem)).distinct().toList();
+        if (!introduced.isEmpty()) {
+            throw InvalidRequest.withDetails(code, introduced);
+        }
+    }
+
+    /** JSON carries a uuid as a string; the driver wants a UUID. Null clears the link. */
+    private static void asUuids(Map<String, Object> changes, String... columns) {
+        for (String column : columns) {
+            if (!changes.containsKey(column) || changes.get(column) == null || changes.get(column) instanceof UUID) {
+                continue;
+            }
+            try {
+                changes.put(column, UUID.fromString(String.valueOf(changes.get(column))));
+            } catch (IllegalArgumentException e) {
+                throw InvalidRequest.onField(column, "request.not_a_uuid", changes.get(column));
+            }
+        }
+    }
+
+    /** One pattern per level, one to three levels. The columns are NOT NULL, so null is refused too. */
+    private static void asFormats(Map<String, Object> changes, String... columns) {
+        for (String column : columns) {
+            if (!changes.containsKey(column)) {
+                continue;
+            }
+            if (!(changes.get(column) instanceof List<?> list) || list.isEmpty()
+                    || list.size() > ClauseLinks.MAX_DEPTH || list.stream().anyMatch(item -> !(item instanceof String))) {
+                throw InvalidRequest.onField(column, "section.formats_count", ClauseLinks.MAX_DEPTH);
+            }
+            changes.put(column, list.stream().map(String::valueOf).toArray(String[]::new));
+        }
+    }
 
     // ---- internals -----------------------------------------------------------
 
@@ -315,9 +463,12 @@ public class DocumentTemplateService {
      * for the children, not one per section.
      */
     private DocumentTemplate hydrate(DocumentTemplateRow row) {
+        List<DocumentStyle> styles = documentStyleRepository.findByTemplate(row.uuid()).stream()
+                .map(DocumentStyleRow::toDocumentStyle)
+                .toList();
         List<DocumentSectionRow> sectionRows = documentSectionRepository.findByTemplate(row.uuid());
         if (sectionRows.isEmpty()) {
-            return row.toDocumentTemplate();
+            return row.toDocumentTemplate(List.of(), styles);
         }
 
         List<UUID> sectionIds = sectionRows.stream().map(DocumentSectionRow::uuid).toList();
@@ -330,7 +481,13 @@ public class DocumentTemplateService {
                         clausesBySection.getOrDefault(section.uuid(), List.of())))
                 .toList();
 
-        return row.toDocumentTemplate(sections);
+        return row.toDocumentTemplate(sections, styles);
+    }
+
+    private DocumentTemplate hydrateById(UUID templateId) {
+        return documentTemplateRepository.findById(templateId)
+                .map(this::hydrate)
+                .orElseThrow(() -> new IllegalStateException("Template " + templateId + " disappeared mid-edit"));
     }
 
     /**
@@ -374,15 +531,15 @@ public class DocumentTemplateService {
     }
 
     /**
-     * Fields that never reach the page. An instrument freezes template_version
-     * to say which wording it was cut from, so the number should move when the
-     * wording does and not when an author leaves themselves a reminder.
+     * Fields that change no wording. An instrument freezes template_version to
+     * say which wording it was cut from, so the number should move when the
+     * wording does -- a number format does, since it prints "9A" -- and not when
+     * an author leaves a reminder, restyles, or glues two clauses together.
      *
      * <p>Record component names, not column names -- {@link AuditMapper} works
-     * off the accessor names. They happen to agree for {@code note}; a field
-     * added here whose Java name is camelCase must be spelled that way.
+     * off the accessor names.
      */
-    private static final Set<String> NON_PRINTING_FIELDS = Set.of("note");
+    private static final Set<String> NON_PRINTING_FIELDS = Set.of("note", "style", "titleStyle", "requiresNext");
 
     private static boolean affectsPrintedOutput(Set<String> changedFields) {
         return changedFields.stream().anyMatch(field -> !NON_PRINTING_FIELDS.contains(field));

@@ -23,19 +23,19 @@ public class DocumentTemplateTest {
                                   String conditionField, List<String> conditionValues) {
         return new TemplateClause(
                 UUID.randomUUID(), ordinal, key, null, body,
-                conditionField, conditionValues, false, null, null, null, null);
+                conditionField, conditionValues, false, null, null, null, null, null, null, true, null, null);
     }
 
     private DocumentSection section(BigDecimal ordinal, String name, TemplateClause... clauses) {
         return new DocumentSection(
                 UUID.randomUUID(), ordinal, name, name.toUpperCase(),
-                false, false, false, null, null, null, null, List.of(clauses));
+                false, false, false, null, null, null, null, List.of(clauses), null, null, null, null);
     }
 
     private DocumentTemplate template(DocumentSection... sections) {
         return new DocumentTemplate(
                 UUID.randomUUID(), "Test Lease", AgreementType.LAND, InstrumentType.LEASE,
-                1, null, null, null, List.of(sections));
+                1, null, null, null, List.of(sections), List.of());
     }
 
     // ---- ordering ------------------------------------------------------------

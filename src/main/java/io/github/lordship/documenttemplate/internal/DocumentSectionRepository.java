@@ -15,13 +15,16 @@ public class DocumentSectionRepository {
 
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
             "ordinal", "name", "section_key", "signature_block",
-            "listed_as_addendum", "required", "statute_ref", "note"
+            "listed_as_addendum", "required", "statute_ref", "note",
+            "number_formats", "cite_formats", "style", "title_style"
     );
 
     private final JdbcClient jdbc;
+    private final DocumentSectionRowMapper rowMapper;
 
-    public DocumentSectionRepository(JdbcClient jdbc) {
+    public DocumentSectionRepository(JdbcClient jdbc, DocumentSectionRowMapper documentSectionRowMapper) {
         this.jdbc = jdbc;
+        this.rowMapper = documentSectionRowMapper;
     }
 
     /**
@@ -46,14 +49,14 @@ public class DocumentSectionRepository {
                 .param("templateId", templateId)
                 .param("name", name)
                 .param("createdBy", createdBy)
-                .query(DocumentSectionRow.class)
+                .query(rowMapper)
                 .single();
     }
 
     public Optional<DocumentSectionRow> findById(UUID uuid) {
         return jdbc.sql("SELECT * FROM document_section WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)
-                .query(DocumentSectionRow.class)
+                .query(rowMapper)
                 .optional();
     }
 
@@ -64,7 +67,7 @@ public class DocumentSectionRepository {
                          ORDER BY ordinal
                         """)
                 .param("templateId", templateId)
-                .query(DocumentSectionRow.class)
+                .query(rowMapper)
                 .list();
     }
 
@@ -78,7 +81,14 @@ public class DocumentSectionRepository {
         }
 
         StringBuilder sql = new StringBuilder("UPDATE document_section SET ");
-        changes.forEach((col, val) -> sql.append(col).append(" = :").append(col).append(", "));
+        changes.forEach((col, val) -> {
+            sql.append(col).append(" = :").append(col);
+            // The service hands these over as String[]; the driver needs telling it is a text[].
+            if ("number_formats".equals(col) || "cite_formats".equals(col)) {
+                sql.append("::text[]");
+            }
+            sql.append(", ");
+        });
         sql.setLength(sql.length() - 2);
         sql.append(" WHERE uuid = :uuid AND deleted_at IS NULL RETURNING *");
 
@@ -87,7 +97,7 @@ public class DocumentSectionRepository {
 
         return jdbc.sql(sql.toString())
                 .params(params)
-                .query(DocumentSectionRow.class)
+                .query(rowMapper)
                 .optional();
     }
 

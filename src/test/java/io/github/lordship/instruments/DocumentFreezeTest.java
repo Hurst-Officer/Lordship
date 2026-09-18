@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -99,6 +100,21 @@ public class DocumentFreezeTest {
         // Assert
         assertEquals(1, out.sections().size());
         assertTrue(out.sections().get(0).signatureBlock());
+    }
+
+    @Test
+    void freeze_shouldReportARequiredSignatureBlock_thatEndedUpEmpty() {
+        // Arrange -- being a signature block used to exempt a section from this report
+        DocumentSection septic = section("Septic Addendum", true, true,
+                clause("1", "septic", "Septic rules.", "term.sewer_method", List.of("FLAT")));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(septic), TokenValues.of(Map.of("term.sewer_method", "NONE")));
+
+        // Assert
+        assertEquals(List.of("Septic Addendum"), out.omittedRequired());
+        assertFalse(out.isComplete());
     }
 
     @Test
@@ -584,6 +600,373 @@ public class DocumentFreezeTest {
         assertFalse(out.isComplete());
     }
 
+
+    // ---- nesting and numbers -------------------------------------------------
+
+    @Test
+    void freeze_shouldLetterClausesUnderTheirParent() {
+        // Arrange -- "2. Water:" with A, B, C under it
+        TemplateClause water = clause("20", "water", "Water:", null, List.of());
+        DocumentSection rules = section("Rules", false, false,
+                clause("10", "rent", "Rent.", null, List.of()),
+                water,
+                under(water, clause("21", "check_valve", "Check valve.", null, List.of())),
+                under(water, clause("22", "faucets", "Faucets.", null, List.of())),
+                under(water, clause("23", "waste", "Wasteful water.", null, List.of())));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(List.of(rules), TokenValues.of(Map.of()));
+
+        // Assert
+        assertEquals(Arrays.asList("1.", "2.", "A.", "B.", "C."), shownOf(out, 0));
+        assertEquals(Arrays.asList("1", "2", "2A", "2B", "2C"), labelsOf(out, 0));
+        assertEquals(List.of(1, 1, 2, 2, 2), depthsOf(out, 0));
+        assertTrue(out.isComplete());
+    }
+
+    @Test
+    void freeze_shouldReletterTheRest_whenAChildDoesNotApply() {
+        // Arrange -- A only prints for flat water; this park is on RUBS
+        TemplateClause water = clause("10", "water", "Water:", null, List.of());
+        DocumentSection rules = section("Rules", false, false,
+                water,
+                under(water, clause("11", "flat", "Flat.", "term.water_method", List.of("FLAT"))),
+                under(water, clause("12", "faucets", "Faucets.", null, List.of())));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(rules), TokenValues.of(Map.of("term.water_method", "RUBS")));
+
+        // Assert
+        assertEquals(Arrays.asList("1", "1A"), labelsOf(out, 0));
+        assertEquals(List.of("water", "faucets"), keysOf(out, 0));
+    }
+
+    @Test
+    void freeze_shouldDropTheChildren_whenTheirParentDoesNotApply() {
+        // Arrange
+        TemplateClause septic = clause("10", "septic", "Septic:", "term.sewer_method", List.of("FLAT"));
+        DocumentSection rules = section("Rules", false, false,
+                septic,
+                under(septic, clause("11", "grease", "No grease.", null, List.of())),
+                clause("20", "noise", "Noise.", null, List.of()));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(rules), TokenValues.of(Map.of("term.sewer_method", "NONE")));
+
+        // Assert -- the grease rule goes with its heading, and noise becomes 1
+        assertEquals(List.of("noise"), keysOf(out, 0));
+        assertEquals(List.of("1"), labelsOf(out, 0));
+    }
+
+    @Test
+    void freeze_shouldDropTheChildren_whenAParkExcludesTheirParent() {
+        // Arrange
+        TemplateClause septic = clause("10", "septic", "Septic:", null, List.of());
+        DocumentSection rules = section("Rules", false, false,
+                septic,
+                under(septic, clause("11", "grease", "No grease.", null, List.of())),
+                clause("20", "noise", "Noise.", null, List.of()));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(rules), List.of(excludeClause(septic)), List.of(), TokenValues.of(Map.of()));
+
+        // Assert
+        assertEquals(List.of("noise"), keysOf(out, 0));
+    }
+
+    @Test
+    void freeze_shouldNotNumberAnUnnumberedClause() {
+        // Arrange -- an opening paragraph, then the clauses proper
+        DocumentSection lease = section("Lease", false, false,
+                unnumbered(clause("5", "intro", "This agreement is made between...", null, List.of())),
+                clause("10", "premises", "Premises.", null, List.of()),
+                clause("20", "term", "Term.", null, List.of()));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(List.of(lease), TokenValues.of(Map.of()));
+
+        // Assert -- the intro takes no number and does not use one up
+        assertEquals(Arrays.asList(null, "1.", "2."), shownOf(out, 0));
+        assertEquals(Arrays.asList(null, "1", "2"), labelsOf(out, 0));
+        assertEquals(List.of(1, 2, 3), numbersOf(out, 0));
+    }
+
+    @Test
+    void freeze_shouldUseTheSectionsOwnFormats() {
+        // Arrange -- the admin wants II. and (a), cited as II(a)
+        TemplateClause pets = clause("20", "pets", "Pets:", null, List.of());
+        DocumentSection rules = withFormats(section("Rules", false, false,
+                        clause("10", "rent", "Rent.", null, List.of()),
+                        pets,
+                        under(pets, clause("21", "weight", "Under 40 lbs.", null, List.of()))),
+                List.of("{1:I}.", "({2:a})"), List.of("{1:I}", "{1:I}({2:a})"));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(List.of(rules), TokenValues.of(Map.of()));
+
+        // Assert
+        assertEquals(Arrays.asList("I.", "II.", "(a)"), shownOf(out, 0));
+        assertEquals(Arrays.asList("I", "II", "II(a)"), labelsOf(out, 0));
+    }
+
+    @Test
+    void freeze_shouldLetterAParksRuleAmongTheTemplatesOwn() {
+        // Arrange -- the park adds a rule under Water, between B and C
+        TemplateClause water = clause("10", "water", "Water:", null, List.of());
+        DocumentSection rules = section("Rules", false, false,
+                water,
+                under(water, clause("11", "valve", "Valve.", null, List.of())),
+                under(water, clause("12", "faucets", "Faucets.", null, List.of())),
+                under(water, clause("13", "waste", "Waste.", null, List.of())));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(rules),
+                List.of(addClauseUnder(water, rules, "12.5", "No hoses left running.")),
+                List.of(),
+                TokenValues.of(Map.of()));
+
+        // Assert
+        assertEquals(Arrays.asList("1", "1A", "1B", "1C", "1D"), labelsOf(out, 0));
+        assertEquals("No hoses left running.", out.sections().get(0).clauses().get(3).body());
+    }
+
+    @Test
+    void freeze_shouldLetterItemsUnderAnUnnumberedHeading_withoutUsingANumber() {
+        // Arrange -- rule 3, then "Water:" with no number, then rule 4
+        TemplateClause water = unnumbered(clause("20", "water", "Water:", null, List.of()));
+        DocumentSection rules = section("Rules", false, false,
+                clause("10", "utilities", "Utilities.", null, List.of()),
+                water,
+                under(water, clause("21", "valve", "Valve.", null, List.of())),
+                under(water, clause("22", "faucets", "Faucets.", null, List.of())),
+                clause("30", "homes", "Homes.", null, List.of()));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(List.of(rules), TokenValues.of(Map.of()));
+
+        // Assert
+        assertEquals(Arrays.asList("1.", null, "A.", "B.", "2."), shownOf(out, 0));
+        assertEquals(Arrays.asList("1", null, "A", "B", "2"), labelsOf(out, 0));
+    }
+
+    @Test
+    void freeze_shouldListTheAttachedAddenda_afterAParkDropsOne() {
+        // Arrange -- the lease names its addenda; this park is on city sewer
+        DocumentSection lease = withOrdinal(section("Lease", false, true,
+                clause("10", "addendums", "Attached: {{packet.addenda}}.", null, List.of())), "1");
+        DocumentSection pets = listedAddendum(withOrdinal(section("Pet Agreement", false, false,
+                clause("10", "pets", "Pets.", null, List.of())), "2"));
+        DocumentSection septic = listedAddendum(withOrdinal(section("Septic Addendum", false, false,
+                clause("10", "septic", "Septic.", null, List.of())), "3"));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(List.of(lease, pets, septic),
+                List.of(excludeSection(septic)), List.of(), TokenValues.of(Map.of()));
+
+        // Assert
+        assertEquals("Attached: Pet Agreement.", out.sections().get(0).clauses().get(0).body());
+        assertTrue(out.isComplete());
+    }
+
+    // ---- references ----------------------------------------------------------
+
+    @Test
+    void freeze_shouldPrintTheCitedClausesNumber() {
+        // Arrange
+        TemplateClause water = clause("20", "water", "Water:", null, List.of());
+        TemplateClause faucets = under(water, clause("22", "faucets", "Faucets.", null, List.of()));
+        DocumentSection rules = section("Rules", false, false,
+                clause("10", "rent", "See Section " + ref(faucets) + ".", null, List.of()),
+                water,
+                under(water, clause("21", "valve", "Valve.", null, List.of())),
+                faucets);
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(List.of(rules), TokenValues.of(Map.of()));
+
+        // Assert -- the page says 2B, the stored template still says which clause
+        DocumentFreeze.FrozenClause rent = out.sections().get(0).clauses().get(0);
+        assertEquals("See Section 2B.", rent.body());
+        assertEquals("See Section " + ref(faucets) + ".", rent.bodyTemplate());
+        assertTrue(out.isComplete());
+    }
+
+    @Test
+    void freeze_shouldFollowTheCitedClause_whenAClauseAboveItDrops() {
+        // Arrange -- a conditional clause above the cited one
+        TemplateClause pets = clause("30", "pets", "Pets.", null, List.of());
+        DocumentSection lease = section("Lease", false, false,
+                clause("10", "rent", "As in Section " + ref(pets) + ".", null, List.of()),
+                clause("20", "septic", "Septic.", "term.sewer_method", List.of("FLAT")),
+                pets);
+
+        // Act
+        DocumentFreeze.Frozen flat = DocumentFreeze.freeze(
+                List.of(lease), TokenValues.of(Map.of("term.sewer_method", "FLAT")));
+        DocumentFreeze.Frozen none = DocumentFreeze.freeze(
+                List.of(lease), TokenValues.of(Map.of("term.sewer_method", "NONE")));
+
+        // Assert
+        assertEquals("As in Section 3.", flat.sections().get(0).clauses().get(0).body());
+        assertEquals("As in Section 2.", none.sections().get(0).clauses().get(0).body());
+    }
+
+    @Test
+    void freeze_shouldResolveAReferenceThroughWhicheverVariantPrinted() {
+        // Arrange -- the author cited the BANK_OR_FLAT clause; this deal is FLAT
+        TemplateClause bankOrFlat = clause("20", "nsf_bank", "Bank or flat.",
+                "term.nsf_fee_method", List.of("BANK_OR_FLAT"));
+        TemplateClause flatOnly = variantOf(bankOrFlat, clause("21", "nsf_flat", "Flat.",
+                "term.nsf_fee_method", List.of("FLAT")));
+        DocumentSection lease = section("Lease", false, false,
+                clause("10", "rent", "Fees are in Section " + ref(bankOrFlat) + ".", null, List.of()),
+                bankOrFlat,
+                flatOnly);
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(lease), TokenValues.of(Map.of("term.nsf_fee_method", "FLAT")));
+
+        // Assert
+        assertEquals("Fees are in Section 2.", out.sections().get(0).clauses().get(0).body());
+        assertTrue(out.isComplete());
+    }
+
+    @Test
+    void freeze_shouldReportAReference_whoseClauseDidNotPrint() {
+        // Arrange -- the cited septic clause does not apply to this deal
+        TemplateClause septic = clause("20", "septic", "Septic.", "term.sewer_method", List.of("FLAT"));
+        DocumentSection lease = section("Lease", false, false,
+                clause("10", "rent", "See " + ref(septic) + ".", null, List.of()),
+                septic);
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(lease), TokenValues.of(Map.of("term.sewer_method", "NONE")));
+
+        // Assert -- left standing like a token, named in the report, and generate refuses
+        assertEquals("See " + ref(septic) + ".", out.sections().get(0).clauses().get(0).body());
+        assertEquals(List.of("RENT -> SEPTIC"), out.brokenReferences());
+        assertFalse(out.isComplete());
+    }
+
+    @Test
+    void freeze_shouldResolveAReferenceIntoAnotherSection() {
+        // Arrange
+        TemplateClause weight = clause("20", "weight", "Under 40 lbs.", null, List.of());
+        DocumentSection lease = withOrdinal(section("Lease", false, false,
+                clause("10", "pets", "Pets per Section " + ref(weight) + " of the Pet Agreement.", null, List.of())), "1");
+        DocumentSection pets = withOrdinal(section("Pet Agreement", false, false,
+                clause("10", "count", "Two pets.", null, List.of()),
+                weight), "2");
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(List.of(lease, pets), TokenValues.of(Map.of()));
+
+        // Assert
+        assertEquals("Pets per Section 2 of the Pet Agreement.",
+                out.sections().get(0).clauses().get(0).body());
+    }
+
+    // ---- requires_next -------------------------------------------------------
+
+    @Test
+    void freeze_shouldKeepAPairTogether_whenTheyPrintSideBySide() {
+        // Arrange -- the park-sale notice must sit directly above the signature
+        TemplateClause signature = unnumbered(clause("20", "signature", "Tenant: ____", null, List.of()));
+        DocumentSection lease = section("Lease", false, false,
+                requiring(signature, "RCW 59.20.060",
+                        clause("10", "notice", "Park may be sold.", null, List.of())),
+                signature);
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(List.of(lease), TokenValues.of(Map.of()));
+
+        // Assert
+        assertTrue(out.sections().get(0).clauses().get(0).keepWithNext());
+        assertFalse(out.sections().get(0).clauses().get(1).keepWithNext());
+        assertTrue(out.isComplete());
+    }
+
+    @Test
+    void freeze_shouldReportAPair_whenAParksClauseLandsBetweenThem() {
+        // Arrange
+        TemplateClause signature = unnumbered(clause("20", "signature", "Tenant: ____", null, List.of()));
+        DocumentSection lease = section("Lease", false, false,
+                requiring(signature, "RCW 59.20.060",
+                        clause("10", "notice", "Park may be sold.", null, List.of())),
+                signature);
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(lease),
+                List.of(addClause(lease, "15", "No trampolines.", null, List.of())),
+                List.of(),
+                TokenValues.of(Map.of()));
+
+        // Assert
+        assertEquals(List.of("NOTICE -> SIGNATURE (RCW 59.20.060)"), out.separatedPairs());
+        assertFalse(out.sections().get(0).clauses().get(0).keepWithNext());
+        assertFalse(out.isComplete());
+    }
+
+    @Test
+    void freeze_shouldReportAPair_whenTheSecondDidNotPrint() {
+        // Arrange
+        TemplateClause signature = unnumbered(clause("20", "signature", "Tenant: ____", null, List.of()));
+        DocumentSection lease = section("Lease", false, false,
+                requiring(signature, "RCW 59.20.060",
+                        clause("10", "notice", "Park may be sold.", null, List.of())),
+                signature);
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(lease), List.of(excludeClause(signature)), List.of(), TokenValues.of(Map.of()));
+
+        // Assert
+        assertEquals(List.of("NOTICE -> SIGNATURE (RCW 59.20.060)"), out.separatedPairs());
+    }
+
+    @Test
+    void freeze_shouldKeepAPair_whenTheSecondIsAVariantOfTheOneNamed() {
+        // Arrange -- two signature blocks, one per agreement type
+        TemplateClause oneSigner = unnumbered(clause("20", "sign_one", "Tenant: ____",
+                "term.late_fee_method", List.of("FLAT")));
+        TemplateClause percent = unnumbered(variantOf(oneSigner, clause("21", "sign_pct", "Tenants: ____",
+                "term.late_fee_method", List.of("PERCENT_OF_RENT"))));
+        DocumentSection lease = section("Lease", false, false,
+                requiring(oneSigner, null, clause("10", "notice", "Park may be sold.", null, List.of())),
+                oneSigner,
+                percent);
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(lease), TokenValues.of(Map.of("term.late_fee_method", "PERCENT_OF_RENT")));
+
+        // Assert
+        assertTrue(out.sections().get(0).clauses().get(0).keepWithNext());
+        assertTrue(out.isComplete());
+    }
+
+    private static List<String> shownOf(DocumentFreeze.Frozen out, int section) {
+        return out.sections().get(section).clauses().stream()
+                .map(DocumentFreeze.FrozenClause::number).collect(java.util.stream.Collectors.toList());
+    }
+
+    private static List<String> labelsOf(DocumentFreeze.Frozen out, int section) {
+        return out.sections().get(section).clauses().stream()
+                .map(DocumentFreeze.FrozenClause::label).collect(java.util.stream.Collectors.toList());
+    }
+
+    private static List<Integer> depthsOf(DocumentFreeze.Frozen out, int section) {
+        return out.sections().get(section).clauses().stream()
+                .map(DocumentFreeze.FrozenClause::depth).toList();
+    }
+
     private static List<Integer> numbersOf(DocumentFreeze.Frozen out, int section) {
         return out.sections().get(section).clauses().stream()
                 .map(c -> c.ordinal().intValue()).toList();
@@ -602,13 +985,47 @@ public class DocumentFreezeTest {
                                          String conditionField, List<String> conditionValues) {
         return new TemplateClause(UUID.randomUUID(), new BigDecimal(ordinal), key,
                 key.toUpperCase(), body, conditionField, conditionValues,
-                false, null, null, NOW, null);
+                false, null, null, NOW, null,
+                null, null, true, null, null);
     }
 
-    private static TemplateClause softDeleted(TemplateClause clause) {
-        return new TemplateClause(clause.uuid(), clause.ordinal(), clause.clauseKey(),
-                clause.title(), clause.body(), clause.conditionField(), clause.conditionValues(),
-                clause.required(), clause.statuteRef(), clause.note(), clause.createdAt(), NOW);
+    private static TemplateClause softDeleted(TemplateClause c) {
+        return new TemplateClause(c.uuid(), c.ordinal(), c.clauseKey(),
+                c.title(), c.body(), c.conditionField(), c.conditionValues(),
+                c.required(), c.statuteRef(), c.note(), c.createdAt(), NOW,
+                c.parent(), c.variantOf(), c.numbered(), c.requiresNext(), c.style());
+    }
+
+    private static TemplateClause under(TemplateClause parent, TemplateClause c) {
+        return new TemplateClause(c.uuid(), c.ordinal(), c.clauseKey(),
+                c.title(), c.body(), c.conditionField(), c.conditionValues(),
+                c.required(), c.statuteRef(), c.note(), c.createdAt(), c.deletedAt(),
+                parent.uuid(), c.variantOf(), c.numbered(), c.requiresNext(), c.style());
+    }
+
+    private static TemplateClause variantOf(TemplateClause primary, TemplateClause c) {
+        return new TemplateClause(c.uuid(), c.ordinal(), c.clauseKey(),
+                c.title(), c.body(), c.conditionField(), c.conditionValues(),
+                c.required(), c.statuteRef(), c.note(), c.createdAt(), c.deletedAt(),
+                c.parent(), primary.uuid(), c.numbered(), c.requiresNext(), c.style());
+    }
+
+    private static TemplateClause unnumbered(TemplateClause c) {
+        return new TemplateClause(c.uuid(), c.ordinal(), c.clauseKey(),
+                c.title(), c.body(), c.conditionField(), c.conditionValues(),
+                c.required(), c.statuteRef(), c.note(), c.createdAt(), c.deletedAt(),
+                c.parent(), c.variantOf(), false, c.requiresNext(), c.style());
+    }
+
+    private static TemplateClause requiring(TemplateClause next, String statuteRef, TemplateClause c) {
+        return new TemplateClause(c.uuid(), c.ordinal(), c.clauseKey(),
+                c.title(), c.body(), c.conditionField(), c.conditionValues(),
+                c.required(), statuteRef, c.note(), c.createdAt(), c.deletedAt(),
+                c.parent(), c.variantOf(), c.numbered(), next.uuid(), c.style());
+    }
+
+    private static String ref(TemplateClause clause) {
+        return "{{ref:" + clause.uuid() + "}}";
     }
 
     private static DocumentSection section(String name, boolean signatureBlock, boolean required,
@@ -620,14 +1037,30 @@ public class DocumentFreezeTest {
                                            String statuteRef, TemplateClause... clauses) {
         return new DocumentSection(UUID.randomUUID(), BigDecimal.ONE, name,
                 name.toLowerCase().replace(' ', '_'), signatureBlock, false, required,
-                statuteRef, null, NOW, null, List.of(clauses));
+                statuteRef, null, NOW, null, List.of(clauses), null, null, null, null);
     }
 
     private static DocumentSection withOrdinal(DocumentSection section, String ordinal) {
         return new DocumentSection(section.uuid(), new BigDecimal(ordinal), section.name(),
                 section.sectionKey(), section.signatureBlock(), section.listedAsAddendum(),
                 section.required(), section.statuteRef(), section.note(),
-                section.createdAt(), section.deletedAt(), section.clauses());
+                section.createdAt(), section.deletedAt(), section.clauses(),
+                section.numberFormats(), section.citeFormats(), section.style(), section.titleStyle());
+    }
+
+    private static DocumentSection listedAddendum(DocumentSection s) {
+        return new DocumentSection(s.uuid(), s.ordinal(), s.name(), s.sectionKey(), s.signatureBlock(), true,
+                s.required(), s.statuteRef(), s.note(), s.createdAt(), s.deletedAt(), s.clauses(),
+                s.numberFormats(), s.citeFormats(), s.style(), s.titleStyle());
+    }
+
+    private static DocumentSection withFormats(DocumentSection section, List<String> numberFormats,
+                                               List<String> citeFormats) {
+        return new DocumentSection(section.uuid(), section.ordinal(), section.name(),
+                section.sectionKey(), section.signatureBlock(), section.listedAsAddendum(),
+                section.required(), section.statuteRef(), section.note(),
+                section.createdAt(), section.deletedAt(), section.clauses(),
+                numberFormats, citeFormats, null, null);
     }
 
     private static PropertyDocumentCustomization excludeSection(DocumentSection section) {
@@ -647,6 +1080,14 @@ public class DocumentFreezeTest {
                 new BigDecimal(ordinal), body, conditionField, conditionValues);
     }
 
+    private static PropertyDocumentCustomization addClauseUnder(TemplateClause parent, DocumentSection section,
+                                                                String ordinal, String body) {
+        PropertyDocumentCustomization c = addClause(section, ordinal, body, null, List.of());
+        return new PropertyDocumentCustomization(c.uuid(), c.assignment(), c.action(), c.section(),
+                c.clause(), c.ordinal(), c.title(), c.body(), c.conditionField(),
+                c.conditionValues(), c.note(), c.createdAt(), c.deletedAt(), parent.uuid());
+    }
+
     private static PropertyDocumentCustomization customization(CustomizationAction action,
                                                                UUID section, UUID clause,
                                                                BigDecimal ordinal, String body,
@@ -654,23 +1095,23 @@ public class DocumentFreezeTest {
                                                                List<String> conditionValues) {
         return new PropertyDocumentCustomization(UUID.randomUUID(), UUID.randomUUID(), action,
                 section, clause, ordinal, null, body, conditionField, conditionValues,
-                null, NOW, null);
+                null, NOW, null, null);
     }
 
     private static PropertyDocumentCustomization softDeleted(PropertyDocumentCustomization c) {
         return new PropertyDocumentCustomization(c.uuid(), c.assignment(), c.action(), c.section(),
                 c.clause(), c.ordinal(), c.title(), c.body(), c.conditionField(),
-                c.conditionValues(), c.note(), c.createdAt(), NOW);
+                c.conditionValues(), c.note(), c.createdAt(), NOW, c.parent());
     }
 
     private static InstrumentAddition typedClause(DocumentSection section, String ordinal, String body) {
         return new InstrumentAddition(UUID.randomUUID(), UUID.randomUUID(), section.uuid(),
-                new BigDecimal(ordinal), null, body, null, NOW, null);
+                new BigDecimal(ordinal), null, body, null, NOW, null, null);
     }
 
     private static InstrumentAddition softDeleted(InstrumentAddition addition) {
         return new InstrumentAddition(addition.uuid(), addition.instrument(), addition.section(),
                 addition.ordinal(), addition.title(), addition.body(), addition.note(),
-                addition.createdAt(), NOW);
+                addition.createdAt(), NOW, addition.parent());
     }
 }

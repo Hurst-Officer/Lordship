@@ -1,6 +1,7 @@
 package io.github.lordship.documenttemplate.internal;
 
 import io.github.lordship.documenttemplate.DocumentSection;
+import io.github.lordship.documenttemplate.DocumentStyle;
 import io.github.lordship.documenttemplate.DocumentTemplate;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
@@ -23,6 +24,10 @@ public record DocumentTemplateRow(
 
     /** Sections arrive already carrying their clauses; the service assembles them. */
     public DocumentTemplate toDocumentTemplate(List<DocumentSection> sections) {
+        return toDocumentTemplate(sections, List.of());
+    }
+
+    public DocumentTemplate toDocumentTemplate(List<DocumentSection> sections, List<DocumentStyle> styles) {
         return new DocumentTemplate(
                 this.uuid,
                 this.name,
@@ -32,11 +37,12 @@ public record DocumentTemplateRow(
                 this.note,
                 this.createdAt,
                 this.deletedAt,
-                sections
+                sections,
+                styles
         );
     }
 
     public DocumentTemplate toDocumentTemplate() {
         return toDocumentTemplate(List.of());
     }
-}
+}

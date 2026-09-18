@@ -1,10 +1,12 @@
 package io.github.lordship.documenttemplate.internal;
 
 import io.github.lordship.documenttemplate.DocumentSection;
+import io.github.lordship.documenttemplate.DocumentStyle;
 import io.github.lordship.documenttemplate.DocumentTemplate;
 import io.github.lordship.documenttemplate.TemplateClause;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
+import io.github.lordship.shared.StyleTarget;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -28,8 +30,16 @@ public record DocumentTemplateResponse(
         String note,
         OffsetDateTime createdAt,
         List<DocumentTemplate.MethodCoverage> conditionWorklist,
-        List<SectionResponse> sections
+        List<SectionResponse> sections,
+        List<StyleResponse> styles
 ) {
+
+    /** With a target it restyles that part of every page; without one a clause or section picks it. */
+    public record StyleResponse(UUID uuid, String name, String css, StyleTarget target, String note) {
+        public static StyleResponse from(DocumentStyle style) {
+            return new StyleResponse(style.uuid(), style.name(), style.css(), style.target(), style.note());
+        }
+    }
 
     /** One sub-document within the packet: signed on its own, listed on its own. */
     public record SectionResponse(
@@ -42,6 +52,10 @@ public record DocumentTemplateResponse(
             boolean required,
             String statuteRef,
             String note,
+            List<String> numberFormats,
+            List<String> citeFormats,
+            UUID styleId,
+            UUID titleStyleId,
             List<DocumentSection.Coverage> conditionCoverage,
             List<ClauseResponse> clauses
     ) {
@@ -56,6 +70,10 @@ public record DocumentTemplateResponse(
                     section.required(),
                     section.statuteRef(),
                     section.note(),
+                    section.numberFormats(),
+                    section.citeFormats(),
+                    section.style(),
+                    section.titleStyle(),
                     section.conditionCoverage(),
                     section.clausesInOrder().stream().map(ClauseResponse::from).toList());
         }
@@ -87,7 +105,13 @@ public record DocumentTemplateResponse(
             List<String> conditionValues,
             boolean required,
             String statuteRef,
-            String note
+            String note,
+            UUID parentId,
+            UUID variantOfId,
+            boolean numbered,
+            UUID requiresNextId,
+            UUID styleId,
+            List<UUID> refs
     ) {
         public static ClauseResponse from(TemplateClause clause) {
             return new ClauseResponse(
@@ -102,7 +126,13 @@ public record DocumentTemplateResponse(
                     clause.conditionValues(),
                     clause.required(),
                     clause.statuteRef(),
-                    clause.note());
+                    clause.note(),
+                    clause.parent(),
+                    clause.variantOf(),
+                    clause.numbered(),
+                    clause.requiresNext(),
+                    clause.style(),
+                    clause.refs());
         }
     }
 
@@ -117,7 +147,8 @@ public record DocumentTemplateResponse(
                 template.note(),
                 template.createdAt(),
                 template.conditionWorklist(),
-                template.sectionsInOrder().stream().map(SectionResponse::from).toList());
+                template.sectionsInOrder().stream().map(SectionResponse::from).toList(),
+                template.styles().stream().map(StyleResponse::from).toList());
     }
 
     /** The list view: no children. */
@@ -131,6 +162,7 @@ public record DocumentTemplateResponse(
                 template.note(),
                 template.createdAt(),
                 List.of(),
+                List.of(),
                 List.of());
     }
-}
+}

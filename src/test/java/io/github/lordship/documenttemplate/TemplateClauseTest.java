@@ -28,7 +28,8 @@ public class TemplateClauseTest {
                 null,
                 null,
                 null,
-                null);
+                null,
+                null, null, true, null, null);
     }
 
     // ---- appliesTo -----------------------------------------------------------

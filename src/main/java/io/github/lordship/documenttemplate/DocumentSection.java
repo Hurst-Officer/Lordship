@@ -34,10 +34,20 @@ public record DocumentSection(
         String note,
         OffsetDateTime createdAt,
         OffsetDateTime deletedAt,
-        List<TemplateClause> clauses
+        List<TemplateClause> clauses,
+        List<String> numberFormats,
+        List<String> citeFormats,
+        UUID style,
+        UUID titleStyle
 ) {
+    // sql: the column defaults in document_section, for a section built in code
+    public static final List<String> DEFAULT_NUMBER_FORMATS = List.of("{1}.", "{2:A}.", "({3:i})");
+    public static final List<String> DEFAULT_CITE_FORMATS = List.of("{1}", "{1}{2:A}", "{1}{2:A}({3:i})");
+
     public DocumentSection {
         clauses = List.copyOf(clauses);
+        numberFormats = (numberFormats == null || numberFormats.isEmpty()) ? DEFAULT_NUMBER_FORMATS : List.copyOf(numberFormats);
+        citeFormats = (citeFormats == null || citeFormats.isEmpty()) ? DEFAULT_CITE_FORMATS : List.copyOf(citeFormats);
     }
 
     public boolean isSoftDeleted() {

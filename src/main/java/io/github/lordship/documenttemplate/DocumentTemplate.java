@@ -34,10 +34,31 @@ public record DocumentTemplate(
         String note,
         OffsetDateTime createdAt,
         OffsetDateTime deletedAt,
-        List<DocumentSection> sections
+        List<DocumentSection> sections,
+        List<DocumentStyle> styles
 ) {
     public DocumentTemplate {
         sections = List.copyOf(sections);
+        styles = (styles == null) ? List.of() : List.copyOf(styles);
+    }
+
+    /** One clause anywhere in the document, live or not. */
+    public Optional<TemplateClause> clause(UUID uuid) {
+        return sections.stream()
+                .flatMap(section -> section.clauses().stream())
+                .filter(clause -> clause.uuid().equals(uuid))
+                .findFirst();
+    }
+
+    /** The section a clause sits in. */
+    public Optional<DocumentSection> sectionOf(UUID clauseUuid) {
+        return sections.stream()
+                .filter(section -> section.clauses().stream().anyMatch(c -> c.uuid().equals(clauseUuid)))
+                .findFirst();
+    }
+
+    public Optional<DocumentStyle> style(UUID uuid) {
+        return styles.stream().filter(style -> style.uuid().equals(uuid)).findFirst();
     }
 
     public boolean isSoftDeleted() {
