@@ -157,6 +157,22 @@ public class TenancyChargeTermService {
                 .map(TenancyChargeTermRow::toTenancyChargeTerm);
     }
 
+    /**
+     * What this lot charged in each year of a range, for the rent-history
+     * disclosure. Empty for a year nothing was in force -- the caller decides
+     * what a year with no answer prints.
+     */
+    public List<RentHistoryYear> findRentHistoryByLot(UUID lotId, int fromYear, int toYear) {
+        return tenancyChargeTermRepository.findRentHistoryByLot(lotId, fromYear, toYear);
+    }
+
+    /** The deal one document produced, earliest step first. */
+    public List<TenancyChargeTerm> findBySource(UUID sourceUuid) {
+        return tenancyChargeTermRepository.findBySource(sourceUuid).stream()
+                .map(TenancyChargeTermRow::toTenancyChargeTerm)
+                .toList();
+    }
+
     // One bulk run, so it can be reviewed or abandoned together.
     public List<TenancyChargeTerm> findByBatch(UUID batch) {
         return tenancyChargeTermRepository.findByBatch(batch).stream()

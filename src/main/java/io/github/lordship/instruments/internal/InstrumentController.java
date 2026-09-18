@@ -2,6 +2,7 @@ package io.github.lordship.instruments.internal;
 
 import io.github.lordship.instruments.InstrumentService;
 import io.github.lordship.shared.InstrumentType;
+import org.springframework.context.MessageSource;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
@@ -26,9 +27,8 @@ import java.util.UUID;
 /**
  * The paper for one tenancy.
  *
- * <p>Only the draft is writable here. Everything past DRAFT answers 409 naming
- * the status: a document the tenant is holding is a record of what went out,
- * and the way to correct one is another document saying so.
+ * <p>Can only be written to when status = DRAFT
+ * 409 error statuses on bad values
  */
 @RestController
 @RequestMapping("/api/instruments")
@@ -49,13 +49,25 @@ public class InstrumentController {
 
     private final InstrumentService instrumentService;
 
-    public InstrumentController(InstrumentService instrumentService) {
+    // The same MessageSource the global exception handler uses, so a missing
+    // value and a refusal are worded out of one properties file.
+    private final MessageSource messages;
+
+    public InstrumentController(InstrumentService instrumentService, MessageSource messages) {
         this.instrumentService = instrumentService;
+        this.messages = messages;
     }
 
+    /**
+     * {@code batchId} is the deal this paper is being written for -- the batch
+     * the charge terms were drafted under. Optional, because a notice carries
+     * no term of its own; supplied, every step of the deal points at this
+     * document from the moment it exists.
+     */
     public record CreateDraftRequest(
             @NotNull UUID tenancyId,
-            @NotNull InstrumentType type) { }
+            @NotNull InstrumentType type,
+            UUID batchId) { }
 
     public record AddClauseRequest(@NotNull UUID sectionId) { }
 
@@ -108,6 +120,23 @@ public class InstrumentController {
                 .toList());
     }
 
+    /**
+     * Lease preview using a tenant's term info
+     * <p>Always 200 when the instrument exists
+     * {@code complete} says whether Generate may be pressed, and the two
+     * problem lists say what to fix.
+     * 409 when there is no deal attached or the park has no document
+     *  for this kind of agreement
+     */
+    @PreAuthorize("hasAuthority('instrument:view')")
+    @GetMapping("/{uuid}/preview")
+    public ResponseEntity<LeasePreviewResponse> preview(@PathVariable UUID uuid) {
+        return instrumentService.preview(uuid)
+                .map(preview -> LeasePreviewResponse.from(preview, messages))
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
     // ---- the draft -----------------------------------------------------------
 
     @PreAuthorize("hasAuthority('instrument:create')")
@@ -115,7 +144,8 @@ public class InstrumentController {
     public ResponseEntity<InstrumentResponse> createDraft(
             @Valid @RequestBody CreateDraftRequest request) {
 
-        return instrumentService.createDraft(request.tenancyId(), request.type())
+        return instrumentService.createDraft(
+                        request.tenancyId(), request.type(), request.batchId())
                 .map(InstrumentResponse::from)
                 .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
                 .orElse(ResponseEntity.notFound().build());

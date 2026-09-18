@@ -4,14 +4,30 @@ import io.github.lordship.audit.ActingAgent;
 import io.github.lordship.audit.AuditContext;
 import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
+import io.github.lordship.documenttemplate.DocumentSection;
+import io.github.lordship.documenttemplate.PropertyDocumentAssignment;
+import io.github.lordship.documenttemplate.PropertyDocumentAssignmentService;
+import io.github.lordship.globalsettings.GlobalSettingsService;
 import io.github.lordship.instruments.internal.InstrumentAdditionRepository;
 import io.github.lordship.instruments.internal.InstrumentAdditionRow;
 import io.github.lordship.instruments.internal.InstrumentRepository;
 import io.github.lordship.instruments.internal.InstrumentRow;
+import io.github.lordship.lots.Lot;
+import io.github.lordship.lots.LotService;
+import io.github.lordship.persons.Person;
+import io.github.lordship.persons.PersonService;
+import io.github.lordship.properties.Property;
+import io.github.lordship.properties.PropertyService;
 import io.github.lordship.shared.ClauseBodyRules;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.RuleConflict;
+import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
+import io.github.lordship.tenancyterms.RentHistoryYear;
+import io.github.lordship.tenancyterms.TenancyChargeTerm;
+import io.github.lordship.tenancyterms.TenancyChargeTermService;
+import io.github.lordship.tenants.TenantService;
+import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,17 +57,38 @@ public class InstrumentService {
     private final InstrumentRepository instrumentRepository;
     private final InstrumentAdditionRepository additionRepository;
     private final TenancyService tenancyService;
+    private final TenancyChargeTermService chargeTermService;
+    private final LotService lotService;
+    private final PropertyService propertyService;
+    private final TenantService tenantService;
+    private final PersonService personService;
+    private final PropertyDocumentAssignmentService assignmentService;
+    private final GlobalSettingsService settingsService;
     private final AuditService auditService;
     private final AuditContext auditContext;
 
     public InstrumentService(InstrumentRepository instrumentRepository,
                              InstrumentAdditionRepository additionRepository,
                              TenancyService tenancyService,
+                             TenancyChargeTermService chargeTermService,
+                             LotService lotService,
+                             PropertyService propertyService,
+                             TenantService tenantService,
+                             PersonService personService,
+                             PropertyDocumentAssignmentService assignmentService,
+                             GlobalSettingsService settingsService,
                              AuditService auditService,
                              AuditContext auditContext) {
         this.instrumentRepository = instrumentRepository;
         this.additionRepository = additionRepository;
         this.tenancyService = tenancyService;
+        this.chargeTermService = chargeTermService;
+        this.lotService = lotService;
+        this.propertyService = propertyService;
+        this.tenantService = tenantService;
+        this.personService = personService;
+        this.assignmentService = assignmentService;
+        this.settingsService = settingsService;
         this.auditService = auditService;
         this.auditContext = auditContext;
     }
@@ -106,7 +143,7 @@ public class InstrumentService {
      * today still prints next month's corrected clause.
      */
     @Transactional
-    public Optional<Instrument> createDraft(UUID tenancy, InstrumentType type) {
+    public Optional<Instrument> createDraft(UUID tenancy, InstrumentType type, UUID batch) {
         if (tenancyService.findTenancyById(tenancy).isEmpty()) {
             return Optional.empty();
         }
@@ -114,6 +151,14 @@ public class InstrumentService {
         InstrumentRow saved = instrumentRepository.save(
                 tenancy, type, ActingAgent.resolve(auditContext));
         auditService.recordInsert("instrument", saved.uuid(), AuditMapper.toMap(saved));
+
+        // Every step of the deal now points at this document, before anything is
+        // signed. That order is deliberate: the paper has to be able to
+        // substitute from a term it has not yet put in force, and activate later
+        // refuses any term with no document behind it.
+        if (batch != null) {
+            chargeTermService.attachSourceToBatch(batch, saved.uuid());
+        }
         return Optional.of(saved.toInstrument());
     }
 
@@ -238,6 +283,107 @@ public class InstrumentService {
                     "instrument_addition", additionUuid, AuditMapper.toMap(existing));
             return true;
         }).orElse(false);
+    }
+
+    // ---- the document as it would come out -----------------------------------
+
+    /**
+     * The lease with this tenant's real figures in it, without saving anything.
+     *
+     * <p>Empty means no such instrument. A deal or a document that is missing
+     * is a conflict rather than a not-found: the records exist and the state
+     * forbids the answer.
+     */
+    public Optional<LeasePreview> preview(UUID instrumentUuid) {
+        return instrumentRepository.findById(instrumentUuid).map(this::assemble);
+    }
+
+    /**
+     * Gather everything the document says, choose the clauses, and render them.
+     *
+     * <p>The whole of generate except the saving. Both call this, so a preview
+     * that looks complete cannot be refused at generate and a preview that
+     * looks wrong cannot quietly come out right -- two assemblies would
+     * eventually disagree, and the once they did would be on a signed lease.
+     */
+    private LeasePreview assemble(InstrumentRow row) {
+        Tenancy tenancy = tenancyService.findTenancyById(row.tenancy())
+                .orElseThrow(() -> missing("tenancy", row.tenancy()));
+        Lot lot = lotService.findById(tenancy.lotId())
+                .orElseThrow(() -> missing("lot", tenancy.lotId()));
+        Property property = propertyService.findByPropertyId(lot.propertyId())
+                .orElseThrow(() -> missing("property", lot.propertyId()));
+
+        List<TenancyChargeTerm> schedule = chargeTermService.findBySource(row.uuid());
+        if (schedule.isEmpty()) {
+            throw RuleConflict.of("instrument.no_term");
+        }
+
+        PropertyDocumentAssignment assignment = assignmentService
+                .findForGenerate(property.uuid(), schedule.get(0).agreementType(), row.type())
+                .orElseThrow(() -> RuleConflict.of("property.no_document",
+                        row.type(), schedule.get(0).agreementType()));
+
+        TokenResolver.LeaseFacts facts = new TokenResolver.LeaseFacts(
+                row.toInstrument(),
+                schedule.get(0),
+                schedule,
+                tenancy,
+                lot,
+                property,
+                settingsService.require(),
+                tenantNames(tenancy.uuid()),
+                rentHistory(lot.uuid(), row.termStart()));
+
+        List<DocumentSection> sections = assignment.document().sectionsInOrder();
+        DocumentFreeze.Frozen frozen = DocumentFreeze.freeze(
+                sections,
+                assignment.customizations(),
+                findAdditions(row.uuid()),
+                TokenResolver.resolve(facts));
+
+        return new LeasePreview(
+                row.uuid(),
+                assignment.document().uuid(),
+                assignment.document().name(),
+                assignment.document().version(),
+                frozen);
+    }
+
+    /**
+     * Who signs, in the order the tenancy holds them.
+     *
+     * <p>A tenant with no person behind it is skipped rather than printed as a
+     * blank line -- and because {@code tenancy.tenant_names} is a required
+     * token, a tenancy with nobody on it leaves it unset and generation
+     * refuses. A lease naming no tenant is not a lease.
+     */
+    private List<String> tenantNames(UUID tenancy) {
+        return tenantService.findActiveByTenancy(tenancy).stream()
+                .map(tenant -> personService.findByID(tenant.personId()))
+                .flatMap(Optional::stream)
+                .map(Person::nameFull)
+                .filter(name -> name != null && !name.isBlank())
+                .toList();
+    }
+
+    /**
+     * The five years the disclosure covers. Fetched for the window the resolver
+     * will place them in, so the two cannot disagree about which years those
+     * are.
+     */
+    private List<RentHistoryYear> rentHistory(UUID lot, LocalDate termStart) {
+        List<Integer> years = RentHistory.disclosedYears(termStart);
+        if (years.isEmpty()) {
+            return List.of();
+        }
+        return chargeTermService.findRentHistoryByLot(
+                lot, years.get(0), years.get(years.size() - 1));
+    }
+
+    private static EntityNotFoundException missing(String what, UUID uuid) {
+        return new EntityNotFoundException(
+                "Instrument points at a " + what + " that does not exist: " + uuid);
     }
 
     // ---- internals -----------------------------------------------------------

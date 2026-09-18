@@ -2,6 +2,7 @@ package io.github.lordship.tenancyterms.internal;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.tenancyterms.ChargeTermConfiguration;
+import io.github.lordship.tenancyterms.RentHistoryYear;
 import io.github.lordship.tenancyterms.TenancyTermStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -76,6 +77,69 @@ public class TenancyChargeTermRepository {
             """)
                 .param("propertyId", propertyId)
                 .query(ChargeTermConfiguration.class)
+                .list();
+    }
+
+    /**
+     * The highest rent charged for one lot in each year of a range, across
+     * every tenancy that held it. The RCW 59.20 disclosure.
+     *
+     * <p>Not a GROUP BY on the year of valid_at: that finds only the years a
+     * new term STARTED. A rate set in 2021 and left alone until 2024 was
+     * charged in 2022 and 2023 too, and grouping on valid_at would disclose
+     * those years as unknown while the ledger plainly knows them.
+     *
+     * <p>So each term is given the span it was actually in force for -- from
+     * its own valid_at until the next one supersedes it -- and then matched
+     * against every year in the range it overlaps. LEAD partitions by lot
+     * rather than by tenancy because the disclosure is about the ground, not
+     * about who was standing on it.
+     *
+     * <p>Only ACTIVE terms. A proposal nobody signed and a term that was
+     * retracted were never charged to anyone.
+     */
+    public List<RentHistoryYear> findRentHistoryByLot(UUID lotId, int fromYear, int toYear) {
+        return jdbc.sql("""
+            WITH in_force AS (
+                SELECT t.rate,
+                       t.valid_at,
+                       LEAD(t.valid_at) OVER (ORDER BY t.valid_at) AS superseded_at
+                  FROM tenancy_charge_term t
+                  JOIN tenancy ten ON ten.uuid = t.tenancy AND ten.deleted_at IS NULL
+                 WHERE ten.lot_id = :lotId
+                   AND t.status = 'ACTIVE'
+                   AND t.deleted_at IS NULL
+            )
+            SELECT y AS year, MAX(f.rate) AS highest_rate
+              FROM generate_series(:fromYear, :toYear) AS y
+              JOIN in_force f
+                ON f.valid_at < make_date(y + 1, 1, 1)
+               AND (f.superseded_at IS NULL OR f.superseded_at > make_date(y, 1, 1))
+             GROUP BY y
+             ORDER BY y
+            """)
+                .param("lotId", lotId)
+                .param("fromYear", fromYear)
+                .param("toYear", toYear)
+                .query(RentHistoryYear.class)
+                .list();
+    }
+
+    /**
+     * The deal one document produced, earliest step first.
+     *
+     * <p>source_uuid is stamped when the instrument is created rather than when
+     * the term activates, so this answers before anything is signed -- which is
+     * what lets a document substitute from a term it has not yet put in force.
+     */
+    public List<TenancyChargeTermRow> findBySource(UUID sourceUuid) {
+        return jdbc.sql("""
+                        SELECT * FROM tenancy_charge_term
+                         WHERE source_uuid = :sourceUuid AND deleted_at IS NULL
+                         ORDER BY valid_at
+                        """)
+                .param("sourceUuid", sourceUuid)
+                .query(rowMapper)
                 .list();
     }
 

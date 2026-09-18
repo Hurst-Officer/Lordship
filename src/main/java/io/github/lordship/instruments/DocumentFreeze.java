@@ -52,6 +52,12 @@ public final class DocumentFreeze {
      * a lease numbered 1, 3, 7 is what renumbering here prevents. Provenance is
      * not lost: {@code sourceClause} still names the row it came from.
      *
+     * <p>{@code unresolved} is what THIS clause asked for and nothing could
+     * fill, kept rather than only counted. The renderer reports it per clause
+     * and the document-wide list is a rollup of these; merging them and
+     * discarding the attribution is how a preview ends up able to say a value
+     * is missing but not which paragraph wanted it.
+     *
      * <p>{@code origin} says which table that row is in. The three sources have
      * three different tables and {@code sourceClause} is one column, so without
      * this a uuid cannot be looked up at all -- a template clause joined against
@@ -66,8 +72,18 @@ public final class DocumentFreeze {
             String bodyTemplate,
             String statuteRef,
             UUID sourceClause,
-            ClauseOrigin origin
-    ) {}
+            ClauseOrigin origin,
+            List<String> unresolved
+    ) {
+        public FrozenClause {
+            unresolved = List.copyOf(unresolved);
+        }
+
+        /** Whether this clause is fit to print as it stands. */
+        public boolean isComplete() {
+            return unresolved.isEmpty();
+        }
+    }
 
     /**
      * One sub-document as it will be stored, with the clauses that survived
@@ -92,8 +108,10 @@ public final class DocumentFreeze {
     /**
      * What the freeze produced, and everything wrong with it.
      *
-     * @param unresolved      tokens no clause could fill. Generation refuses on
-     *                        these; a preview shows them standing in the text.
+     * @param unresolved      every token no clause could fill, deduplicated --
+     *                        the summary that decides whether generation may
+     *                        proceed. Which clause wanted each one is on the
+     *                        clause itself.
      * @param omittedRequired sections that exist to satisfy a statute and ended
      *                        up with nothing in them. Reported by name and
      *                        statute rather than silently dropped -- a lease
@@ -210,7 +228,8 @@ public final class DocumentFreeze {
                         candidate.body(),
                         candidate.statuteRef(),
                         candidate.source(),
-                        candidate.origin()));
+                        candidate.origin(),
+                        rendered.unresolved()));
             }
 
             if (clauses.isEmpty() && !section.signatureBlock()) {
