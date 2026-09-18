@@ -21,9 +21,10 @@ CREATE TYPE instrument_type AS ENUM (
 -- ── Global settings ──────────────────────────────────────────────────────────
 
 CREATE TABLE global_settings ( -- singleton
-                         id         INT PRIMARY KEY DEFAULT 1 CONSTRAINT global_settings_must_be_a_singleton CHECK (id = 1),
-                         compliance_email TEXT,
-                         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+                                 id         INT PRIMARY KEY DEFAULT 1 CONSTRAINT global_settings_must_be_a_singleton CHECK (id = 1),
+                                 uuid       UUID NOT NULL DEFAULT uuidv7(), -- allows the audit log to reference this row
+                                 compliance_email TEXT,
+                                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 INSERT INTO global_settings (id) VALUES (1);
@@ -168,18 +169,18 @@ CREATE UNIQUE INDEX property_fee_cap_uq
     WHERE deleted_at IS NULL;
 
 CREATE TABLE property_fee_waiver (
-                                 uuid           UUID PRIMARY KEY DEFAULT uuidv7(),
-                                 property       UUID NOT NULL REFERENCES property(uuid),
-                                 agreement_type agreement_type NOT NULL,
-                                 fee_type       TEXT NOT NULL
-                                     CONSTRAINT property_fee_waiver_fee_type_must_be_known CHECK (fee_type IN ('LATE','NSF','PET','CAR','VIOLATION')),
-                                 void_above_occupancy_rate NUMERIC(5,4) NOT NULL
-                                     CONSTRAINT property_fee_waiver_occupancy_must_be_0_to_1 CHECK (void_above_occupancy_rate >= 0 AND void_above_occupancy_rate <= 1),
-                                 reason     TEXT NOT NULL CONSTRAINT property_fee_waiver_reason_must_not_be_blank CHECK (length(trim(reason)) > 0),
-                                 note       TEXT,
-                                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                                 created_by UUID NOT NULL,  -- FK added in V3 after agent table exists
-                                 deleted_at TIMESTAMPTZ
+                                     uuid           UUID PRIMARY KEY DEFAULT uuidv7(),
+                                     property       UUID NOT NULL REFERENCES property(uuid),
+                                     agreement_type agreement_type NOT NULL,
+                                     fee_type       TEXT NOT NULL
+                                         CONSTRAINT property_fee_waiver_fee_type_must_be_known CHECK (fee_type IN ('LATE','NSF','PET','CAR','VIOLATION')),
+                                     void_above_occupancy_rate NUMERIC(5,4) NOT NULL
+                                         CONSTRAINT property_fee_waiver_occupancy_must_be_0_to_1 CHECK (void_above_occupancy_rate >= 0 AND void_above_occupancy_rate <= 1),
+                                     reason     TEXT NOT NULL CONSTRAINT property_fee_waiver_reason_must_not_be_blank CHECK (length(trim(reason)) > 0),
+                                     note       TEXT,
+                                     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                                     created_by UUID NOT NULL,  -- FK added in V3 after agent table exists
+                                     deleted_at TIMESTAMPTZ
 );
 
 CREATE UNIQUE INDEX property_fee_waiver_uq

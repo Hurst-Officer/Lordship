@@ -1,5 +1,6 @@
 package io.github.lordship.instruments;
 
+import io.github.lordship.globalsettings.GlobalSettings;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.properties.Property;
 import io.github.lordship.shared.AgreementType;
@@ -8,6 +9,7 @@ import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancy.Tenancy;
+import io.github.lordship.tenancyterms.RentHistoryYear;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
 import io.github.lordship.tenancyterms.TenancyTermSource;
 import io.github.lordship.tenancyterms.TenancyTermStatus;
@@ -28,6 +30,8 @@ public class TokenResolverTest {
     private static final UUID LOT = UUID.randomUUID();
     private static final UUID PROPERTY = UUID.randomUUID();
     private static final LocalDate START = LocalDate.of(2026, 11, 1);
+    private static final OffsetDateTime SETTINGS_UPDATED =
+            OffsetDateTime.of(2026, 1, 2, 8, 0, 0, 0, ZoneOffset.UTC);
 
     // ---- the deal ------------------------------------------------------------
 
@@ -59,7 +63,7 @@ public class TokenResolverTest {
 
         assertEquals("42", values.scalar("lot.lot_number"));
         assertEquals("Harbor View", values.scalar("property.community_name"));
-        assertEquals("Port Orchard", values.scalar("property.city"));
+        assertEquals("Vine Villa", values.scalar("property.city"));
         assertEquals("Ada Lovelace and Grace Hopper", values.scalar("tenancy.tenant_names"));
     }
 
@@ -184,8 +188,8 @@ public class TokenResolverTest {
 
     private static TokenResolver.LeaseFacts facts(List<TenancyChargeTerm> schedule) {
         return new TokenResolver.LeaseFacts(
-                instrument(), schedule.get(0), schedule, tenancy(), lot(), property(),
-                List.of("Ada Lovelace", "Grace Hopper"));
+                instrument(), schedule.get(0), schedule, tenancy(), lot(), property(), settings(),
+                List.of("Ada Lovelace", "Grace Hopper"), history());
     }
 
     private static List<TenancyChargeTerm> scheduleOfFive() {
@@ -224,8 +228,8 @@ public class TokenResolverTest {
 
     private static Property property() {
         return new Property(PROPERTY, "HV", "Harbor View", "100 Marina Drive",
-                "Port Orchard", "WA", "98366", LocalDate.of(2019, 5, 1),
-                "MHP-2", "P-1000", "Harbor View LLC", "PO Box 12, Port Orchard WA 98366",
+                "Vine Villa", "WA", "94370", LocalDate.of(2019, 5, 1),
+                "MHP-2", "P-1000", "Harbor View LLC", "PO Box 12, Vine Villa WA 94370",
                 1978, OffsetDateTime.now(ZoneOffset.UTC), null);
     }
 
@@ -266,5 +270,203 @@ public class TokenResolverTest {
                 null, null, null,                                      // cancel columns
                 null,                                                  // deletedAt
                 null, now, UUID.randomUUID());
+    }
+
+    // ---- landlord.* ----------------------------------------------------------
+
+    @Test
+    void resolve_shouldNameTheParksOwnEntityAsTheLandlord() {
+        // Arrange -- each park is held by its own LLC
+        TokenResolver.LeaseFacts facts = facts(singleStep());
+
+        // Act
+        TokenValues values = TokenResolver.resolve(facts);
+
+        // Assert -- the lease names the entity that owns the ground, not the
+        // parent company
+        assertEquals("Harbor View LLC", values.scalar("landlord.name"));
+        assertEquals("PO Box 12, Vine Villa WA 94370", values.scalar("landlord.address"));
+    }
+
+    @Test
+    void resolve_shouldGiveLandlordAndPayableToTheSameValue() {
+        // Arrange -- two names for one fact today, so that the day a park takes
+        // cheques at a lockbox only one of them has to move
+        TokenValues values = TokenResolver.resolve(facts(singleStep()));
+
+        // Assert
+        assertEquals(values.scalar("property.payable_to"), values.scalar("landlord.name"));
+        assertEquals(values.scalar("property.remittance_address"), values.scalar("landlord.address"));
+    }
+
+    @Test
+    void resolve_shouldTakeTheComplianceAddressFromTheCompany() {
+        // Arrange -- the one genuinely company-wide fact on the page
+        TokenValues values = TokenResolver.resolve(facts(singleStep()));
+
+        // Assert
+        assertEquals("compliance@hurstandson.com", values.scalar("landlord.compliance_email"));
+    }
+
+    @Test
+    void resolve_shouldLeaveTheComplianceAddressUnset_whenNobodyHasEnteredOne() {
+        // Arrange -- the settings row exists but the field is blank, which is
+        // how a fresh install arrives
+        TokenResolver.LeaseFacts facts = withSettings(
+                new GlobalSettings(UUID.randomUUID(), null, SETTINGS_UPDATED));
+
+        // Act
+        TokenValues values = TokenResolver.resolve(facts);
+
+        // Assert -- not set rather than blank, so a clause asking for it lands
+        // in unresolved and generation refuses instead of printing "emailing ."
+        assertNull(values.scalar("landlord.compliance_email"));
+    }
+
+    @Test
+    void resolve_shouldLeaveTheLandlordUnset_whenThePropertyNeverNamedOne() {
+        // Arrange -- a park set up in a hurry
+        TokenResolver.LeaseFacts facts = withProperty(propertyWithNoEntity());
+
+        // Act
+        TokenValues values = TokenResolver.resolve(facts);
+
+        // Assert -- a lease that cannot say who the landlord is must not print
+        assertNull(values.scalar("landlord.name"));
+        assertNull(values.scalar("landlord.address"));
+    }
+
+    /** An ordinary lease: one rate, no escalation. */
+    private static List<TenancyChargeTerm> singleStep() {
+        return List.of(term(START, "4200.00", FeeMethod.FLAT, "65.00"));
+    }
+
+    private static GlobalSettings settings() {
+        return new GlobalSettings(UUID.randomUUID(), "compliance@hurstandson.com", SETTINGS_UPDATED);
+    }
+
+    private static TokenResolver.LeaseFacts withSettings(GlobalSettings settings) {
+        TokenResolver.LeaseFacts base = facts(singleStep());
+        return new TokenResolver.LeaseFacts(base.instrument(), base.term(), base.schedule(),
+                base.tenancy(), base.lot(), base.property(), settings, base.tenantNames(),
+                base.rentHistory());
+    }
+
+    private static TokenResolver.LeaseFacts withProperty(Property property) {
+        TokenResolver.LeaseFacts base = facts(singleStep());
+        return new TokenResolver.LeaseFacts(base.instrument(), base.term(), base.schedule(),
+                base.tenancy(), base.lot(), property, base.settings(), base.tenantNames(),
+                base.rentHistory());
+    }
+
+    private static Property propertyWithNoEntity() {
+        Property p = property();
+        return new Property(p.uuid(), p.propertyCode(), p.propertyName(), p.propertyAddress(),
+                p.propertyCity(), p.propertyState(), p.propertyZip(), p.purchaseDate(),
+                p.propertyZoning(), p.propertyParcel(), null, null, p.yearBuilt(),
+                p.createdAt(), p.deletedAt());
+    }
+
+    // ---- lot.rent_history_* --------------------------------------------------
+
+    @Test
+    void resolve_shouldDiscloseTheFiveYearsBeforeTheLeaseBegins() {
+        // Arrange -- the term starts 1 November 2026
+        TokenValues values = TokenResolver.resolve(facts(singleStep()));
+
+        // Assert -- 2026 is the rate the lease states above, not history
+        assertEquals("2021", values.scalar("lot.rent_history_year_1"));
+        assertEquals("2022", values.scalar("lot.rent_history_year_2"));
+        assertEquals("2023", values.scalar("lot.rent_history_year_3"));
+        assertEquals("2024", values.scalar("lot.rent_history_year_4"));
+        assertEquals("2025", values.scalar("lot.rent_history_year_5"));
+    }
+
+    @Test
+    void resolve_shouldPrintTheHighestRateChargedThatYear() {
+        // Arrange
+        TokenValues values = TokenResolver.resolve(facts(singleStep()));
+
+        // Assert
+        assertEquals("$3,600.00", values.scalar("lot.rent_history_rate_1"));
+        assertEquals("$3,900.00", values.scalar("lot.rent_history_rate_3"));
+    }
+
+    @Test
+    void resolve_shouldPrintUnknown_forAYearNobodyCanAnswer() {
+        // Arrange -- a park bought two years ago cannot know what its lots
+        // charged five years ago
+        TokenResolver.LeaseFacts facts = withHistory(List.of(
+                new RentHistoryYear(2024, new BigDecimal("4000.00")),
+                new RentHistoryYear(2025, new BigDecimal("4100.00"))));
+
+        // Act
+        TokenValues values = TokenResolver.resolve(facts);
+
+        // Assert -- the year still prints; a blank would read as nothing
+        // charged and a zero would read as free
+        assertEquals("2021", values.scalar("lot.rent_history_year_1"));
+        assertEquals("Unknown", values.scalar("lot.rent_history_rate_1"));
+        assertEquals("$4,100.00", values.scalar("lot.rent_history_rate_5"));
+    }
+
+    @Test
+    void resolve_shouldStillDiscloseEveryYear_whenNothingIsKnownAtAll() {
+        // Arrange -- a park bought last month
+        TokenValues values = TokenResolver.resolve(withHistory(List.of()));
+
+        // Assert -- five rows, every rate Unknown, and generation is not
+        // blocked: saying so on the page IS the disclosure
+        assertEquals("2021", values.scalar("lot.rent_history_year_1"));
+        assertEquals("2025", values.scalar("lot.rent_history_year_5"));
+        for (int i = 1; i <= 5; i++) {
+            assertEquals("Unknown", values.scalar("lot.rent_history_rate_" + i));
+        }
+    }
+
+    @Test
+    void resolve_shouldDiscloseNothing_onPaperWithNoTermOfItsOwn() {
+        // Arrange -- a notice does not expire and has nothing to disclose from
+        TokenResolver.LeaseFacts facts = withInstrument(noticeWithNoTerm());
+
+        // Act
+        TokenValues values = TokenResolver.resolve(facts);
+
+        // Assert
+        assertNull(values.scalar("lot.rent_history_year_1"));
+        assertNull(values.scalar("lot.rent_history_rate_1"));
+    }
+
+    private static List<RentHistoryYear> history() {
+        return List.of(
+                new RentHistoryYear(2021, new BigDecimal("3600.00")),
+                new RentHistoryYear(2022, new BigDecimal("3750.00")),
+                new RentHistoryYear(2023, new BigDecimal("3900.00")),
+                new RentHistoryYear(2024, new BigDecimal("4050.00")),
+                new RentHistoryYear(2025, new BigDecimal("4200.00")));
+    }
+
+    private static TokenResolver.LeaseFacts withHistory(List<RentHistoryYear> rentHistory) {
+        TokenResolver.LeaseFacts base = facts(singleStep());
+        return new TokenResolver.LeaseFacts(base.instrument(), base.term(), base.schedule(),
+                base.tenancy(), base.lot(), base.property(), base.settings(),
+                base.tenantNames(), rentHistory);
+    }
+
+    private static TokenResolver.LeaseFacts withInstrument(Instrument instrument) {
+        TokenResolver.LeaseFacts base = facts(singleStep());
+        return new TokenResolver.LeaseFacts(instrument, base.term(), base.schedule(),
+                base.tenancy(), base.lot(), base.property(), base.settings(),
+                base.tenantNames(), base.rentHistory());
+    }
+
+    private static Instrument noticeWithNoTerm() {
+        Instrument i = instrument();
+        return new Instrument(i.uuid(), i.tenancy(), InstrumentType.INCREASE_NOTICE, i.status(),
+                i.serial(), i.amends(), null, null, null,
+                i.template(), i.templateVersion(), i.documentAssignment(),
+                i.generatedAt(), i.generatedFile(), i.sentAt(), i.sentBy(),
+                i.servedOn(), i.serviceMethod(), i.servedBy(), i.proofFile(),
+                i.returnedOn(), i.returnedFile(), i.note(), i.createdAt(), i.createdBy());
     }
 }

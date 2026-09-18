@@ -1,10 +1,12 @@
 package io.github.lordship.instruments;
 
+import io.github.lordship.globalsettings.GlobalSettings;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.properties.Property;
 import io.github.lordship.shared.DocumentToken;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancy.Tenancy;
+import io.github.lordship.tenancyterms.RentHistoryYear;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
 
 import java.math.BigDecimal;
@@ -42,6 +44,8 @@ public final class TokenResolver {
      * @param term     the step in force when the document's term begins -- what
      *                 {@code term.rate} means on a lease the tenant is signing
      * @param schedule every step this instrument produced, earliest first
+     * @param settings the company-wide row -- one field of it prints, and the
+     *                 rest of the landlord's identity comes off the property
      */
     public record LeaseFacts(
             Instrument instrument,
@@ -50,11 +54,14 @@ public final class TokenResolver {
             Tenancy tenancy,
             Lot lot,
             Property property,
-            List<String> tenantNames
+            GlobalSettings settings,
+            List<String> tenantNames,
+            List<RentHistoryYear> rentHistory
     ) {
         public LeaseFacts {
             schedule = List.copyOf(schedule);
             tenantNames = List.copyOf(tenantNames);
+            rentHistory = List.copyOf(rentHistory);
         }
     }
 
@@ -65,6 +72,8 @@ public final class TokenResolver {
         putInstrument(out, facts.instrument());
         putLot(out, facts.lot());
         putProperty(out, facts.property());
+        putRentHistory(out, facts);
+        putLandlord(out, facts);
         putTenancy(out, facts);
         putRentSchedule(out, facts);
 
@@ -200,6 +209,71 @@ public final class TokenResolver {
         put(out, DocumentToken.PROPERTY_ZONING, property.propertyZoning());
         put(out, DocumentToken.PAYABLE_TO, property.payableTo());
         put(out, DocumentToken.REMITTANCE_ADDRESS, property.remittanceAddress());
+    }
+
+    // ---- lot.rent_history_* --------------------------------------------------
+
+    private static final DocumentToken[] HISTORY_YEARS = {
+            DocumentToken.RENT_HISTORY_YEAR_1, DocumentToken.RENT_HISTORY_YEAR_2,
+            DocumentToken.RENT_HISTORY_YEAR_3, DocumentToken.RENT_HISTORY_YEAR_4,
+            DocumentToken.RENT_HISTORY_YEAR_5
+    };
+
+    private static final DocumentToken[] HISTORY_RATES = {
+            DocumentToken.RENT_HISTORY_RATE_1, DocumentToken.RENT_HISTORY_RATE_2,
+            DocumentToken.RENT_HISTORY_RATE_3, DocumentToken.RENT_HISTORY_RATE_4,
+            DocumentToken.RENT_HISTORY_RATE_5
+    };
+
+    /**
+     * The RCW 59.20 disclosure: five years of what this lot charged.
+     *
+     * <p>Both halves of every row always print. The year is a legal
+     * requirement rather than a function of how long anyone has lived here, so
+     * a year nobody can answer prints the year and the literal "Unknown" beside
+     * it. A blank would read as nothing charged and a zero would read as free.
+     *
+     * <p>Unresolved is the wrong tool here. Everywhere else an unanswerable
+     * token stops the document, because a lease that omits its rent is worse
+     * than no lease. This is the exception: a park bought two years ago cannot
+     * know what its lots charged five years ago, and saying so on the page is
+     * the honest disclosure rather than a reason to refuse.
+     */
+    private static void putRentHistory(TokenValues.Builder out, LeaseFacts facts) {
+        List<Integer> years = RentHistory.disclosedYears(facts.instrument().termStart());
+        if (years.isEmpty()) {
+            return; // paper with no term of its own discloses nothing
+        }
+
+        Map<Integer, BigDecimal> charged = new LinkedHashMap<>();
+        for (RentHistoryYear row : facts.rentHistory()) {
+            charged.put(row.year(), row.highestRate());
+        }
+
+        for (int i = 0; i < years.size(); i++) {
+            int year = years.get(i);
+            put(out, HISTORY_YEARS[i], year);
+
+            BigDecimal rate = charged.get(year);
+            if (rate == null) {
+                out.put(HISTORY_RATES[i].token(), RentHistory.UNKNOWN);
+            } else {
+                put(out, HISTORY_RATES[i], rate);
+            }
+        }
+    }
+
+    // ---- landlord.* ----------------------------------------------------------
+
+    /**
+     * Who the lease says the landlord is.
+     * <p>The compliance address is the one genuinely company-wide fact on the
+     * page, which is the whole reason global_settings has a package.
+     */
+    private static void putLandlord(TokenValues.Builder out, LeaseFacts facts) {
+        put(out, DocumentToken.LANDLORD_NAME, facts.property().payableTo());
+        put(out, DocumentToken.LANDLORD_ADDRESS, facts.property().remittanceAddress());
+        put(out, DocumentToken.COMPLIANCE_EMAIL, facts.settings().complianceEmail());
     }
 
     // ---- tenancy.* -----------------------------------------------------------

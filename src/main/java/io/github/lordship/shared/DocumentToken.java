@@ -272,18 +272,13 @@ public enum DocumentToken {
     OCCUPANCY_DATE("tenancy.occupancy_date", Source.TENANCY, Format.DATE,
             "Possession date -- tenancy.start_date, not the lease term"),
 
-    // ---- landlord.* : the global_settings singleton --------------------------
-    // Two address tokens, one column behind them for now: both resolve to the
-    // main office. They are separate tokens because they are separate facts --
-    // where legal process is served, and where checks go -- and a lockbox or a
-    // payment processor pulls them apart the moment one is used. Splitting them
-    // now means that day costs a column and a resolver line rather than
-    // re-authoring every lease.
-
-    LANDLORD_NAME("landlord.name", Source.ORGANIZATION, Format.TEXT,
-            "Legal entity named on the lease"),
-    LANDLORD_ADDRESS("landlord.address", Source.ORGANIZATION, Format.TEXT,
-            "Where notices are served on the landlord and tenants write in -- the main office"),
+    // sql: LANDLORD_NAME is payable_to in property
+    LANDLORD_NAME("landlord.name", Source.PROPERTY, Format.TEXT,
+            "Legal entity named on the lease -- the LLC that holds THIS park"),
+    // sql: LANDLORD_ADDRESS is remittance_address in property
+    LANDLORD_ADDRESS("landlord.address", Source.PROPERTY, Format.TEXT,
+            "Where notices are served on the landlord and tenants write in"),
+    // sql: found in global_settings
     COMPLIANCE_EMAIL("landlord.compliance_email", Source.ORGANIZATION, Format.TEXT,
             "Address for compliance correspondence");
 

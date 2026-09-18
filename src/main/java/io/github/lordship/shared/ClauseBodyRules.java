@@ -78,6 +78,11 @@ public final class ClauseBodyRules {
         if (!misplaced.isEmpty()) {
             throw InvalidRequest.withDetails("clause.body_has_misplaced_row_tokens", misplaced);
         }
+
+        // Marks last. A body with a typo'd token and an unclosed <b> has two
+        // faults, and reporting the one the author is more likely to have meant
+        // first keeps a single retype from turning into two.
+        ClauseMarkup.validate(body);
     }
 
     /** The same check where the body arrives inside a patch map. */

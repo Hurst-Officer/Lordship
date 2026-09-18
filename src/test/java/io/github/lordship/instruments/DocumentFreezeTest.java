@@ -528,6 +528,62 @@ public class DocumentFreezeTest {
                         .map(DocumentFreeze.FrozenClause::origin).toList());
     }
 
+
+    // ---- which clause wanted it ----------------------------------------------
+
+    @Test
+    void freeze_shouldRecordWhichClauseCouldNotBeFilled() {
+        // Arrange -- two clauses, one of them short a value
+        DocumentSection rent = section("Rent", false, false,
+                clause("10", "rent", "Rent is {{term.rate}}.", null, List.of()),
+                clause("20", "late", "Late after the {{term.late_after_day}}.", null, List.of()));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(rent), TokenValues.of(Map.of("term.rate", "$4,200.00")));
+
+        // Assert -- the hole belongs to the clause that asked, not to the document
+        List<DocumentFreeze.FrozenClause> clauses = out.sections().get(0).clauses();
+        assertEquals(List.of(), clauses.get(0).unresolved());
+        assertTrue(clauses.get(0).isComplete());
+        assertEquals(List.of("term.late_after_day"), clauses.get(1).unresolved());
+        assertFalse(clauses.get(1).isComplete());
+    }
+
+    @Test
+    void freeze_shouldNameTheSameTokenOnEveryClauseThatWantedIt() {
+        // Arrange -- one missing value, wanted twice
+        DocumentSection rent = section("Rent", false, false,
+                clause("10", "a", "Pay {{term.rate}}.", null, List.of()),
+                clause("20", "b", "The rate of {{term.rate}} is due monthly.", null, List.of()));
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(List.of(rent), TokenValues.of(Map.of()));
+
+        // Assert -- the document-wide list says it once, so a banner does not
+        // read "2 values missing" when one is
+        assertEquals(List.of("term.rate"), out.unresolved());
+        assertEquals(List.of("term.rate"), out.sections().get(0).clauses().get(0).unresolved());
+        assertEquals(List.of("term.rate"), out.sections().get(0).clauses().get(1).unresolved());
+    }
+
+    @Test
+    void freeze_shouldRollUpEveryClausesHolesIntoTheDocumentList() {
+        // Arrange -- holes in two different sections
+        DocumentSection rent = withOrdinal(section("Rent", false, false,
+                clause("10", "rent", "Rent is {{term.rate}}.", null, List.of())), "1");
+        DocumentSection pets = withOrdinal(section("Pets", false, false,
+                clause("10", "pets", "Pet fee is {{term.pet_fee}}.", null, List.of())), "2");
+
+        // Act
+        DocumentFreeze.Frozen out = DocumentFreeze.freeze(
+                List.of(rent, pets), TokenValues.of(Map.of()));
+
+        // Assert -- the rollup is what decides whether generation may proceed
+        assertEquals(List.of("term.rate", "term.pet_fee"), out.unresolved());
+        assertFalse(out.isComplete());
+    }
+
     private static List<Integer> numbersOf(DocumentFreeze.Frozen out, int section) {
         return out.sections().get(section).clauses().stream()
                 .map(c -> c.ordinal().intValue()).toList();

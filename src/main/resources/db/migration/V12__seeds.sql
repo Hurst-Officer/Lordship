@@ -145,6 +145,10 @@ INSERT INTO permission (uuid, permission_name) VALUES
                                                    (uuidv7(), 'document_template:edit'),
                                                    (uuidv7(), 'document_template:delete'),
 
+                                                   -- global settings
+                                                   (uuidv7(), 'global_settings:view'),
+                                                   (uuidv7(), 'global_settings:edit'),
+
                                                    -- instruments
                                                    (uuidv7(), 'instrument:view'),
                                                    (uuidv7(), 'instrument:create'),
@@ -227,6 +231,7 @@ WHERE r.role_name = 'Office Staff'
                             'meterbills:edit',
                             'document_template:view',
                             'property_document:view',
+                            'global_settings:view',
                             'instrument:view',
                             'instrument:create',
                             'instrument:edit',
