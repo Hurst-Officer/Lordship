@@ -340,4 +340,66 @@ class ClauseMarkupTest {
         assertTrue(html.contains("<b>5a.</b>"), html);
         assertTrue(html.contains("class=\"rule\""), html);
     }
+
+    // ---- blocks ----------------------------------------------------------------
+
+    @Test
+    void toHtml_shouldMakeBullets_fromLinesStartingWithADash() {
+        assertEquals("<ul class=\"bullets\"><li>one</li><li><b>two</b></li></ul>",
+                ClauseMarkup.toHtml("- one\n- <b>two</b>"));
+    }
+
+    @Test
+    void toHtml_shouldKeepOneList_acrossBlankLinesBetweenItems() {
+        assertEquals("<ol class=\"numbered\"><li>Grease.</li><li>Paint.</li></ol>",
+                ClauseMarkup.toHtml("# Grease.\n\n# Paint."));
+    }
+
+    @Test
+    void toHtml_shouldMakeATable_fromPipeRows() {
+        assertEquals("<div class=\"seg\">Historical rents:</div>"
+                        + "<table class=\"grid\"><tr><td>2025</td><td>2026</td></tr><tr><td>$690.00</td><td>$725.00</td></tr></table>",
+                ClauseMarkup.toHtml("Historical rents:\n| 2025 | 2026 |\n| $690.00 | $725.00 |"));
+    }
+
+    @Test
+    void toHtml_shouldEscapeInsideAListItem_likeAnywhereElse() {
+        assertEquals("<ul class=\"bullets\"><li>&lt;script&gt;</li></ul>", ClauseMarkup.toHtml("- <script>"));
+    }
+
+    @Test
+    void toHtml_shouldLeaveADashMidSentenceAlone() {
+        assertEquals("Lot 4 - east side", ClauseMarkup.toHtml("Lot 4 - east side"));
+    }
+
+    @Test
+    void validate_shouldRefuseATableWhoseRowsDoNotLineUp() {
+        InvalidRequest e = assertThrows(InvalidRequest.class,
+                () -> ClauseMarkup.validate("| a | b |\n| c |"));
+        assertEquals("markup.table_ragged", e.details().get(0).code());
+    }
+
+    @Test
+    void toHtml_shouldStillSeeAList_whenTheBodyHasBeenReIndented() {
+        // Arrange -- what a SQL formatter does to a seed: every line after the
+        // first gets pushed in, and the file's CRLF endings come along too
+        String body = "- one\r\n  - two\r\n  - three\r\n";
+
+        // Act
+        String html = ClauseMarkup.toHtml(body);
+
+        // Assert -- three items, and no stray carriage return inside them
+        assertEquals("<ul class=\"bullets\"><li>one</li><li>two</li><li>three</li></ul>", html);
+    }
+
+    @Test
+    void toHtml_shouldSeeAnIndentedNumberedItem() {
+        assertEquals("<ol class=\"numbered\"><li>first</li><li>second</li></ol>",
+                ClauseMarkup.toHtml("      # first\n      # second"));
+    }
+
+    @Test
+    void hasBlocks_shouldNotBeFooledByIndentation() {
+        assertTrue(ClauseMarkup.hasBlocks("  - one\r\n  - two"));
+    }
 }

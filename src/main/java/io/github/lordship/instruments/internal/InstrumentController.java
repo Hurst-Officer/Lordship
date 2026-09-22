@@ -17,6 +17,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import io.github.lordship.documenttemplate.DocumentTemplate;
+import io.github.lordship.documenttemplate.DocumentTemplateService;
+import io.github.lordship.instruments.LeaseDocument;
+import org.springframework.http.MediaType;
+
 
 import java.math.BigDecimal;
 import java.util.HashMap;
@@ -53,9 +58,14 @@ public class InstrumentController {
     // value and a refusal are worded out of one properties file.
     private final MessageSource messages;
 
-    public InstrumentController(InstrumentService instrumentService, MessageSource messages) {
+    private final DocumentTemplateService documentTemplateService;
+
+    public InstrumentController(InstrumentService instrumentService,
+                                MessageSource messages,
+                                DocumentTemplateService documentTemplateService) {
         this.instrumentService = instrumentService;
         this.messages = messages;
+        this.documentTemplateService = documentTemplateService;
     }
 
     /**
@@ -90,7 +100,7 @@ public class InstrumentController {
 
     /**
      * Type the number off the paper, get the document. Case, spacing and the
-     * characters people misread are all normalised first, so the office worker
+     * characters people misread are all normalized first, so the office worker
      * is never told a serial does not exist because they typed O for zero.
      */
     @PreAuthorize("hasAuthority('instrument:view')")
@@ -133,6 +143,20 @@ public class InstrumentController {
     public ResponseEntity<LeasePreviewResponse> preview(@PathVariable UUID uuid) {
         return instrumentService.preview(uuid)
                 .map(preview -> LeasePreviewResponse.from(preview, messages))
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+
+    @PreAuthorize("hasAuthority('instrument:view')")
+    @GetMapping(value = "/{uuid}/preview.html", produces = MediaType.TEXT_HTML_VALUE)
+    public ResponseEntity<String> previewHtml(@PathVariable UUID uuid) {
+        return instrumentService.preview(uuid)
+                .map(preview -> LeaseDocument.render(
+                        preview,
+                        "PREVIEW",
+                        documentTemplateService.findById(preview.documentTemplate())
+                                .map(DocumentTemplate::styles).orElse(List.of())))
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
