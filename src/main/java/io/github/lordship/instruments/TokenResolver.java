@@ -185,11 +185,11 @@ public final class TokenResolver {
         instrument.lastCoveredDay().ifPresent(day -> put(out, DocumentToken.TERM_END, day));
         anniversary(instrument).ifPresent(day -> put(out, DocumentToken.ANNIVERSARY, TokenFormatter.monthAndDay(day)));
 
-        if (instrument.generatedAt() != null) {
-            LocalDate generatedOn = instrument.generatedAt().toLocalDate();
-            put(out, DocumentToken.GENERATED_ON, generatedOn);
-            put(out, DocumentToken.EXECUTION_YEAR, generatedOn.getYear());
-        }
+        LocalDate generatedOn = instrument.generatedAt() != null
+                ? instrument.generatedAt().toLocalDate()
+                : LocalDate.now();
+        put(out, DocumentToken.GENERATED_ON, generatedOn);
+        put(out, DocumentToken.EXECUTION_YEAR, generatedOn.getYear());
     }
 
     /**
@@ -381,4 +381,4 @@ public final class TokenResolver {
             put(out, token, value);
         }
     }
-}
+}

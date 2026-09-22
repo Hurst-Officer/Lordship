@@ -76,6 +76,7 @@ public final class ClauseMarkup {
         if (body == null) {
             return;
         }
+        body = normalize(body);
 
         List<DomainProblem.Problem> problems = new ArrayList<>();
         Deque<String> open = new ArrayDeque<>();
@@ -151,6 +152,7 @@ public final class ClauseMarkup {
         if (body == null) {
             return "";
         }
+        body = normalize(body);
         if (!hasBlocks(body)) {
             return inline(body);
         }
@@ -164,13 +166,26 @@ public final class ClauseMarkup {
     // lines between them do not break it. The inside of every item and cell goes
     // through the same inline scan, so nothing new can reach the page here.
 
+    /**
+     * One line ending, whatever the body arrived with.
+     *
+     * <p>A body that went through a Windows editor, a CRLF file or a seed
+     * migration carries {@code \r} characters that are invisible to whoever
+     * typed it and would otherwise end up inside a list item.
+     */
+    private static String normalize(String body) {
+        return body.indexOf('\r') < 0 ? body : body.replace("\r\n", "\n").replace('\r', '\n');
+    }
+
     private enum Line { TEXT, BULLET, NUMBERED, ROW, BLANK }
 
     private static Line kindOf(String line) {
         if (line.isBlank()) return Line.BLANK;
-        if (line.startsWith("- ")) return Line.BULLET;
-        if (line.startsWith("# ")) return Line.NUMBERED;
+        // Stripped, so a body that has been re-indented -- by a SQL formatter,
+        // a YAML block, a copy out of a document -- still marks its own lists.
         String t = line.strip();
+        if (t.startsWith("- ")) return Line.BULLET;
+        if (t.startsWith("# ")) return Line.NUMBERED;
         if (t.startsWith("|") && t.endsWith("|") && t.length() > 1) return Line.ROW;
         return Line.TEXT;
     }
@@ -180,6 +195,7 @@ public final class ClauseMarkup {
         if (body == null) {
             return false;
         }
+        body = normalize(body);
         for (String line : body.split("\n", -1)) {
             Line kind = kindOf(line);
             if (kind != Line.TEXT && kind != Line.BLANK) {
@@ -248,7 +264,7 @@ public final class ClauseMarkup {
     private static void list(StringBuilder out, String tag, String cls, List<String> items) {
         out.append('<').append(tag).append(" class=\"").append(cls).append("\">");
         for (String item : items) {
-            out.append("<li>").append(inline(item.substring(2))).append("</li>");
+            out.append("<li>").append(inline(item.strip().substring(2).strip())).append("</li>");
         }
         out.append("</").append(tag).append('>');
     }
