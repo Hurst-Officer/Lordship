@@ -13,6 +13,7 @@ public record Tenancy(
     boolean noPartialPayments,
     boolean acceptPayments,
     boolean exemptFromLateFees,
+    String notes,
     OffsetDateTime createdAt,
     OffsetDateTime deletedAt
 ) {

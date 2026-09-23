@@ -279,7 +279,7 @@ public class SecurityDepositServiceTest {
 
     private static Tenancy tenancy() {
         return new Tenancy(TENANCY, UUID.randomUUID(), LocalDate.of(2026, 1, 1), null,
-                false, false, true, false,
+                false, false, true, false, "",
                 OffsetDateTime.now(ZoneOffset.UTC), null);
     }
 

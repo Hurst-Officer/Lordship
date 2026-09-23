@@ -3,7 +3,6 @@ package io.github.lordship.tenants;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
-import io.github.lordship.tenants.internal.TenantCreateRequest;
 import io.github.lordship.tenants.internal.TenantRepository;
 import io.github.lordship.tenants.internal.TenantRow;
 import jakarta.persistence.EntityNotFoundException;
@@ -61,6 +60,7 @@ public class TenantServiceTests {
                 false,
                 true,
                 false,
+                "",
                 OffsetDateTime.now(ZoneOffset.UTC),
                 null
         );
@@ -100,7 +100,7 @@ public class TenantServiceTests {
         when(tenantRepository.findActiveByTenancyAndPerson(tenancyId, personId)).thenReturn(Optional.empty());
         when(tenantRepository.save(eq(tenancyId), eq(personId), any())).thenReturn(saved);
 
-        tenantService.create(new TenantCreateRequest(tenancyId, personId, null));
+        tenantService.create(tenancyId, personId, null);
 
         verify(tenantRepository).findActiveByTenancyAndPerson(tenancyId, personId);
         verify(tenantRepository).save(eq(tenancyId), eq(personId), any());
@@ -118,7 +118,7 @@ public class TenantServiceTests {
         when(tenantRepository.findActiveByTenancyAndPerson(tenancyId, personId)).thenReturn(Optional.empty());
         when(tenantRepository.save(tenancyId, personId, start)).thenReturn(saved);
 
-        Tenant result = tenantService.create(new TenantCreateRequest(tenancyId, personId, start));
+        Tenant result = tenantService.create(tenancyId, personId, start);
 
         assertEquals(saved.uuid(), result.uuid());
         assertEquals(tenancyId, result.tenancyId());
@@ -139,7 +139,7 @@ public class TenantServiceTests {
         when(tenantRepository.findActiveByTenancyAndPerson(tenancyId, personId)).thenReturn(Optional.empty());
         when(tenantRepository.save(tenancyId, personId, expected)).thenReturn(saved);
 
-        tenantService.create(new TenantCreateRequest(tenancyId, personId, null));
+        tenantService.create(tenancyId, personId, null);
 
         verify(tenantRepository).save(tenancyId, personId, expected);
     }
@@ -154,7 +154,7 @@ public class TenantServiceTests {
         when(tenantRepository.findActiveByTenancyAndPerson(tenancyId, personId)).thenReturn(Optional.of(existing));
 
         assertThrows(IllegalStateException.class,
-                () -> tenantService.create(new TenantCreateRequest(tenancyId, personId, null)));
+                () -> tenantService.create(tenancyId, personId, null));
 
         verify(tenantRepository, never()).save(any(), any(), any());
         verify(auditService, never()).recordInsert(any(), any(), any());
@@ -172,7 +172,7 @@ public class TenantServiceTests {
         when(tenantRepository.findActiveByTenancyAndPerson(tenancyId, personId)).thenReturn(Optional.empty());
         when(tenantRepository.save(eq(tenancyId), eq(personId), any())).thenReturn(saved);
 
-        Tenant result = tenantService.create(new TenantCreateRequest(tenancyId, personId, null));
+        Tenant result = tenantService.create(tenancyId, personId, null);
 
         assertEquals(saved.uuid(), result.uuid());
     }
@@ -184,7 +184,7 @@ public class TenantServiceTests {
         when(tenancyService.findTenancyById(tenancyId)).thenReturn(Optional.empty());
 
         assertThrows(EntityNotFoundException.class,
-                () -> tenantService.create(new TenantCreateRequest(tenancyId, UUID.randomUUID(), null)));
+                () -> tenantService.create(tenancyId, UUID.randomUUID(), null));
 
         verifyNoInteractions(tenantRepository);
     }

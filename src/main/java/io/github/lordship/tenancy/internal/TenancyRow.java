@@ -15,6 +15,7 @@ public record TenancyRow(
     boolean noPartialPayments,
     boolean acceptPayments,
     boolean exemptFromLateFees,
+    String notes,
     OffsetDateTime createdAt,
     OffsetDateTime deletedAt
 ) {
@@ -29,6 +30,7 @@ public record TenancyRow(
                 this.noPartialPayments,
                 this.acceptPayments,
                 this.exemptFromLateFees,
+                this.notes,
                 this.createdAt,
                 this.deletedAt
         );

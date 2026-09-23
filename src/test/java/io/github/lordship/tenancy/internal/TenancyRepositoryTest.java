@@ -29,7 +29,6 @@ public class TenancyRepositoryTest extends IntegrationTest {
     @Autowired
     JdbcClient jdbc;
 
-
     private UUID lot(String propertyCode) {
         return testData.insertLot(testData.insertProperty(propertyCode).uuid(), "1").uuid();
     }
@@ -113,6 +112,7 @@ public class TenancyRepositoryTest extends IntegrationTest {
 
     @Test
     void findById_shouldReturnEmpty_whenUuidIsUnknown() {
+        // Act & Assert
         assertTrue(tenancyRepository.findById(UUID.randomUUID()).isEmpty());
     }
 
@@ -209,6 +209,7 @@ public class TenancyRepositoryTest extends IntegrationTest {
 
     @Test
     void findActiveByLot_shouldReturnEmpty_whenLotIsUnknown() {
+        // Act & Assert
         assertTrue(tenancyRepository.findActiveByLot(UUID.randomUUID()).isEmpty());
     }
 
@@ -226,7 +227,6 @@ public class TenancyRepositoryTest extends IntegrationTest {
         // Assert
         assertEquals(saved.uuid(), closed.uuid());
         assertEquals(end, closed.endDate());
-
     }
 
     // No guard at this layer: refusing to re-close is TenancyService's job, and
@@ -270,17 +270,25 @@ public class TenancyRepositoryTest extends IntegrationTest {
 
     @Test
     void softDelete_shouldReturnFalse_whenUuidIsUnknown() {
+        // Act & Assert
         assertFalse(tenancyRepository.softDelete(UUID.randomUUID()));
     }
 
     // ---- patch --------------------------------------------------------------
 
+    // Every column the service can hand to patch() from the PATCH endpoint, in one
+    // call: start_date, end_date, notes and the four payment flags. Each value
+    // differs from the column's default, so an ignored column cannot pass.
     @Test
-    void patch_shouldUpdateAllowedColumns_andReturnUpdatedRow() {
+    void patch_shouldUpdateEveryEditableColumn_andPersistThem() {
         // Arrange
         TenancyRow saved = tenancyRepository.save(lot("T014"));
+        LocalDate start = LocalDate.now().minusDays(30);
+        LocalDate end = LocalDate.now();
         Map<String, Object> changes = Map.of(
-                "start_date", LocalDate.now().minusDays(30),
+                "start_date", start,
+                "end_date", end,
+                "notes", "Called re: late rent",
                 "no_personal_checks", true,
                 "no_partial_payments", true,
                 "accept_payments", false,
@@ -293,11 +301,39 @@ public class TenancyRepositoryTest extends IntegrationTest {
         // Assert
         assertTrue(patched.isPresent());
         TenancyRow row = patched.get();
-        assertEquals(LocalDate.now().minusDays(30), row.startDate());
+        assertEquals(start, row.startDate());
+        assertEquals(end, row.endDate());
+        assertEquals("Called re: late rent", row.notes());
         assertTrue(row.noPersonalChecks());
         assertTrue(row.noPartialPayments());
         assertFalse(row.acceptPayments());
         assertTrue(row.exemptFromLateFees());
+
+        // What came back is what is stored, not just what the UPDATE echoed
+        assertEquals(row, tenancyRepository.findById(saved.uuid()).orElseThrow());
+    }
+
+    @Test
+    void patch_shouldLeaveOtherColumnsAlone_whenPatchingOne() {
+        // Arrange
+        TenancyRow saved = tenancyRepository.save(lot("T031"));
+
+        // Act
+        Optional<TenancyRow> patched = tenancyRepository.patch(
+                saved.uuid(), Map.of("notes", "Called re: late rent"));
+
+        // Assert
+        assertTrue(patched.isPresent());
+        TenancyRow row = patched.get();
+        assertEquals("Called re: late rent", row.notes());
+        assertEquals(saved.lotId(), row.lotId());
+        assertEquals(saved.startDate(), row.startDate());
+        assertEquals(saved.endDate(), row.endDate());
+        assertEquals(saved.noPersonalChecks(), row.noPersonalChecks());
+        assertEquals(saved.noPartialPayments(), row.noPartialPayments());
+        assertEquals(saved.acceptPayments(), row.acceptPayments());
+        assertEquals(saved.exemptFromLateFees(), row.exemptFromLateFees());
+        assertEquals(saved.createdAt(), row.createdAt());
     }
 
     @Test
@@ -353,8 +389,8 @@ public class TenancyRepositoryTest extends IntegrationTest {
         // Arrange
         TenancyRow saved = tenancyRepository.save(lot("T019"));
 
-        // Act & Assert
-        // @Repository exception translation wraps the IllegalArgumentException.
+        // Act & Assert: @Repository exception translation wraps the
+        // IllegalArgumentException.
         assertThrows(InvalidDataAccessApiUsageException.class,
                 () -> tenancyRepository.patch(saved.uuid(), Map.of("created_at", "2025-01-01")));
     }
@@ -386,7 +422,7 @@ public class TenancyRepositoryTest extends IntegrationTest {
     }
 
     // ---- schema backstops ---------------------------------------------------
-    // The service is not the only way rows reach this table. Each of these
+    // The service is not the only way rows reach this table. Each refusal below
     // aborts its transaction, so nothing may follow the assertion in its test.
 
     @Test

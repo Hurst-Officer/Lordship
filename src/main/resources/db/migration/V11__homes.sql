@@ -46,6 +46,17 @@ CREATE TABLE mobile_home (
         )
 );
 
+-- A secured party is someone with a legal claim on collateral (owner/lender/creditor)
+CREATE TABLE mobile_home_secured_party (
+          uuid       UUID PRIMARY KEY DEFAULT uuidv7(),
+          mobile_home_id UUID NOT NULL REFERENCES mobile_home(uuid),
+          person_id  UUID NOT NULL REFERENCES person(uuid),
+          start_date DATE,
+          end_date   DATE,
+          accept_payments  BOOLEAN NOT NULL DEFAULT FALSE, -- note: by default do not accept payments
+          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          deleted_at TIMESTAMPTZ
+);
 
 CREATE TABLE stick_built (
                              uuid UUID PRIMARY KEY DEFAULT uuidv7(),

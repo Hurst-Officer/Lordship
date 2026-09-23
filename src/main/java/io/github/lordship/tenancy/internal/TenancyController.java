@@ -80,6 +80,26 @@ public class TenancyController {
             changes.put("end_date", request.get("endDate"));
         }
 
+        if (request.containsKey("notes")) {
+            changes.put("notes", request.get("notes"));
+        }
+
+        if (request.containsKey("noPartialPayments")) {
+            changes.put("no_partial_payments", request.get("noPartialPayments"));
+        }
+
+        if (request.containsKey("noPersonalChecks")) {
+            changes.put("no_personal_checks", request.get("noPersonalChecks"));
+        }
+
+        if (request.containsKey("acceptPayments")) {
+            changes.put("accept_payments", request.get("acceptPayments"));
+        }
+
+        if (request.containsKey("exemptFromLateFees")) {
+            changes.put("exempt_from_late_fees", request.get("exemptFromLateFees"));
+        }
+
         return tenancyService.patchTenancy(uuid, changes)
                 .map(t -> ResponseEntity.ok(TenancyResponse.from(t)))
                 .orElse(ResponseEntity.notFound().build());
