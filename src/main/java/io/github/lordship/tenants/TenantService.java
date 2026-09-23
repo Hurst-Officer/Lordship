@@ -4,7 +4,6 @@ import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
-import io.github.lordship.tenants.internal.TenantCreateRequest;
 import io.github.lordship.tenants.internal.TenantRepository;
 import io.github.lordship.tenants.internal.TenantRow;
 import jakarta.persistence.EntityNotFoundException;
@@ -56,30 +55,31 @@ public class TenantService {
      * <p>A person is on a tenancy once at a time, which is refused here for the
      * message and enforced by {@code uq_tenant_active_person} for the guarantee.
      * A person who moved out and moves back gets a second row rather than having
-     * the first reopened, so the gap between the two stays stays visible.
+     * the first reopened, so the gap between the two stays visible.
      *
      * <p>An ended tenancy still admits a tenant: someone left off a household
      * that has since moved on is a correction the office has to be able to make.
      * A deleted or unknown tenancy does not.
      */
+    // Note on design: http request records should not come into the service layer
     @Transactional
-    public Tenant create(TenantCreateRequest request) {
-        Tenancy tenancy = tenancyService.findTenancyById(request.tenancyId())
+    public Tenant create(UUID tenancyId, UUID personId, LocalDate startDateOpt) {
+        Tenancy tenancy = tenancyService.findTenancyById(tenancyId)
                 .orElseThrow(() -> new EntityNotFoundException(
-                        "Tenancy not found: " + request.tenancyId()));
+                        "Tenancy not found: " + tenancyId));
 
-        tenantRepository.findActiveByTenancyAndPerson(tenancy.uuid(), request.personId())
+        tenantRepository.findActiveByTenancyAndPerson(tenancy.uuid(), personId)
                 .ifPresent(existing -> {
                     throw new IllegalStateException(
-                            "Person " + request.personId() + " is already an active tenant on tenancy "
+                            "Person " + personId + " is already an active tenant on tenancy "
                                     + tenancy.uuid() + " (tenant " + existing.uuid() + ")");
                 });
 
-        LocalDate startDate = request.startDate() != null
-                ? request.startDate()
+        LocalDate startDate = startDateOpt != null
+                ? startDateOpt
                 : defaultStartDate(LocalDate.now());
 
-        TenantRow row = tenantRepository.save(tenancy.uuid(), request.personId(), startDate);
+        TenantRow row = tenantRepository.save(tenancy.uuid(), personId, startDate);
 
         auditService.recordInsert("tenant", row.uuid(), AuditMapper.toMap(row));
         return row.toTenant();
@@ -113,19 +113,35 @@ public class TenantService {
                 .toList();
     }
 
-    /**
-     * The one door onto a tenant's dates. There is no move-out endpoint: moving
-     * out is setting end_date, so it comes through here, the same arrangement
-     * TenancyService uses for ending a tenancy.
-     *
-     * <p>Null to a date is the move-out; date to a different date corrects one
-     * typed wrong; a date back to null undoes a move-out entered by mistake, and
-     * is refused when the person has since been added to the tenancy again --
-     * without that check, clearing an end_date is a second way past
-     * {@code uq_tenant_active_person}, which the create path never sees.
-     *
-     * <p>Mutable hashmap so the no-op keys can be dropped before the write.
-     */
+
+    static void normalize(Map<String, Object> changes, String key, LocalDate current) {
+        if (!changes.containsKey(key)) {
+            return;
+        }
+
+        Object raw = changes.get(key);
+        LocalDate wanted;
+
+        if (raw == null || (raw instanceof String blank && blank.isBlank())) {
+            wanted = null;
+        } else if (raw instanceof String text) {
+            try {
+                wanted = LocalDate.parse(text);
+            } catch (DateTimeParseException e) {
+                throw new IllegalArgumentException("Invalid date for " + key, e);
+            }
+        } else {
+            throw new IllegalArgumentException("Invalid date for " + key + ": expected text or null");
+        }
+
+        if (Objects.equals(current, wanted)) {
+            changes.remove(key);
+        } else {
+            changes.put(key, wanted);
+        }
+    }
+
+
     @Transactional
     public Optional<Tenant> patchTenant(UUID uuid, Map<String, Object> changes) {
         Optional<TenantRow> beforeOpt = tenantRepository.findById(uuid);
@@ -134,61 +150,17 @@ public class TenantService {
         }
 
         TenantRow before = beforeOpt.get();
+        // Mutable copy so the no-op keys can be dropped before the write.
         Map<String, Object> mutable = new HashMap<>(changes);
 
-        if (mutable.containsKey("start_date")) {
-            Object raw = mutable.get("start_date");
-            try {
-                if (raw instanceof String s && !s.isBlank()) {
-                    LocalDate parsed = LocalDate.parse(s);
-
-                    if (Objects.equals(before.startDate(), parsed)) {
-                        mutable.remove("start_date");
-                    } else {
-                        mutable.put("start_date", parsed);
-                    }
-
-                } else {
-                    if (before.startDate() == null) {
-                        mutable.remove("start_date");
-                    } else {
-                        mutable.put("start_date", null);
-                    }
-                }
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date");
-            }
-        }
-
-        if (mutable.containsKey("end_date")) {
-            Object raw = mutable.get("end_date");
-            try {
-                if (raw instanceof String s && !s.isBlank()) {
-                    LocalDate parsed = LocalDate.parse(s);
-
-                    if (Objects.equals(before.endDate(), parsed)) {
-                        mutable.remove("end_date");
-                    } else {
-                        mutable.put("end_date", parsed);
-                    }
-
-                } else {
-                    if (before.endDate() == null) {
-                        mutable.remove("end_date");
-                    } else {
-                        mutable.put("end_date", null);
-                    }
-                }
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date");
-            }
-        }
+        normalize(mutable, "start_date", before.startDate());
+        normalize(mutable, "end_date", before.endDate());
 
         if (mutable.isEmpty()) {
             return Optional.of(before.toTenant());
         }
 
-        // A key that survived the blocks above carries a real change; one that
+        // A key that survived the normalising above carries a real change; one that
         // did not means the supplied value already matched, so `before` is the
         // effective value either way.
         LocalDate startAfter = mutable.containsKey("start_date")
@@ -216,7 +188,9 @@ public class TenantService {
         }
 
         Optional<TenantRow> afterOpt = tenantRepository.patch(uuid, mutable);
-        if (afterOpt.isEmpty()) return Optional.empty();
+        if (afterOpt.isEmpty()) {
+            return Optional.empty();
+        }
 
         TenantRow after = afterOpt.get();
 
@@ -235,12 +209,12 @@ public class TenantService {
      */
     @Transactional
     public boolean softDelete(UUID uuid) {
-        return tenantRepository.findById(uuid).map(tenant -> {
-            if (!tenantRepository.softDelete(uuid)) {
-                return false;
-            }
-            auditService.recordDelete("tenant", uuid, AuditMapper.toMap(tenant));
-            return true;
-        }).orElse(false);
+        Optional<TenantRow> existing = tenantRepository.findById(uuid);
+        if (existing.isEmpty() || !tenantRepository.softDelete(uuid)) {
+            return false;
+        }
+
+        auditService.recordDelete("tenant", uuid, AuditMapper.toMap(existing.get()));
+        return true;
     }
 }

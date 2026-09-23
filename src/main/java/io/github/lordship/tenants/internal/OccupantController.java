@@ -4,12 +4,14 @@ import io.github.lordship.tenants.Occupant;
 import io.github.lordship.tenants.OccupantService;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +26,19 @@ import java.util.UUID;
 @RequestMapping("/api/occupants")
 public class OccupantController {
 
+    public record OccupantCreateRequest(
+            @NotNull
+            UUID tenancyId,
+
+            @NotNull
+            UUID personId,
+
+            // Optional, ISO yyyy-MM-dd. Omitted, it takes the same default a tenant
+            // does, so a household added in one sitting shares one start date.
+            LocalDate startDate
+    ) { }
+
+
     private final OccupantService occupantService;
 
     public OccupantController(OccupantService occupantService) {
@@ -33,7 +48,7 @@ public class OccupantController {
     @PreAuthorize("hasAuthority('tenants:create')")
     @PostMapping("/create")
     public ResponseEntity<OccupantResponse> createOccupant(@RequestBody @Valid OccupantCreateRequest request) {
-        Occupant occupant = occupantService.create(request);
+        Occupant occupant = occupantService.create(request.tenancyId(), request.personId(), request.startDate());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(OccupantResponse.from(occupant));
     }

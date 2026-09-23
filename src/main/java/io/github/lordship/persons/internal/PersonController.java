@@ -9,13 +9,14 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-
+@Validated
 @RestController
 @RequestMapping("/api/persons")
 public class PersonController {
@@ -23,8 +24,7 @@ public class PersonController {
     public record PersonCreateRequest(
             @NotBlank
             String nameFull
-    ) {
-    }
+    ) { }
 
     private final PersonService personService;
 

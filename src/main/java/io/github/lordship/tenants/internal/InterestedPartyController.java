@@ -1,13 +1,15 @@
 package io.github.lordship.tenants.internal;
 
-import io.github.lordship.tenants.Tenant;
-import io.github.lordship.tenants.TenantService;
+import io.github.lordship.tenants.InterestedParty;
+import io.github.lordship.tenants.InterestedPartyService;
+import io.github.lordship.tenants.Occupant;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.stereotype.Controller;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,80 +19,80 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+
+// note: permissions to edit tenants cross over here to this domain
 @Validated
 @RestController
-@RequestMapping("/api/tenants")
-public class TenantController {
+@RequestMapping("/api/interested-party")
+public class InterestedPartyController {
 
-    public record TenantCreateRequest(
+    public record InterestedPartyCreateRequest (
             @NotNull
             UUID tenancyId,
 
             @NotNull
             UUID personId,
 
-            // Optional, ISO yyyy-MM-dd. Omitted, the service picks the billing period
-            // the office is working in -- see TenantService.defaultStartDate.
             LocalDate startDate
     ) { }
 
-    private final TenantService tenantService;
+    private final InterestedPartyService interestedPartyService;
 
-    public TenantController(TenantService tenantService) {
-        this.tenantService = tenantService;
+    public InterestedPartyController(InterestedPartyService interestedPartyService) {
+        this.interestedPartyService = interestedPartyService;
     }
 
-    // tenancyId and personId are the minimum. startDate may be sent and is
-    // otherwise derived; everything else about the stay arrives by PATCH.
     @PreAuthorize("hasAuthority('tenants:create')")
     @PostMapping("/create")
-    public ResponseEntity<TenantResponse> createTenant(@RequestBody @Valid TenantCreateRequest request) {
-        Tenant tenant = tenantService.create(request.tenancyId(), request.personId(), request.startDate);
+    public ResponseEntity<InterestedPartyResponse> createInterestedParty (@RequestBody @Valid  InterestedPartyCreateRequest request) {
+        InterestedParty interestedParty = interestedPartyService.create(request.tenancyId(), request.personId(), request.startDate());
         return ResponseEntity.status(HttpStatus.CREATED)
-                .body(TenantResponse.from(tenant));
+                .body(InterestedPartyResponse.from(interestedParty));
     }
 
     @PreAuthorize("hasAuthority('tenants:view')")
     @GetMapping("/{uuid}")
-    public ResponseEntity<TenantResponse> getById(@PathVariable UUID uuid) {
-        return tenantService.findById(uuid)
-                .map(t -> ResponseEntity.ok(TenantResponse.from(t)))
+    public ResponseEntity<InterestedPartyResponse> getById(@PathVariable UUID uuid) {
+        return interestedPartyService.findById(uuid)
+                .map(i -> ResponseEntity.ok(InterestedPartyResponse.from(i)))
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    // The household. activeOnly=false adds the stays that have already ended.
+    // Who are the interested parties of the tenancy. activeOnly=false adds the ones that have already concluded
     @PreAuthorize("hasAuthority('tenants:view')")
     @GetMapping("/tenancy/{tenancyId}")
-    public ResponseEntity<List<TenantResponse>> getByTenancy(
+    public ResponseEntity<List<InterestedPartyResponse>> getByTenancy(
             @PathVariable UUID tenancyId,
             @RequestParam(defaultValue = "true") boolean activeOnly) {
 
-        List<Tenant> tenants = activeOnly
-                ? tenantService.findActiveByTenancy(tenancyId)
-                : tenantService.findByTenancy(tenancyId);
+        List<InterestedParty> interestedParties = activeOnly
+                ? interestedPartyService.findActiveByTenancy(tenancyId)
+                : interestedPartyService.findByTenancy(tenancyId);
 
-        return ResponseEntity.ok(tenants.stream().map(TenantResponse::from).toList());
+        return ResponseEntity.ok(interestedParties.stream().map(InterestedPartyResponse::from).toList());
     }
 
     @PreAuthorize("hasAuthority('tenants:view')")
     @GetMapping("/person/{personId}")
-    public ResponseEntity<List<TenantResponse>> getByPerson(@PathVariable UUID personId) {
+    public ResponseEntity<List<InterestedPartyResponse>> getByPerson(@PathVariable UUID personId) {
         return ResponseEntity.ok(
-                tenantService.findByPerson(personId).stream()
-                        .map(TenantResponse::from)
+                interestedPartyService.findByPerson(personId).stream()
+                        .map(InterestedPartyResponse::from)
                         .toList());
     }
 
     // Moving out is setting endDate, so there is no separate move-out endpoint.
-    // Sending endDate null undoes one, which the service refuses when that person
-    // is already back on the tenancy under a newer row.
     @PreAuthorize("hasAuthority('tenants:edit')")
     @PatchMapping("/{uuid}")
-    public ResponseEntity<TenantResponse> patchTenant(
+    public ResponseEntity<InterestedPartyResponse> patchInterestedParty(
             @PathVariable UUID uuid,
             @RequestBody Map<String, Object> request) {
 
         Map<String, Object> changes = new HashMap<>();
+
+        if (request.containsKey("notificationReason")) {
+            changes.put("notification_reason", request.get("notificationReason"));
+        }
 
         if (request.containsKey("startDate")) {
             changes.put("start_date", request.get("startDate"));
@@ -100,21 +102,27 @@ public class TenantController {
             changes.put("end_date", request.get("endDate"));
         }
 
-        return tenantService.patchTenant(uuid, changes)
-                .map(t -> ResponseEntity.ok(TenantResponse.from(t)))
+        if (request.containsKey("notes")) {
+            changes.put("notes", request.get("notes"));
+        }
+
+        if (request.containsKey("acceptPayments")) {
+            changes.put("accept_payments", request.get("acceptPayments"));
+        }
+
+        return interestedPartyService.patchInterestedParty(uuid, changes)
+                .map(i -> ResponseEntity.ok(InterestedPartyResponse.from(i)))
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @PreAuthorize("hasAuthority('tenants:delete')")
     @DeleteMapping("/{uuid}")
-    public ResponseEntity<Void> deleteTenant(@PathVariable UUID uuid) {
-        return tenantService.softDelete(uuid)
+    public ResponseEntity<Void> deleteInterestedParty(@PathVariable UUID uuid) {
+        return interestedPartyService.softDelete(uuid)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();
     }
 
-    // "Person ... is already an active tenant on tenancy ..." is the whole content
-    // of the refusal, and an empty 409 throws it away.
     @ExceptionHandler(IllegalArgumentException.class)
     ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
         return ResponseEntity.badRequest().body(Map.of("message", String.valueOf(e.getMessage())));
@@ -131,4 +139,5 @@ public class TenantController {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(Map.of("message", String.valueOf(e.getMessage())));
     }
+
 }

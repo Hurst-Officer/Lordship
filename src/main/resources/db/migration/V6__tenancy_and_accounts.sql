@@ -14,6 +14,7 @@ CREATE TABLE tenancy (
                          no_partial_payments   BOOLEAN NOT NULL DEFAULT FALSE,
                          accept_payments       BOOLEAN NOT NULL DEFAULT TRUE,
                          exempt_from_late_fees BOOLEAN NOT NULL DEFAULT FALSE,
+                         notes                 TEXT,
                          created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
                          deleted_at            TIMESTAMPTZ,
                          FOREIGN KEY (lot_id) REFERENCES lot(uuid)
@@ -95,14 +96,12 @@ CREATE TRIGGER trg_tenancy_active_limit
 -- every row on it whose end_date is null.
 CREATE TABLE tenant (
                         uuid       UUID PRIMARY KEY DEFAULT uuidv7(),
-                        tenancy_id UUID NOT NULL,
-                        person_id  UUID NOT NULL,
+                        tenancy_id UUID NOT NULL REFERENCES tenancy(uuid),
+                        person_id  UUID NOT NULL REFERENCES person(uuid),
                         start_date DATE,
                         end_date   DATE,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                        deleted_at TIMESTAMPTZ,
-                        FOREIGN KEY (person_id)  REFERENCES person(uuid),
-                        FOREIGN KEY (tenancy_id) REFERENCES tenancy(uuid)
+                        deleted_at TIMESTAMPTZ
 );
 
 
@@ -116,6 +115,21 @@ CREATE TABLE occupant (
                           deleted_at TIMESTAMPTZ
 );
 
+
+
+-- An interested party has a legal right to be informed about what happens to the tenancy
+CREATE TABLE tenancy_interested_party (
+                          uuid       UUID PRIMARY KEY DEFAULT uuidv7(),
+                          tenancy_id UUID NOT NULL REFERENCES tenancy(uuid),
+                          person_id  UUID NOT NULL REFERENCES person(uuid),
+                          notification_reason TEXT, -- explain why we are keeping this person notified
+                          start_date DATE,
+                          end_date   DATE,
+                          accept_payments       BOOLEAN NOT NULL DEFAULT FALSE, -- note: by default do not accept payments
+                          notes TEXT,
+                          created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                          deleted_at TIMESTAMPTZ
+);
 
 -- A person is on a tenancy once at a time. Someone who moves out and later moves
 -- back gets a second row: the first one carries an end_date, so it is out of the

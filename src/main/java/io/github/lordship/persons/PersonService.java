@@ -29,7 +29,7 @@ public class PersonService {
         this.auditService = auditService;
     }
 
-
+    // Note on design: http request records should not come into the service layer
     @Transactional
     public Person createPersonFromName(String nameFull) {
         PersonRow row = personRepository.save(nameFull);

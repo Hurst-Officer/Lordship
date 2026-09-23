@@ -828,7 +828,7 @@ public class TenancyChargeTermServiceTest {
     private static Tenancy tenancy() {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         return new Tenancy(TENANCY, LOT, LocalDate.of(2026, 8, 1), null,
-                false, false, true, false, now, null);
+                false, false, true, false, "", now, null);
     }
 
     /** A lot that permits LAND but has no rate set on it yet. */

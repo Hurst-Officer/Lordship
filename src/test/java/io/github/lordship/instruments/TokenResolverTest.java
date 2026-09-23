@@ -228,7 +228,7 @@ public class TokenResolverTest {
 
     private static Tenancy tenancy() {
         return new Tenancy(TENANCY, LOT, LocalDate.of(2026, 11, 1), null,
-                false, false, true, false,
+                false, false, true, false, "",
                 OffsetDateTime.now(ZoneOffset.UTC), null);
     }
 

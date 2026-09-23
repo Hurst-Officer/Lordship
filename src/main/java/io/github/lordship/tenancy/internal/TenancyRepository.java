@@ -21,7 +21,8 @@ public class TenancyRepository {
             "no_personal_checks",
             "no_partial_payments",
             "accept_payments",
-            "exempt_from_late_fees"
+            "exempt_from_late_fees",
+            "notes"
     );
 
     public TenancyRepository(JdbcClient jdbcClient) {

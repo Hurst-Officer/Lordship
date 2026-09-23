@@ -4,7 +4,6 @@ import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
-import io.github.lordship.tenants.internal.OccupantCreateRequest;
 import io.github.lordship.tenants.internal.OccupantRepository;
 import io.github.lordship.tenants.internal.OccupantRow;
 import jakarta.persistence.EntityNotFoundException;
@@ -54,24 +53,25 @@ public class OccupantService {
      * so a household entered in one sitting shares one date rather than
      * splitting across a month boundary for no reason.
      */
+    // Note on design: http request records should not come into the service layer
     @Transactional
-    public Occupant create(OccupantCreateRequest request) {
-        Tenancy tenancy = tenancyService.findTenancyById(request.tenancyId())
+    public Occupant create(UUID tenancyId, UUID personId, LocalDate startDateOpt) {
+        Tenancy tenancy = tenancyService.findTenancyById(tenancyId)
                 .orElseThrow(() -> new EntityNotFoundException(
-                        "Tenancy not found: " + request.tenancyId()));
+                        "Tenancy not found: " + tenancyId));
 
-        occupantRepository.findActiveByTenancyAndPerson(tenancy.uuid(), request.personId())
+        occupantRepository.findActiveByTenancyAndPerson(tenancy.uuid(), personId)
                 .ifPresent(existing -> {
                     throw new IllegalStateException(
-                            "Person " + request.personId() + " is already an active occupant on tenancy "
+                            "Person " + personId + " is already an active occupant on tenancy "
                                     + tenancy.uuid() + " (occupant " + existing.uuid() + ")");
                 });
 
-        LocalDate startDate = request.startDate() != null
-                ? request.startDate()
+        LocalDate startDate = startDateOpt != null
+                ? startDateOpt
                 : TenantService.defaultStartDate(LocalDate.now());
 
-        OccupantRow row = occupantRepository.save(tenancy.uuid(), request.personId(), startDate);
+        OccupantRow row = occupantRepository.save(tenancy.uuid(), personId, startDate);
 
         auditService.recordInsert("occupant", row.uuid(), AuditMapper.toMap(row));
         return row.toOccupant();
@@ -105,15 +105,43 @@ public class OccupantService {
                 .toList();
     }
 
+// Drop-in replacement for patchOccupant() in OccupantService, plus the new private
+// helper. Nothing else in the class changes; the imports you already have
+// (LocalDate, DateTimeParseException, java.util.*) cover it.
+
     /**
-     * The one door onto an occupant's dates. Moving out is setting end_date,
-     * the same arrangement tenants and tenancies use.
-     *
-     * <p>A date back to null undoes a move-out entered by mistake, and is
-     * refused when that person has since been added to the tenancy again --
-     * without the check, clearing an end_date is a second way past
-     * {@code uq_occupant_active_person} that the create path never sees.
+     * Turns one date key of a patch into something the repository can write, or
+     * drops it. Text is parsed; null and blank text clear the column; anything
+     * else (a number, a boolean, an already-parsed object) is refused rather than
+     * mistaken for a clear. A value equal to the current one is dropped as a no-op.
      */
+    private static void normalizeDateChange(Map<String, Object> changes, String key, LocalDate current) {
+        if (!changes.containsKey(key)) {
+            return;
+        }
+
+        Object raw = changes.get(key);
+        LocalDate wanted;
+
+        if (raw == null || (raw instanceof String blank && blank.isBlank())) {
+            wanted = null;
+        } else if (raw instanceof String text) {
+            try {
+                wanted = LocalDate.parse(text);
+            } catch (DateTimeParseException e) {
+                throw new IllegalArgumentException("Invalid date for " + key, e);
+            }
+        } else {
+            throw new IllegalArgumentException("Invalid date for " + key + ": expected text or null");
+        }
+
+        if (Objects.equals(current, wanted)) {
+            changes.remove(key);
+        } else {
+            changes.put(key, wanted);
+        }
+    }
+
     @Transactional
     public Optional<Occupant> patchOccupant(UUID uuid, Map<String, Object> changes) {
         Optional<OccupantRow> beforeOpt = occupantRepository.findById(uuid);
@@ -122,61 +150,17 @@ public class OccupantService {
         }
 
         OccupantRow before = beforeOpt.get();
+        // Mutable copy so the no-op keys can be dropped before the write.
         Map<String, Object> mutable = new HashMap<>(changes);
 
-        if (mutable.containsKey("start_date")) {
-            Object raw = mutable.get("start_date");
-            try {
-                if (raw instanceof String s && !s.isBlank()) {
-                    LocalDate parsed = LocalDate.parse(s);
-
-                    if (Objects.equals(before.startDate(), parsed)) {
-                        mutable.remove("start_date");
-                    } else {
-                        mutable.put("start_date", parsed);
-                    }
-
-                } else {
-                    if (before.startDate() == null) {
-                        mutable.remove("start_date");
-                    } else {
-                        mutable.put("start_date", null);
-                    }
-                }
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date");
-            }
-        }
-
-        if (mutable.containsKey("end_date")) {
-            Object raw = mutable.get("end_date");
-            try {
-                if (raw instanceof String s && !s.isBlank()) {
-                    LocalDate parsed = LocalDate.parse(s);
-
-                    if (Objects.equals(before.endDate(), parsed)) {
-                        mutable.remove("end_date");
-                    } else {
-                        mutable.put("end_date", parsed);
-                    }
-
-                } else {
-                    if (before.endDate() == null) {
-                        mutable.remove("end_date");
-                    } else {
-                        mutable.put("end_date", null);
-                    }
-                }
-            } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date");
-            }
-        }
+        normalizeDateChange(mutable, "start_date", before.startDate());
+        normalizeDateChange(mutable, "end_date", before.endDate());
 
         if (mutable.isEmpty()) {
             return Optional.of(before.toOccupant());
         }
 
-        // A key that survived the blocks above carries a real change; one that
+        // A key that survived the normalising above carries a real change; one that
         // did not means the supplied value already matched, so `before` is the
         // effective value either way.
         LocalDate startAfter = mutable.containsKey("start_date")
