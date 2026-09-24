@@ -1,11 +1,13 @@
 package io.github.lordship.config;
 
+import io.github.lordship.access.LoginRefused;
 import io.github.lordship.shared.DomainProblem;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.RuleConflict;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -77,6 +79,26 @@ public class ApiExceptionHandler {
             body.put("problems", refused.details().stream().map(ApiExceptionHandler::describe).toList());
         }
         return ResponseEntity.status(status).body(body);
+    }
+
+    /**
+     * A sign-in that did not go through. 429 with Retry-After when the throttle turned
+     * it away; otherwise 401, worded the same for an unknown email and a wrong password.
+     */
+    @ExceptionHandler(LoginRefused.class)
+    ResponseEntity<Map<String, Object>> loginRefused(LoginRefused e) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("message", sentence(e));
+        body.put("code", e.problem().code());
+
+        if (e.isThrottled()) {
+            return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                    .header(HttpHeaders.RETRY_AFTER, String.valueOf(e.retryAfterSeconds()))
+                    .body(body);
+        }
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .header(HttpHeaders.WWW_AUTHENTICATE, "Bearer")
+                .body(body);
     }
 
     /** The umbrella, then whichever details failed -- one sentence to read and fix from. */
@@ -190,4 +212,4 @@ public class ApiExceptionHandler {
         String line = (newline < 0 ? message : message.substring(0, newline)).trim();
         return line.startsWith("ERROR: ") ? line.substring(7).trim() : line;
     }
-}
+}
