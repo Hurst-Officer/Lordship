@@ -8,6 +8,7 @@ import jakarta.servlet.Filter;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -58,7 +59,7 @@ public class SecurityConfig {
                         // declaration order. The original handler does not re-run on this pass;
                         // only the error body is written.
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
-                        .requestMatchers("/api/agents/auth").permitAll()
+                        .requestMatchers(HttpMethod.POST, LoginBodySizeFilter.LOGIN_PATH).permitAll()
                         .requestMatchers(
                                 "/v3/api-docs",
                                 "/v3/api-docs/**",
@@ -76,6 +77,7 @@ public class SecurityConfig {
                 // reached only when the denied request is anonymous; a real agent
                 // still falls to the AccessDeniedHandler and its 403.
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(authenticationEntryPoint))
+                .addFilterBefore(new LoginBodySizeFilter(), UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(auditContextFilter, jwtAuthFilter.getClass());
         return http.build();

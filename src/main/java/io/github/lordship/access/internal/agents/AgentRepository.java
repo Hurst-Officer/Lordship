@@ -57,10 +57,11 @@ public class AgentRepository {
     }
 
     public Optional<AgentRow> findByWorkEmail(String workEmail) {
-        return jdbc.sql("SELECT * FROM agent WHERE work_email = :workEmail AND deleted_at IS NULL")
+        // lower() on both sides matches the uq_agent_email_active index in V3
+        return jdbc.sql("SELECT * FROM agent WHERE lower(work_email) = lower(:workEmail) AND deleted_at IS NULL")
                 .param("workEmail", workEmail)
                 .query(AgentRow.class)
                 .optional();
     }
 
-}
+}

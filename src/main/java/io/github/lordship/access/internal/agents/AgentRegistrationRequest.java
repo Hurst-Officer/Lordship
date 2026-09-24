@@ -14,6 +14,7 @@ public record AgentRegistrationRequest (
 
     @Email
     @NotBlank
+    @Size(max = 120, message = "Work email must be at most 120 characters")
     String workEmail,
 
     @Size(min = 7, max = 20, message = "Phone number must be between 7 and 20 characters")
@@ -25,4 +26,8 @@ public record AgentRegistrationRequest (
 
 ) {
 
+    @Override
+    public String toString() {
+        return "AgentRegistrationRequest";
+    }
 }

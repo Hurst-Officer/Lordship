@@ -33,7 +33,6 @@ public class ApplicationInitializer implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) throws Exception {
         log.info("Running application initializer");
-        printOutEnvironmentVars();
         ensureRolesExist();
         agentService.ensureRootAgentExists(rootEmail, rootPassword);
         log.info("Application initializer completed");
@@ -46,14 +45,6 @@ public class ApplicationInitializer implements ApplicationRunner {
         } else {
             log.info("All default roles present.");
         }
-    }
-
-    private void printOutEnvironmentVars() {
-        System.out.println("DB_URL: " + System.getenv("DB_URL"));
-        System.out.println("DB_USERNAME: " + System.getenv("DB_USERNAME"));
-        System.out.println("DB_PASSWORD: " + System.getenv("DB_PASSWORD"));
-        System.out.println("ROOT_EMAIL: " + System.getenv("ROOT_EMAIL"));
-        System.out.println("ROOT_PASSWORD: " + System.getenv("ROOT_PASSWORD"));
     }
 
 }

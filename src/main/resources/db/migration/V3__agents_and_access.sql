@@ -15,7 +15,7 @@ CREATE TABLE agent (
 );
 
 CREATE INDEX idx_agent_person_id ON agent(person_id) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX uq_agent_email_active ON agent(work_email) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX uq_agent_email_active ON agent(lower(work_email)) WHERE deleted_at IS NULL;
 
 CREATE TABLE agent_login_event (
                                    uuid           UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -136,4 +136,4 @@ ALTER TABLE property_fee_cap
     ADD CONSTRAINT fk_agent_editor FOREIGN KEY (created_by) REFERENCES agent(uuid);
 
 ALTER TABLE terms_template
-    ADD CONSTRAINT fk_agent_edits_terms FOREIGN KEY (created_by) REFERENCES agent(uuid);
+    ADD CONSTRAINT fk_agent_edits_terms FOREIGN KEY (created_by) REFERENCES agent(uuid);

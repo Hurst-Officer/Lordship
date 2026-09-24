@@ -32,6 +32,7 @@ public class AgentService {
     private final LoginEventRepository loginEventRepository;
     private final AuditService auditService;
     private final AgentAuthorizationCache authorizationCache;
+    private final LoginThrottle loginThrottle;
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
 
@@ -45,7 +46,8 @@ public class AgentService {
             GrantedRoleService grantedRoleService,
             LoginEventRepository loginEventRepository,
             AuditService auditService,
-            AgentAuthorizationCache authorizationCache
+            AgentAuthorizationCache authorizationCache,
+            LoginThrottle loginThrottle
     ) {
         this.agentRepository = agentRepository;
         this.personService = personService;
@@ -56,10 +58,12 @@ public class AgentService {
         this.loginEventRepository = loginEventRepository;
         this.auditService = auditService;
         this.authorizationCache = authorizationCache;
+        this.loginThrottle = loginThrottle;
     }
 
     @Transactional
     public AgentWithPerson registerAgent(String nameFull, String workPhone, String workEmail, String plainTextPassword) {
+        passwordService.requireFits(plainTextPassword, "password");
 
         Person person = personService.createPersonFromName(nameFull);
 
@@ -83,6 +87,8 @@ public class AgentService {
 
     @Transactional
     public boolean setAgentPassword(UUID agentId, String plainTextPassword) {
+        passwordService.requireFits(plainTextPassword, "newPassword");
+
         Optional<AgentRow> found = agentRepository.findById(agentId);
         if (found.isEmpty()) {
             return false;
@@ -112,17 +118,25 @@ public class AgentService {
         return true;
     }
 
+    /**
+     * Empty for a wrong password and an unknown email alike. Throws LoginRefused when
+     * the throttle turns the attempt away before any of this runs.
+     */
     public Optional<AgentAuthResult> verifyLogin(String workEmail, String plainTextPassword, String userAgentHeader, String ipAddress){
-        UserAgent userAgent = UserAgent.parseUserAgentString(userAgentHeader);
+        loginThrottle.admit(ipAddress, workEmail);
 
         Optional<AgentRow> agentRow = findByWorkEmailForAuth(workEmail);
+
+        // runs even when there is no agent, so the time taken does not say whether the email exists
+        boolean passwordCorrect = passwordService.verify(plainTextPassword,
+                agentRow.map(AgentRow::agentPassword).orElse(null));
 
         if (agentRow.isEmpty()){
             return Optional.empty();
         }
 
         AgentRow ar = agentRow.get();
-        boolean passwordCorrect = passwordService.verify(plainTextPassword, ar.agentPassword());
+        UserAgent userAgent = UserAgent.parseUserAgentString(userAgentHeader);
 
         LoginEventRow loginEventRow = new LoginEventRow(
                 ar.uuid(),
@@ -136,6 +150,7 @@ public class AgentService {
         loginEventRepository.save(loginEventRow);
 
         if (passwordCorrect){
+            loginThrottle.succeeded(ipAddress, workEmail);
             return personService.findByID(ar.personId())
                     .map(person -> {
                         AgentWithPerson agentWithPerson = new AgentWithPerson(ar.toAgent(), person);
@@ -189,4 +204,4 @@ public class AgentService {
     public List<LoginEventRow> getLoginEventsByAgentId(UUID agentId) {
         return loginEventRepository.getLoginEventsByAgentId(agentId);
     }
-}
+}
