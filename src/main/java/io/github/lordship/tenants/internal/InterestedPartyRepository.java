@@ -12,7 +12,7 @@ public class InterestedPartyRepository {
     private final JdbcClient jdbc;
 
     private static final Set<String> ALLOWED_COLUMNS = Set.of(
-      "start_date", "end_date", "accept_payments", "notes", "notification_reason,"
+      "start_date", "end_date", "accept_payments", "notes", "notification_reason"
     );
 
     public InterestedPartyRepository(JdbcClient jdbc) { this.jdbc = jdbc; }

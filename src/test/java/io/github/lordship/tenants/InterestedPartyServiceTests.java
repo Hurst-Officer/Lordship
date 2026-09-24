@@ -169,6 +169,23 @@ public class InterestedPartyServiceTests {
         verify(auditService, never()).recordInsert(any(), any(), any());
     }
 
+    // Mirrors TenantService.create(): a person has one active interest in a
+    // tenancy at a time, refused here for the message ahead of the DB guarantee.
+    @Test
+    void create_rejectsDuplicateActivePerson() {
+        // Arrange
+        tenancyExists();
+        InterestedPartyRow existing = row(uuid2, LocalDate.now().minusDays(5), null);
+        when(interestedPartyRepository.findActiveByTenancyAndPerson(tenancyId, personId))
+                .thenReturn(Optional.of(existing));
+
+        // Act & Assert
+        assertThrows(IllegalStateException.class,
+                () -> interestedPartyService.create(tenancyId, personId, LocalDate.now()));
+        verify(interestedPartyRepository, never()).save(any(), any(), any());
+        verify(auditService, never()).recordInsert(any(), any(), any());
+    }
+
     // ---- reads --------------------------------------------------------------
 
     @Test

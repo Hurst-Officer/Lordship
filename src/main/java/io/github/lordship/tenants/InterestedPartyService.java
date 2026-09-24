@@ -31,11 +31,22 @@ public class InterestedPartyService {
     }
 
     // Note on design: http request records should not come into the service layer
+    //
+    // A person has one active interest in a tenancy at a time, refused here for
+    // the message and enforced by uq_interested_party_active_person for the
+    // guarantee -- same split as TenantService.create().
     @Transactional
     public InterestedParty create(UUID tenancyId, UUID personId, LocalDate startDateOpt) {
         Tenancy tenancy = tenancyService.findTenancyById(tenancyId)
                 .orElseThrow(() -> new EntityNotFoundException(
                         "Tenancy not found: " + tenancyId));
+
+        interestedPartyRepository.findActiveByTenancyAndPerson(tenancy.uuid(), personId)
+                .ifPresent(existing -> {
+                    throw new IllegalStateException(
+                            "Person " + personId + " is already an active interested party on tenancy "
+                                    + tenancy.uuid() + " (interested party " + existing.uuid() + ")");
+                });
 
         LocalDate startDate = startDateOpt != null
                 ? startDateOpt
