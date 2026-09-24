@@ -6,7 +6,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-public record InterestedPartyResponse(
+public record InterestedPartyResponse (
         UUID uuid,
         UUID tenancyId,
         UUID personId,

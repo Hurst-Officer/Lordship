@@ -157,6 +157,19 @@ CREATE INDEX idx_tenant_tenancy_active
 -- Every stay a person has had, for the tenant view.
 CREATE INDEX idx_tenant_person ON tenant(person_id) WHERE deleted_at IS NULL;
 
+-- A person has one active interest in a tenancy at a time. Someone whose
+-- interest ends and later resumes gets a second row: the first one carries an
+-- end_date, so it is out of the index and the return does not collide with it.
+CREATE UNIQUE INDEX uq_interested_party_active_person
+    ON tenancy_interested_party(tenancy_id, person_id) WHERE end_date IS NULL AND deleted_at IS NULL;
+
+-- Serves "who currently has an interest in this tenancy" (findActiveByTenancy).
+CREATE INDEX idx_interested_party_tenancy_active
+    ON tenancy_interested_party(tenancy_id) WHERE end_date IS NULL AND deleted_at IS NULL;
+
+-- Every stay a person has had an interest in, for findByPerson.
+CREATE INDEX idx_interested_party_person ON tenancy_interested_party(person_id) WHERE deleted_at IS NULL;
+
 -- ── Account ───────────────────────────────────────────────────────────────────
 
 CREATE TABLE account (

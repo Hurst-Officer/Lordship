@@ -12,6 +12,8 @@ import io.github.lordship.properties.internal.PropertyRepository;
 import io.github.lordship.properties.internal.PropertyRow;
 import io.github.lordship.tenancy.internal.TenancyRepository;
 import io.github.lordship.tenancy.internal.TenancyRow;
+import io.github.lordship.tenants.InterestedParty;
+import io.github.lordship.tenants.internal.InterestedPartyRepository;
 import io.github.lordship.tenants.internal.TenantRepository;
 import io.github.lordship.tenants.internal.TenantRow;
 
@@ -27,6 +29,7 @@ public final class TestDataSupport {
     private final MeterRepository meterRepository;
     private final PersonRepository personRepository;
     private final TenantRepository tenantRepository;
+    private final InterestedPartyRepository interestedPartyRepository;
 
     private TestDataSupport(PropertyRepository propertyRepository,
                             LotRepository lotRepository,
@@ -34,7 +37,8 @@ public final class TestDataSupport {
                             AccountRepository accountRepository,
                             MeterRepository meterRepository,
                             PersonRepository personRepository,
-                            TenantRepository tenantRepository) {
+                            TenantRepository tenantRepository,
+                            InterestedPartyRepository interestedPartyRepository) {
         this.propertyRepository = propertyRepository;
         this.lotRepository = lotRepository;
         this.tenancyRepository = tenancyRepository;
@@ -42,6 +46,7 @@ public final class TestDataSupport {
         this.meterRepository = meterRepository;
         this.personRepository = personRepository;
         this.tenantRepository = tenantRepository;
+        this.interestedPartyRepository = interestedPartyRepository;
     }
 
     public PropertyRow insertProperty(String propertyName, String propertyAddress, String propertyCode) {
@@ -78,6 +83,10 @@ public final class TestDataSupport {
         PropertyRow pr = insertProperty("TP");
         LotRow lr = insertLot(pr.uuid(), "1");
         return meterRepository.createDefault(lr.uuid());
+    }
+
+    public InterestedParty insertInterestedParty(UUID tenancyId, UUID personId, LocalDate startDate){
+        return interestedPartyRepository.save(tenancyId, personId, startDate).toInterestedParty();
     }
 
     // Repositories, not services: a service call pulls in the audit write, which

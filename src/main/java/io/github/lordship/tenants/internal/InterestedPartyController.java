@@ -2,14 +2,12 @@ package io.github.lordship.tenants.internal;
 
 import io.github.lordship.tenants.InterestedParty;
 import io.github.lordship.tenants.InterestedPartyService;
-import io.github.lordship.tenants.Occupant;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.stereotype.Controller;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 

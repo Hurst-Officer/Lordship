@@ -114,6 +114,19 @@ CREATE INDEX idx_mobile_home_vin
 CREATE UNIQUE INDEX uq_stick_built_lot
     ON stick_built(lot_id) WHERE deleted_at IS NULL;
 
+-- A person has one active claim on a home at a time. Someone whose claim ends
+-- and later resumes gets a second row: the first one carries an end_date, so
+-- it is out of the index and the return does not collide with it.
+CREATE UNIQUE INDEX uq_secured_party_active_person
+    ON mobile_home_secured_party(mobile_home_id, person_id) WHERE end_date IS NULL AND deleted_at IS NULL;
+
+-- Serves "who currently has a claim on this home" (findActiveByHome).
+CREATE INDEX idx_secured_party_home_active
+    ON mobile_home_secured_party(mobile_home_id) WHERE end_date IS NULL AND deleted_at IS NULL;
+
+-- Every claim a person has held, for findByPerson.
+CREATE INDEX idx_secured_party_person ON mobile_home_secured_party(person_id) WHERE deleted_at IS NULL;
+
 
 -- ── One structure per lot ────────────────────────────────────────────────────
 
