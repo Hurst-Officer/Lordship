@@ -9,7 +9,6 @@ import io.github.lordship.shared.AgreementType;
 import io.github.lordship.tenancy.internal.TenancyRow;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
 import io.github.lordship.tenancyterms.TenancyChargeTermService;
-import io.github.lordship.tenancyterms.TenancyTermStatus;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -78,7 +77,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
     @Test
     void createChargeTerm_shouldReturn201_andCopyTheTemplate() throws Exception {
         // Act
-        MvcResult result = createTerm("LAND", "2026-09-01", "LEASE")
+        MvcResult result = createTerm("LAND", "2026-09-01", "MIGRATION")
                 // Assert
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.uuid").exists())
@@ -97,6 +96,34 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
     }
 
     @Test
+    void createChargeTerm_shouldReturn400_forATermThatNeedsADocument() throws Exception {
+        // Act / Assert -- LEASE terms are created from their document
+        createTerm("LAND", "2026-09-01", "LEASE")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("term.needs_a_document"))
+                .andExpect(jsonPath("$.field").value("source"));
+    }
+
+    @Test
+    void createChargeTerm_shouldReturn400_forACorrectionWithoutAReason() throws Exception {
+        // Act / Assert
+        createTerm("LAND", "2026-09-01", "CORRECTION")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("term.correction_needs_reason"))
+                .andExpect(jsonPath("$.field").value("correctionReason"));
+    }
+
+    @Test
+    void createChargeTerm_shouldSaveTheReason_forACorrection() throws Exception {
+        // Act / Assert
+        createTerm("LAND", "2026-09-01", "CORRECTION", "found an unscanned lease")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.source").value("CORRECTION"))
+                .andExpect(jsonPath("$.correctionReason").value("found an unscanned lease"))
+                .andExpect(jsonPath("$.sourceUuid").doesNotExist());
+    }
+
+    @Test
     void createChargeTerm_shouldReturn404_whenTheTenancyDoesNotExist() throws Exception {
         // Act / Assert
         mockMvc.perform(post("/api/tenancy-charge-terms")
@@ -107,7 +134,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
                             "tenancy" : "%s",
                             "agreementType" : "LAND",
                             "validAt" : "2026-09-01",
-                            "source" : "LEASE"
+                            "source" : "MIGRATION"
                         }
                         """.formatted(UUID.randomUUID())))
                 .andExpect(status().isNotFound());
@@ -121,7 +148,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
         copyTemplateToProperty("IT CT Storage Terms", "STORAGE");
 
         // Act / Assert
-        createTerm("STORAGE", "2026-09-01", "LEASE")
+        createTerm("STORAGE", "2026-09-01", "MIGRATION")
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value(containsString("does not permit")));
     }
@@ -132,7 +159,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
         permitAgreementType(lot, AgreementType.STORAGE, null);
 
         // Act / Assert
-        createTerm("STORAGE", "2026-09-01", "LEASE")
+        createTerm("STORAGE", "2026-09-01", "MIGRATION")
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value(containsString("terms template")));
     }
@@ -143,7 +170,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
         setLotRate(lot, AgreementType.LAND, new BigDecimal("725.00"));
 
         // Act
-        MvcResult result = createTerm("LAND", "2026-09-01", "LEASE")
+        MvcResult result = createTerm("LAND", "2026-09-01", "MIGRATION")
                 .andExpect(status().isCreated())
                 .andReturn();
 
@@ -276,8 +303,8 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
     }
 
     @Test
-    void activate_shouldReturn400_whenNoInstrumentIsAttached() throws Exception {
-        // Arrange -- term_in_force_needs_paper, refused by name
+    void activate_shouldPutAMigratedTermInForce_withNoDocument() throws Exception {
+        // Arrange -- term_in_force_needs_paper allows MIGRATION and CORRECTION
         UUID uuid = createdTermId();
         patchTerm(uuid, """
                 { "rate" : 650.00 }
@@ -287,8 +314,8 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
         // Act / Assert
         mockMvc.perform(post("/api/tenancy-charge-terms/{uuid}/activate", uuid)
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value(containsString("instrument")));
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("ACTIVE"));
     }
 
     // ---- cancel and delete ---------------------------------------------------
@@ -328,8 +355,9 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
     @Test
     void listByTenancy_shouldReturnTheTermsForThatTenancy() throws Exception {
         // Arrange
-        createTerm("LAND", "2026-09-01", "LEASE").andExpect(status().isCreated());
-        createTerm("LAND", "2026-10-01", "INCREASE_NOTICE").andExpect(status().isCreated());
+        createTerm("LAND", "2026-09-01", "MIGRATION").andExpect(status().isCreated());
+        createTerm("LAND", "2026-10-01", "CORRECTION", "rent was wrong in the migration")
+                .andExpect(status().isCreated());
 
         // Act / Assert -- newest first
         mockMvc.perform(get("/api/tenancy-charge-terms")
@@ -361,7 +389,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
     @Test
     void response_shouldExposeOnlyTheChosenFields() throws Exception {
         // Act / Assert
-        createTerm("LAND", "2026-09-01", "LEASE")
+        createTerm("LAND", "2026-09-01", "MIGRATION")
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.softDeleted").doesNotExist())
                 .andExpect(jsonPath("$.deletedAt").doesNotExist())
@@ -381,6 +409,12 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
     // ---- Helpers -------------------------------------------------------------
 
     private ResultActions createTerm(String agreementType, String validAt, String source) throws Exception {
+        return createTerm(agreementType, validAt, source, null);
+    }
+
+    private ResultActions createTerm(String agreementType, String validAt, String source,
+                                     String correctionReason) throws Exception {
+        String reason = correctionReason == null ? "null" : "\"" + correctionReason + "\"";
         return mockMvc.perform(post("/api/tenancy-charge-terms")
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -389,13 +423,14 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
                             "tenancy" : "%s",
                             "agreementType" : "%s",
                             "validAt" : "%s",
-                            "source" : "%s"
+                            "source" : "%s",
+                            "correctionReason" : %s
                         }
-                        """.formatted(tenancy, agreementType, validAt, source)));
+                        """.formatted(tenancy, agreementType, validAt, source, reason)));
     }
 
     private UUID createdTermId() throws Exception {
-        MvcResult result = createTerm("LAND", "2026-09-01", "LEASE")
+        MvcResult result = createTerm("LAND", "2026-09-01", "MIGRATION")
                 .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));

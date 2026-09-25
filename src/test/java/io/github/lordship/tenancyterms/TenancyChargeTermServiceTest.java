@@ -62,8 +62,58 @@ public class TenancyChargeTermServiceTest {
     private static final UUID PROPERTY = UUID.randomUUID();
     private static final UUID TEMPLATE = UUID.randomUUID();
     private static final LocalDate VALID_AT = LocalDate.of(2026, 9, 1);
+    private static final UUID DOCUMENT = UUID.randomUUID();
 
-    // ---- createFromTemplate --------------------------------------------------
+    // ---- createFromTemplate (MIGRATION and CORRECTION only) -------------------
+
+    @Test
+    void createFromTemplate_shouldRefuseASourceThatNeedsADocument() {
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class, () -> tenancyChargeTermService.createFromTemplate(
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.LEASE, null));
+
+        // Assert -- a LEASE term is created from its document instead
+        assertEquals("term.needs_a_document", refused.problem().code());
+        assertEquals("source", refused.problem().field());
+        verifyNoInteractions(tenancyChargeTermRepository);
+    }
+
+    @Test
+    void createFromTemplate_shouldRefuseACorrectionWithNoReason() {
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class, () -> tenancyChargeTermService.createFromTemplate(
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.CORRECTION, "   "));
+
+        // Assert
+        assertEquals("term.correction_needs_reason", refused.problem().code());
+        assertEquals("correctionReason", refused.problem().field());
+        verifyNoInteractions(tenancyChargeTermRepository);
+    }
+
+    @Test
+    void createFromTemplate_shouldRefuseAReasonOnAMigration() {
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class, () -> tenancyChargeTermService.createFromTemplate(
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.MIGRATION, "why not"));
+
+        // Assert
+        assertEquals("term.reason_only_for_corrections", refused.problem().code());
+    }
+
+    @Test
+    void createFromTemplate_shouldSaveTheReasonOnACorrection() {
+        // Arrange
+        arrangeCreate(lotPermittingLand(), template(new BigDecimal("650.00")));
+
+        // Act
+        tenancyChargeTermService.createFromTemplate(
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.CORRECTION, "  found an unscanned lease ");
+
+        // Assert -- trimmed, and no document
+        verify(tenancyChargeTermRepository).save(argThat(row ->
+                "found an unscanned lease".equals(row.correctionReason())
+                        && row.sourceUuid() == null));
+    }
 
     @Test
     void createFromTemplate_shouldReturnEmpty_whenTenancyNotFound() {
@@ -72,7 +122,7 @@ public class TenancyChargeTermServiceTest {
 
         // Act
         Optional<TenancyChargeTerm> result = tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.LEASE, null);
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.MIGRATION, null);
 
         // Assert
         assertTrue(result.isEmpty());
@@ -92,7 +142,7 @@ public class TenancyChargeTermServiceTest {
 
         // Act / Assert
         assertThrows(IllegalStateException.class, () -> tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.STORAGE, VALID_AT, TenancyTermSource.LEASE, null));
+                TENANCY, AgreementType.STORAGE, VALID_AT, TenancyTermSource.MIGRATION, null));
         verify(tenancyChargeTermRepository, never()).save(any());
         verifyNoInteractions(auditService);
     }
@@ -107,7 +157,7 @@ public class TenancyChargeTermServiceTest {
 
         // Act / Assert
         assertThrows(IllegalStateException.class, () -> tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.LEASE, null));
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.MIGRATION, null));
         verifyNoInteractions(termsTemplateService);
         verify(tenancyChargeTermRepository, never()).save(any());
     }
@@ -120,7 +170,7 @@ public class TenancyChargeTermServiceTest {
 
         // Act
         tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.LEASE, null);
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.MIGRATION, null);
 
         // Assert
         verify(tenancyChargeTermRepository).save(argThat(
@@ -135,7 +185,7 @@ public class TenancyChargeTermServiceTest {
 
         // Act
         tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.LEASE, null);
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.MIGRATION, null);
 
         // Assert
         verify(tenancyChargeTermRepository).save(argThat(
@@ -149,7 +199,7 @@ public class TenancyChargeTermServiceTest {
 
         // Act
         Optional<TenancyChargeTerm> result = tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.LEASE, null);
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.MIGRATION, null);
 
         // Assert
         assertTrue(result.isPresent(), "an unpriced draft is still created");
@@ -163,7 +213,7 @@ public class TenancyChargeTermServiceTest {
 
         // Act
         tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.LEASE, null);
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.MIGRATION, null);
 
         // Assert
         verify(tenancyChargeTermRepository).save(argThat(row ->
@@ -173,27 +223,13 @@ public class TenancyChargeTermServiceTest {
     }
 
     @Test
-    void createFromTemplate_shouldCarryTheBatch_soABulkRunCanBeReviewedTogether() {
-        // Arrange
-        UUID batch = UUID.randomUUID();
-        arrangeCreate(lotPermittingLand(), template(new BigDecimal("650.00")));
-
-        // Act
-        tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.INCREASE_NOTICE, batch);
-
-        // Assert
-        verify(tenancyChargeTermRepository).save(argThat(row -> batch.equals(row.batch())));
-    }
-
-    @Test
     void createFromTemplate_shouldRecordAnInsert() {
         // Arrange
         arrangeCreate(lotPermittingLand(), template(new BigDecimal("650.00")));
 
         // Act
         tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.LEASE, null);
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.MIGRATION, null);
 
         // Assert
         verify(auditService).recordInsert(eq("tenancy_charge_term"), any(), any());
@@ -206,7 +242,7 @@ public class TenancyChargeTermServiceTest {
 
         // Act
         tenancyChargeTermService.createFromTemplate(
-                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.LEASE, null);
+                TENANCY, AgreementType.LAND, VALID_AT, TenancyTermSource.MIGRATION, null);
 
         // Assert
         verify(tenancyChargeTermRepository).save(argThat(
@@ -338,6 +374,44 @@ public class TenancyChargeTermServiceTest {
 
         // Assert
         verify(auditService, never()).recordUpdate(any(), any(), any(), any());
+    }
+
+    @Test
+    void patchChargeTerm_shouldCopyAFeeChangeToTheOtherStepsOfTheDocument() {
+        // Arrange -- a two-year schedule; the pet fee is changed on year one
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        TenancyChargeTermRow firstRow = docStep(first, TenancyTermStatus.PROPOSED, VALID_AT);
+        TenancyChargeTermRow secondRow = docStep(second, TenancyTermStatus.PROPOSED, VALID_AT.plusYears(1));
+        when(tenancyChargeTermRepository.findById(first)).thenReturn(Optional.of(firstRow));
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(List.of(firstRow, secondRow));
+        when(tenancyChargeTermRepository.patch(any(), any())).thenAnswer(call ->
+                Optional.of(first.equals(call.getArgument(0, UUID.class)) ? firstRow : secondRow));
+
+        Map<String, Object> changes = changes("pet_fee", new BigDecimal("60.00"));
+        changes.put("rate", new BigDecimal("700.00"));
+
+        // Act
+        tenancyChargeTermService.patchChargeTerm(first, changes);
+
+        // Assert -- year two gets the pet fee but keeps its own rent
+        verify(tenancyChargeTermRepository).patch(eq(second), argThat(map ->
+                new BigDecimal("60.00").equals(map.get("pet_fee")) && !map.containsKey("rate")));
+    }
+
+    @Test
+    void patchChargeTerm_shouldNotTouchOtherSteps_whenOnlyTheRentChanges() {
+        // Arrange
+        UUID first = UUID.randomUUID();
+        TenancyChargeTermRow firstRow = docStep(first, TenancyTermStatus.PROPOSED, VALID_AT);
+        when(tenancyChargeTermRepository.findById(first)).thenReturn(Optional.of(firstRow));
+        when(tenancyChargeTermRepository.patch(eq(first), any())).thenReturn(Optional.of(firstRow));
+
+        // Act
+        tenancyChargeTermService.patchChargeTerm(first, changes("rate", new BigDecimal("700.00")));
+
+        // Assert
+        verify(tenancyChargeTermRepository, never()).findBySource(any());
     }
 
     @Test
@@ -566,6 +640,23 @@ public class TenancyChargeTermServiceTest {
     }
 
     @Test
+    void activate_shouldAllowACorrectionWithNoInstrument() {
+        // Arrange
+        UUID uuid = UUID.randomUUID();
+        TenancyChargeTermRow correction = row(uuid, VALID_AT, TenancyTermStatus.PENDING, TenancyTermSource.CORRECTION, null,
+                new BigDecimal("650.00"), 2, 4,
+                FeeMethod.NONE, BigDecimal.ZERO,
+                FeeMethod.NONE, BigDecimal.ZERO,
+                UtilityMethod.NONE, BigDecimal.ZERO);
+        when(tenancyChargeTermRepository.findById(uuid)).thenReturn(Optional.of(correction));
+        when(tenancyChargeTermRepository.updateStatus(uuid, TenancyTermStatus.PENDING, TenancyTermStatus.ACTIVE))
+                .thenReturn(Optional.of(correction));
+
+        // Act / Assert
+        assertTrue(tenancyChargeTermService.activate(uuid).isPresent());
+    }
+
+    @Test
     void activate_shouldAllowATermWithAnInstrumentAttached() {
         // Arrange
         UUID uuid = UUID.randomUUID();
@@ -582,6 +673,25 @@ public class TenancyChargeTermServiceTest {
         // Act / Assert
         assertTrue(tenancyChargeTermService.activate(uuid).isPresent());
         verify(auditService).recordUpdate(eq("tenancy_charge_term"), eq(uuid), any(), any());
+    }
+
+    // ---- TenancyTermSource ---------------------------------------------------
+
+    @Test
+    void producedBy_shouldGiveNoDeal_forPaperThatChangesNoTerms() {
+        // Act / Assert
+        assertTrue(TenancyTermSource.producedBy(InstrumentType.WAIVER).isEmpty());
+        assertTrue(TenancyTermSource.producedBy(InstrumentType.PAY_OR_VACATE).isEmpty());
+        assertEquals(Optional.of(TenancyTermSource.LEASE), TenancyTermSource.producedBy(InstrumentType.LEASE));
+    }
+
+    @Test
+    void requiresInstrument_shouldBeFalse_onlyForMigrationAndCorrection() {
+        // Act / Assert
+        assertFalse(TenancyTermSource.MIGRATION.requiresInstrument());
+        assertFalse(TenancyTermSource.CORRECTION.requiresInstrument());
+        assertTrue(TenancyTermSource.LEASE.requiresInstrument());
+        assertTrue(TenancyTermSource.INCREASE_NOTICE.requiresInstrument());
     }
 
     // ---- cancel --------------------------------------------------------------
@@ -882,6 +992,15 @@ public class TenancyChargeTermServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO);
     }
 
+    /** One step of a schedule, linked to DOCUMENT. */
+    private static TenancyChargeTermRow docStep(UUID uuid, TenancyTermStatus status, LocalDate validAt) {
+        return row(uuid, validAt, status, TenancyTermSource.LEASE, DOCUMENT,
+                new BigDecimal("650.00"), 2, 4,
+                FeeMethod.FLAT, new BigDecimal("65.00"),
+                FeeMethod.FLAT, new BigDecimal("35.00"),
+                UtilityMethod.NONE, BigDecimal.ZERO);
+    }
+
     /** A step of a schedule, dated where the test needs it. */
     private static TenancyChargeTermRow scheduledRow(UUID uuid, TenancyTermStatus status, LocalDate validAt) {
         return row(uuid, validAt, status, TenancyTermSource.LEASE, UUID.randomUUID(),
@@ -1005,7 +1124,7 @@ public class TenancyChargeTermServiceTest {
                 source,
                 sourceUuid,
                 TEMPLATE,
-                null,                                      // batch
+                null,                                      // correctionReason
                 cancelled ? now : null,
                 cancelled ? SystemPrincipal.AGENT_UUID : null,
                 cancelled ? "test" : null,
@@ -1017,30 +1136,30 @@ public class TenancyChargeTermServiceTest {
 
     // ── Rent schedule ────────────────────────────────────────────────────────
 
-    // ---- createSchedule ------------------------------------------------------
+    // ---- createForDocument ---------------------------------------------------
 
     @Test
-    void createSchedule_shouldMintABatch_whenTheCallerDoesNotSupplyOne() {
-        // Arrange -- without one, every batch operation would silently do nothing
+    void createForDocument_shouldLinkEveryStepToTheDocument() {
+        // Arrange
         arrangeCreate(lotPermittingLand(), template(new BigDecimal("4200.00")));
         List<RentStep> steps = List.of(
                 new RentStep(LocalDate.of(2026, 11, 1), new BigDecimal("4200.00")),
                 new RentStep(LocalDate.of(2027, 11, 1), new BigDecimal("4368.00")));
 
         // Act
-        tenancyChargeTermService.createSchedule(
-                TENANCY, AgreementType.LAND, steps, TenancyTermSource.LEASE, null);
+        tenancyChargeTermService.createForDocument(
+                TENANCY, AgreementType.LAND, steps, TenancyTermSource.LEASE, DOCUMENT);
 
-        // Assert -- one batch, shared by every step
+        // Assert
         ArgumentCaptor<TenancyChargeTermRow> saved = ArgumentCaptor.forClass(TenancyChargeTermRow.class);
         verify(tenancyChargeTermRepository, times(2)).save(saved.capture());
-        UUID batch = saved.getAllValues().get(0).batch();
-        assertNotNull(batch, "a schedule that shares no batch cannot be submitted or abandoned together");
-        assertEquals(batch, saved.getAllValues().get(1).batch());
+        assertEquals(DOCUMENT, saved.getAllValues().get(0).sourceUuid());
+        assertEquals(DOCUMENT, saved.getAllValues().get(1).sourceUuid());
+        assertEquals(TenancyTermStatus.PROPOSED, saved.getAllValues().get(0).status());
     }
 
     @Test
-    void createSchedule_shouldWriteTheConfirmedStepsVerbatim() {
+    void createForDocument_shouldWriteTheConfirmedStepsVerbatim() {
         // Arrange -- what was on the screen is what gets written, not a recomputation
         arrangeCreate(lotPermittingLand(), template(new BigDecimal("999.99")));
         List<RentStep> steps = List.of(
@@ -1048,8 +1167,8 @@ public class TenancyChargeTermServiceTest {
                 new RentStep(LocalDate.of(2027, 11, 1), new BigDecimal("4368.00")));
 
         // Act
-        tenancyChargeTermService.createSchedule(
-                TENANCY, AgreementType.LAND, steps, TenancyTermSource.LEASE, null);
+        tenancyChargeTermService.createForDocument(
+                TENANCY, AgreementType.LAND, steps, TenancyTermSource.LEASE, DOCUMENT);
 
         // Assert -- the template's own rate is ignored in favour of the confirmed figures
         ArgumentCaptor<TenancyChargeTermRow> saved = ArgumentCaptor.forClass(TenancyChargeTermRow.class);
@@ -1061,15 +1180,62 @@ public class TenancyChargeTermServiceTest {
     }
 
     @Test
-    void createSchedule_shouldReturnEmpty_whenTenancyNotFound() {
+    void createForDocument_shouldReplaceTheOldSteps_andKeepTheirFees() {
+        // Arrange -- the office worker set a $99 late fee, then rebuilt the schedule
+        arrangeCreate(lotPermittingLand(), template(new BigDecimal("650.00")));
+        UUID old = UUID.randomUUID();
+        TenancyChargeTermRow oldStep = row(old, VALID_AT, TenancyTermStatus.PROPOSED, TenancyTermSource.LEASE, DOCUMENT,
+                new BigDecimal("650.00"), 2, 4,
+                FeeMethod.FLAT, new BigDecimal("99.00"),
+                FeeMethod.FLAT, new BigDecimal("35.00"),
+                UtilityMethod.NONE, BigDecimal.ZERO);
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(List.of(oldStep));
+        when(tenancyChargeTermRepository.findById(old)).thenReturn(Optional.of(oldStep));
+        when(tenancyChargeTermRepository.softDelete(old)).thenReturn(true);
+
+        // Act
+        tenancyChargeTermService.createForDocument(
+                TENANCY, AgreementType.LAND,
+                List.of(new RentStep(LocalDate.of(2026, 12, 1), new BigDecimal("700.00"))),
+                TenancyTermSource.LEASE, DOCUMENT);
+
+        // Assert -- old step deleted, new step keeps the $99 late fee
+        verify(tenancyChargeTermRepository).softDelete(old);
+        verify(tenancyChargeTermRepository).save(argThat(row ->
+                new BigDecimal("99.00").compareTo(row.lateFeeAmount()) == 0
+                        && new BigDecimal("700.00").compareTo(row.rate()) == 0
+                        && DOCUMENT.equals(row.sourceUuid())));
+    }
+
+    @Test
+    void createForDocument_shouldRefuseToReplaceStepsThatWereSubmitted() {
+        // Arrange
+        arrangePreview(lotPermittingLand(), template(new BigDecimal("650.00")));
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(List.of(
+                docStep(UUID.randomUUID(), TenancyTermStatus.PENDING, VALID_AT)));
+
+        // Act
+        RuleConflict refused = assertThrows(RuleConflict.class, () -> tenancyChargeTermService.createForDocument(
+                TENANCY, AgreementType.LAND,
+                List.of(new RentStep(VALID_AT, new BigDecimal("700.00"))),
+                TenancyTermSource.LEASE, DOCUMENT));
+
+        // Assert
+        assertEquals("term.schedule_already_submitted", refused.problem().code());
+        verify(tenancyChargeTermRepository, never()).save(any());
+        verify(tenancyChargeTermRepository, never()).softDelete(any());
+    }
+
+    @Test
+    void createForDocument_shouldReturnEmpty_whenTenancyNotFound() {
         // Arrange
         when(tenancyService.findTenancyById(TENANCY)).thenReturn(Optional.empty());
 
         // Act
-        Optional<List<TenancyChargeTerm>> result = tenancyChargeTermService.createSchedule(
+        Optional<List<TenancyChargeTerm>> result = tenancyChargeTermService.createForDocument(
                 TENANCY, AgreementType.LAND,
                 List.of(new RentStep(VALID_AT, new BigDecimal("650.00"))),
-                TenancyTermSource.LEASE, null);
+                TenancyTermSource.LEASE, DOCUMENT);
 
         // Assert
         assertTrue(result.isEmpty());
@@ -1077,10 +1243,10 @@ public class TenancyChargeTermServiceTest {
     }
 
     @Test
-    void createSchedule_shouldThrow_whenTheStepListIsEmpty() {
-        // Act / Assert -- a caller bug, not a missing record
-        assertThrows(IllegalArgumentException.class, () -> tenancyChargeTermService.createSchedule(
-                TENANCY, AgreementType.LAND, List.of(), TenancyTermSource.LEASE, null));
+    void createForDocument_shouldThrow_whenTheStepListIsEmpty() {
+        // Act / Assert
+        assertThrows(IllegalArgumentException.class, () -> tenancyChargeTermService.createForDocument(
+                TENANCY, AgreementType.LAND, List.of(), TenancyTermSource.LEASE, DOCUMENT));
         verifyNoInteractions(tenancyChargeTermRepository);
     }
 
@@ -1117,18 +1283,17 @@ public class TenancyChargeTermServiceTest {
         verify(tenancyChargeTermRepository, never()).save(any());
     }
 
-    // ---- whole-schedule operations -------------------------------------------
+    // ---- whole-document operations -------------------------------------------
 
     @Test
-    void cancelFutureInBatch_shouldLeaveAStepThatHasAlreadyTakenEffect() {
+    void cancelFutureForDocument_shouldLeaveAStepThatHasAlreadyTakenEffect() {
         // Arrange -- VALID_AT is in the past; that term really was in force
-        UUID batch = UUID.randomUUID();
-        when(tenancyChargeTermRepository.findByBatch(batch)).thenReturn(
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(
                 List.of(scheduledRow(UUID.randomUUID(), TenancyTermStatus.ACTIVE, VALID_AT)));
 
         // Act
         List<TenancyChargeTerm> cancelled =
-                tenancyChargeTermService.cancelFutureInBatch(batch, "lease terminated early");
+                tenancyChargeTermService.cancelFutureForDocument(DOCUMENT, "lease terminated early");
 
         // Assert -- cancelling it would erase a year from the rent history disclosure
         assertTrue(cancelled.isEmpty());
@@ -1136,21 +1301,20 @@ public class TenancyChargeTermServiceTest {
     }
 
     @Test
-    void cancelFutureInBatch_shouldCancelAStepThatHasNotTakenEffectYet() {
+    void cancelFutureForDocument_shouldCancelAStepThatHasNotTakenEffectYet() {
         // Arrange
-        UUID batch = UUID.randomUUID();
         UUID future = UUID.randomUUID();
         LocalDate notYet = LocalDate.now().plusYears(2);
         TenancyChargeTermRow row = scheduledRow(future, TenancyTermStatus.ACTIVE, notYet);
 
-        when(tenancyChargeTermRepository.findByBatch(batch)).thenReturn(List.of(row));
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(List.of(row));
         when(tenancyChargeTermRepository.findById(future)).thenReturn(Optional.of(row));
         when(tenancyChargeTermRepository.cancel(eq(future), any(), eq("lease terminated early")))
                 .thenReturn(Optional.of(scheduledRow(future, TenancyTermStatus.CANCELLED, notYet)));
 
         // Act
         List<TenancyChargeTerm> cancelled =
-                tenancyChargeTermService.cancelFutureInBatch(batch, "lease terminated early");
+                tenancyChargeTermService.cancelFutureForDocument(DOCUMENT, "lease terminated early");
 
         // Assert
         assertEquals(1, cancelled.size());
@@ -1158,13 +1322,12 @@ public class TenancyChargeTermServiceTest {
     }
 
     @Test
-    void deleteBatch_shouldCountOnlyTheStepsActuallyRemoved() {
+    void deleteForDocument_shouldCountOnlyTheStepsActuallyRemoved() {
         // Arrange -- softDelete refuses a term that has gone into force
-        UUID batch = UUID.randomUUID();
         UUID draft = UUID.randomUUID();
         UUID inForce = UUID.randomUUID();
 
-        when(tenancyChargeTermRepository.findByBatch(batch)).thenReturn(List.of(
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(List.of(
                 scheduledRow(draft, TenancyTermStatus.PROPOSED, VALID_AT),
                 scheduledRow(inForce, TenancyTermStatus.ACTIVE, VALID_AT)));
         when(tenancyChargeTermRepository.findById(draft))
@@ -1175,7 +1338,7 @@ public class TenancyChargeTermServiceTest {
         when(tenancyChargeTermRepository.softDelete(inForce)).thenReturn(false);
 
         // Act / Assert
-        assertEquals(1, tenancyChargeTermService.deleteBatch(batch));
+        assertEquals(1, tenancyChargeTermService.deleteForDocument(DOCUMENT));
     }
 
     @Test

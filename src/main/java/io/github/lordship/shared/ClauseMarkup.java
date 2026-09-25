@@ -46,9 +46,8 @@ public final class ClauseMarkup {
      *
      * <p>Characters rather than millimetres because an author is writing in a
      * text box, not a page layout, and "about forty characters" is a thing they
-     * can picture. It survives a font change too: CSS {@code ch} is the width of
-     * a zero in whatever face the document ends up in, so a rule stays the same
-     * share of the line rather than the same number of millimetres.
+     * can picture. It is printed in em (see {@link #ruleWidth}), so a rule grows
+     * and shrinks with the font size.
      *
      * <p>The cap is the margin. A rule wider than a line cannot wrap -- it is
      * one box -- so an uncapped width is a body that prints off the edge of the
@@ -56,6 +55,17 @@ public final class ClauseMarkup {
      */
     public static final int MIN_RULE_WIDTH = 1;
     public static final int MAX_RULE_WIDTH = 90;
+
+    /**
+     * A rule's width in CSS: half an em per character, e.g. 30 characters is 15em.
+     *
+     * <p>Not CSS {@code ch}: the PDF engine (openhtmltopdf) does not support it
+     * and drew every rule with no width at all. A digit in a serif face is
+     * about half an em wide, so this comes out close to what ch would give.
+     */
+    public static String ruleWidth(int characters) {
+        return (characters / 2) + (characters % 2 == 0 ? "" : ".5") + "em";
+    }
 
     /** What a scan found: text to print, a mark to open or close, or a rule. */
     private sealed interface Piece {
@@ -315,7 +325,7 @@ public final class ClauseMarkup {
                 // the author's string -- which is what keeps the one attribute
                 // in this allowlist from being an attribute an author writes.
                 case Piece.Rule(int width) ->
-                        out.append("<span class=\"rule\" style=\"width:").append(width).append("ch\"></span>");
+                        out.append("<span class=\"rule\" style=\"width:").append(ruleWidth(width)).append("\"></span>");
             }
         }
 

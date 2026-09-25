@@ -215,7 +215,7 @@ public class TokenResolverTest {
     private static Instrument instrument() {
         OffsetDateTime now = OffsetDateTime.of(2026, 10, 15, 9, 0, 0, 0, ZoneOffset.UTC);
         return new Instrument(
-                UUID.randomUUID(), TENANCY, InstrumentType.LEASE, InstrumentStatus.DRAFT,
+                UUID.randomUUID(), TENANCY, InstrumentType.LEASE, AgreementType.COMMERCIAL, InstrumentStatus.DRAFT,
                 "LSE-000123", null,
                 LocalDate.of(2026, 11, 1), 60, OnExpiry.MONTH_TO_MONTH,
                 UUID.randomUUID(), 3, UUID.randomUUID(),
@@ -277,7 +277,7 @@ public class TokenResolverTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,                   // trash
                 depositMethod, new BigDecimal(depositAmount),
                 TenancyTermStatus.PROPOSED, TenancyTermSource.LEASE,
-                null, UUID.randomUUID(), UUID.randomUUID(),
+                null, UUID.randomUUID(), null,                         // sourceUuid, termsTemplate, correctionReason
                 null, null, null,                                      // cancel columns
                 null,                                                  // deletedAt
                 null, now, UUID.randomUUID());
@@ -484,7 +484,7 @@ public class TokenResolverTest {
 
     private static Instrument withTerm(LocalDate start, int months) {
         Instrument i = instrument();
-        return new Instrument(i.uuid(), i.tenancy(), i.type(), i.status(),
+        return new Instrument(i.uuid(), i.tenancy(), i.type(), i.agreementType(), i.status(),
                 i.serial(), i.amends(), start, months, i.onExpiry(),
                 i.template(), i.templateVersion(), i.documentAssignment(),
                 i.generatedAt(), i.generatedFile(), i.sentAt(), i.sentBy(),
@@ -517,7 +517,7 @@ public class TokenResolverTest {
 
     private static Instrument noticeWithNoTerm() {
         Instrument i = instrument();
-        return new Instrument(i.uuid(), i.tenancy(), InstrumentType.INCREASE_NOTICE, i.status(),
+        return new Instrument(i.uuid(), i.tenancy(), InstrumentType.INCREASE_NOTICE, i.agreementType(), i.status(),
                 i.serial(), i.amends(), null, null, null,
                 i.template(), i.templateVersion(), i.documentAssignment(),
                 i.generatedAt(), i.generatedFile(), i.sentAt(), i.sentBy(),

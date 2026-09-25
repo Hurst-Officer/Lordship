@@ -60,9 +60,9 @@ public record TenancyChargeTermRow(
 
         TenancyTermStatus status,
         TenancyTermSource source,
-        UUID sourceUuid,    // the instrument that produced this deal
+        UUID sourceUuid,    // the document this term was written for; null for MIGRATION and CORRECTION
         UUID termsTemplate, // which template seeded the values
-        UUID batch,         // groups one bulk run so it can be reviewed or abandoned together
+        String correctionReason, // why an admin entered this term; required for CORRECTION
 
         OffsetDateTime cancelledAt,
         UUID cancelledBy,
@@ -87,27 +87,24 @@ public record TenancyChargeTermRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
-                status, source, sourceUuid, termsTemplate, batch,
+                status, source, sourceUuid, termsTemplate, correctionReason,
                 cancelledAt, cancelledBy, cancelReason, deletedAt,
                 note, createdAt, createdBy
         );
     }
 
-    // A new term seeded from the property's template for this agreement type.
-    // The rate is resolved by the caller, since it prefers the lot's target_rate
-    // over the template's. Always lands in PROPOSED with no instrument attached:
-    // the CHECK constraints are escaped while status = 'PROPOSED', so a term
-    // copied from a template with gaps in it is still insertable.
+    // A new PROPOSED term with every setting copied from the property's template.
+    // The caller picks the rate (the lot's rate wins over the template's).
+    // sourceUuid is the document the term is for, or null for MIGRATION and CORRECTION.
     //
-    // Nulls are grouped and labelled so a miscount is visible; positional
-    // mistakes here compile silently because every component is a reference type.
+    // The nulls are labelled because a wrong position here still compiles.
     public static TenancyChargeTermRow fromTemplate(
             UUID tenancy,
             TermsTemplate template,
             BigDecimal rate,
             LocalDate validAt,
             TenancyTermSource source,
-            UUID batch,
+            UUID sourceUuid,
             UUID createdBy) {
 
         return new TenancyChargeTermRow(
@@ -141,9 +138,9 @@ public record TenancyChargeTermRow(
                 template.securityDepositAmount(),
                 TenancyTermStatus.PROPOSED,
                 source,
-                null,                          // sourceUuid - no instrument until one is generated
+                sourceUuid,
                 template.uuid(),               // termsTemplate
-                batch,
+                null,                          // correctionReason
                 null, null, null,              // cancelledAt, cancelledBy, cancelReason
                 null,                          // deletedAt
                 null,                          // note
@@ -152,14 +149,72 @@ public record TenancyChargeTermRow(
         );
     }
 
-    /** A single term created on its own, outside any bulk run. */
-    public static TenancyChargeTermRow fromTemplate(
-            UUID tenancy,
-            TermsTemplate template,
+    // A new PROPOSED step that keeps every setting of an existing term.
+    // Only the date and the rent change. Used when a document's schedule is rebuilt,
+    // so fees the office worker already edited are not lost.
+    public static TenancyChargeTermRow copyForStep(
+            TenancyChargeTermRow from,
             BigDecimal rate,
             LocalDate validAt,
-            TenancyTermSource source,
             UUID createdBy) {
-        return fromTemplate(tenancy, template, rate, validAt, source, null, createdBy);
+
+        return new TenancyChargeTermRow(
+                null,                          // uuid
+                from.tenancy(),
+                validAt,
+                from.agreementType(),
+                rate,
+                from.carFee(),
+                from.allowedCars(),
+                from.carsMax(),
+                from.petFee(),
+                from.allowedPets(),
+                from.paymentDueDay(),
+                from.gracePeriodDays(),
+                from.ruleViolationFeeMethod(),
+                from.ruleViolationFeeAmount(),
+                from.nsfFeeMethod(),
+                from.nsfFeeAmount(),
+                from.lateFeeMethod(),
+                from.lateFeeAmount(),
+                from.waterMethod(),
+                from.waterFlatAmount(),
+                from.powerMethod(),
+                from.powerFlatAmount(),
+                from.sewerMethod(),
+                from.sewerFlatAmount(),
+                from.trashMethod(),
+                from.trashFlatAmount(),
+                from.securityDepositMethod(),
+                from.securityDepositAmount(),
+                TenancyTermStatus.PROPOSED,
+                from.source(),
+                from.sourceUuid(),
+                from.termsTemplate(),
+                from.correctionReason(),
+                null, null, null,              // cancelledAt, cancelledBy, cancelReason
+                null,                          // deletedAt
+                null,                          // note
+                null,                          // createdAt
+                createdBy
+        );
+    }
+
+    public TenancyChargeTermRow withCorrectionReason(String reason) {
+        return new TenancyChargeTermRow(
+                uuid, tenancy, validAt, agreementType,
+                rate, carFee, allowedCars, carsMax, petFee, allowedPets,
+                paymentDueDay, gracePeriodDays,
+                ruleViolationFeeMethod, ruleViolationFeeAmount,
+                nsfFeeMethod, nsfFeeAmount,
+                lateFeeMethod, lateFeeAmount,
+                waterMethod, waterFlatAmount,
+                powerMethod, powerFlatAmount,
+                sewerMethod, sewerFlatAmount,
+                trashMethod, trashFlatAmount,
+                securityDepositMethod, securityDepositAmount,
+                status, source, sourceUuid, termsTemplate, reason,
+                cancelledAt, cancelledBy, cancelReason, deletedAt,
+                note, createdAt, createdBy);
     }
 }

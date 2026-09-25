@@ -10,8 +10,15 @@ import io.github.lordship.documenttemplate.PropertyDocumentAssignmentService;
 import io.github.lordship.globalsettings.GlobalSettingsService;
 import io.github.lordship.instruments.internal.InstrumentAdditionRepository;
 import io.github.lordship.instruments.internal.InstrumentAdditionRow;
+import io.github.lordship.instruments.internal.InstrumentClauseRepository;
+import io.github.lordship.instruments.internal.InstrumentClauseRow;
 import io.github.lordship.instruments.internal.InstrumentRepository;
 import io.github.lordship.instruments.internal.InstrumentRow;
+import io.github.lordship.instruments.internal.InstrumentSectionRepository;
+import io.github.lordship.instruments.internal.InstrumentSectionRow;
+import io.github.lordship.documentfiles.DocumentFile;
+import io.github.lordship.documentfiles.DocumentFileService;
+import io.github.lordship.documentfiles.StoredFile;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.persons.Person;
@@ -19,19 +26,27 @@ import io.github.lordship.persons.PersonService;
 import io.github.lordship.properties.Property;
 import io.github.lordship.properties.PropertyService;
 import io.github.lordship.shared.ClauseBodyRules;
+import io.github.lordship.shared.DomainProblem;
+import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
+import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
 import io.github.lordship.tenancyterms.RentHistoryYear;
+import io.github.lordship.tenancyterms.RentStep;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
 import io.github.lordship.tenancyterms.TenancyChargeTermService;
+import io.github.lordship.tenancyterms.TenancyTermSource;
 import io.github.lordship.tenants.TenantService;
 import jakarta.persistence.EntityNotFoundException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,10 +61,9 @@ import java.util.UUID;
  * the copy a tenant is holding cannot be edited retroactively and pretending
  * otherwise is how a file stops matching the paper in somebody's kitchen drawer.
  *
- * <p>This half is the draft: creating one, setting the term it covers, and the
- * clauses an office worker types onto it. Generating -- freezing the wording,
- * rendering the PDF, stamping the serial -- comes next and is what moves it out
- * of DRAFT for good.
+ * <p>This class covers the draft (creating it, its dates, its charge terms and
+ * typed clauses) and generate, which freezes the wording, stamps the serial,
+ * saves the PDF and moves the document out of DRAFT for good.
  */
 @Service
 public class InstrumentService {
@@ -66,6 +80,10 @@ public class InstrumentService {
     private final GlobalSettingsService settingsService;
     private final AuditService auditService;
     private final AuditContext auditContext;
+    private final InstrumentSectionRepository sectionRepository;
+    private final InstrumentClauseRepository clauseRepository;
+    private final DocumentFileService documentFileService;
+    private final String serialPrefix;
 
     public InstrumentService(InstrumentRepository instrumentRepository,
                              InstrumentAdditionRepository additionRepository,
@@ -78,7 +96,11 @@ public class InstrumentService {
                              PropertyDocumentAssignmentService assignmentService,
                              GlobalSettingsService settingsService,
                              AuditService auditService,
-                             AuditContext auditContext) {
+                             AuditContext auditContext,
+                             InstrumentSectionRepository sectionRepository,
+                             InstrumentClauseRepository clauseRepository,
+                             DocumentFileService documentFileService,
+                             @Value("${lordship.serial.prefix}") String serialPrefix) {
         this.instrumentRepository = instrumentRepository;
         this.additionRepository = additionRepository;
         this.tenancyService = tenancyService;
@@ -91,6 +113,10 @@ public class InstrumentService {
         this.settingsService = settingsService;
         this.auditService = auditService;
         this.auditContext = auditContext;
+        this.sectionRepository = sectionRepository;
+        this.clauseRepository = clauseRepository;
+        this.documentFileService = documentFileService;
+        this.serialPrefix = serialPrefix;
     }
 
     // ---- reading -------------------------------------------------------------
@@ -135,30 +161,34 @@ public class InstrumentService {
     // ---- the draft -----------------------------------------------------------
 
     /**
-     * Starts a document. Empty means no such tenancy.
+     * Starts a draft document. Returns empty if the tenancy does not exist.
      *
-     * <p>Nothing is chosen yet but whose tenancy and what kind of paper -- no
-     * template, no wording, no serial. Those are decided at generate, from the
-     * park's assignment and the deal in force, which is why a draft created
-     * today still prints next month's corrected clause.
+     * <p>agreementType is chosen now because it decides which document template
+     * is used and which terms template the charge terms are copied from.
+     *
+     * <p>A LEASE gets its start date filled in (see {@link #defaultLeaseStart}).
+     * The office worker can change it with a PATCH. Other document types start
+     * with no dates.
+     *
+     * <p>No charge terms, template, wording or serial yet. The charge terms are
+     * added with {@link #writeSchedule}. The template, wording and serial are
+     * picked at generate, so a draft made today still prints a clause corrected
+     * tomorrow.
      */
     @Transactional
-    public Optional<Instrument> createDraft(UUID tenancy, InstrumentType type, UUID batch) {
-        if (tenancyService.findTenancyById(tenancy).isEmpty()) {
+    public Optional<Instrument> createDraft(UUID tenancy, InstrumentType type, AgreementType agreementType) {
+        Optional<Tenancy> tenancyOpt = tenancyService.findTenancyById(tenancy);
+        if (tenancyOpt.isEmpty()) {
             return Optional.empty();
         }
 
-        InstrumentRow saved = instrumentRepository.save(
-                tenancy, type, ActingAgent.resolve(auditContext));
-        auditService.recordInsert("instrument", saved.uuid(), AuditMapper.toMap(saved));
+        LocalDate termStart = (type == InstrumentType.LEASE)
+                ? defaultLeaseStart(tenancyOpt.get())
+                : null;
 
-        // Every step of the deal now points at this document, before anything is
-        // signed. That order is deliberate: the paper has to be able to
-        // substitute from a term it has not yet put in force, and activate later
-        // refuses any term with no document behind it.
-        if (batch != null) {
-            chargeTermService.attachSourceToBatch(batch, saved.uuid());
-        }
+        InstrumentRow saved = instrumentRepository.save(
+                tenancy, type, agreementType, termStart, ActingAgent.resolve(auditContext));
+        auditService.recordInsert("instrument", saved.uuid(), AuditMapper.toMap(saved));
         return Optional.of(saved.toInstrument());
     }
 
@@ -210,7 +240,146 @@ public class InstrumentService {
 
         AuditMapper.Diff diff = AuditMapper.diff(beforeOpt.get(), afterOpt.get());
         auditService.recordUpdate("instrument", uuid, diff.before(), diff.after());
+
+        // The document's charge terms never went into force, so they go with it.
+        chargeTermService.deleteForDocument(uuid);
+
         return Optional.of(afterOpt.get().toInstrument());
+    }
+
+    // ---- generate ------------------------------------------------------------
+
+    /**
+     * Turns a finished draft into the document that goes to the tenant.
+     *
+     * <p>In order:
+     *   1. Check it is a DRAFT (409 if not) and, for a lease, has its dates (400).
+     *   2. Assemble it exactly as preview does, and refuse if anything is missing (400, with the list).
+     *   3. Move its charge terms to PENDING, so the deal cannot change under a printed document.
+     *   4. Save every section and clause as printed.
+     *   5. Stamp a serial, render the PDF and save it.
+     *   6. Mark the document GENERATED.
+     *
+     * <p>All in one transaction. A refusal at any step changes nothing.
+     * The database only moves a DRAFT to GENERATED once, so two clicks make one document.
+     *
+     * <p>Returns empty if there is no such document.
+     */
+    @Transactional
+    public Optional<Instrument> generate(UUID uuid) {
+        Optional<InstrumentRow> rowOpt = instrumentRepository.findById(uuid);
+        if (rowOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        InstrumentRow before = requireDraft(rowOpt.get());
+        requireTermDates(before);
+
+        Assembly assembly = assemble(before);
+        LeasePreview preview = assembly.preview();
+        requireComplete(preview.frozen());
+
+        chargeTermService.submitForDocument(before.uuid());
+        saveFrozen(before.uuid(), preview.frozen());
+
+        String serial = Serial.generate(serialPrefix, before.agreementType(), before.type());
+        String html = LeaseDocument.render(preview, serial, assembly.assignment().document().styles());
+        byte[] pdf = PdfRenderer.toPdf(html);
+
+        DocumentFile file = documentFileService.store(
+                serial + ".pdf",
+                serial + ".pdf",
+                "application/pdf",
+                pdf,
+                ActingAgent.resolve(auditContext));
+
+        InstrumentRow after = instrumentRepository.markGenerated(
+                        before.uuid(),
+                        serial,
+                        preview.documentTemplate(),
+                        preview.documentVersion(),
+                        assembly.assignment().uuid(),
+                        file.uuid())
+                // Somebody else generated it between our read and this write.
+                .orElseThrow(() -> RuleConflict.of("instrument.not_editable", InstrumentStatus.GENERATED));
+
+        AuditMapper.Diff diff = AuditMapper.diff(before, after);
+        auditService.recordUpdate("instrument", uuid, diff.before(), diff.after());
+        return Optional.of(after.toInstrument());
+    }
+
+    /** The generated PDF. Empty if there is no such document or it has not been generated. */
+    public Optional<StoredFile> readGeneratedFile(UUID uuid) {
+        return instrumentRepository.findById(uuid)
+                .map(InstrumentRow::generatedFile)
+                .flatMap(documentFileService::read);
+    }
+
+    // ---- charge terms --------------------------------------------------------
+
+    /** The charge terms written for this document, earliest first. Empty if no such document. */
+    public Optional<List<TenancyChargeTerm>> findChargeTerms(UUID uuid) {
+        return instrumentRepository.findById(uuid)
+                .map(row -> chargeTermService.findBySource(row.uuid()));
+    }
+
+    /**
+     * The rent schedule the office worker sees before confirming it. Worked out
+     * from the lot's rate, the terms template, and this document's start date
+     * and number of months. Nothing is saved.
+     *
+     * <p>Returns empty if the document does not exist. Throws a 400 if the start
+     * date or number of months is not set yet. A notice has no months, so for a
+     * notice skip the preview and confirm its single step directly.
+     */
+    public Optional<List<RentStep>> previewSchedule(UUID uuid) {
+        Optional<InstrumentRow> rowOpt = instrumentRepository.findById(uuid);
+        if (rowOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        InstrumentRow row = rowOpt.get();
+        TenancyTermSource source = chargeTermSourceFor(row);
+
+        if (row.termStart() == null) {
+            throw InvalidRequest.onField("termStart", "instrument.term_start_needed");
+        }
+        if (row.termMonths() == null) {
+            throw InvalidRequest.onField("termMonths", "instrument.term_months_needed");
+        }
+        return chargeTermService.previewSchedule(
+                row.tenancy(), row.agreementType(), row.termStart(), row.termMonths(), source);
+    }
+
+    /**
+     * Saves the rent schedule the office worker confirmed. Each step becomes a
+     * PROPOSED charge term linked to this document.
+     *
+     * <p>If the document already has charge terms, they are replaced and the
+     * fees already set on them are kept (the "Rebuild schedule" button).
+     *
+     * <p>Only allowed while the document is a DRAFT. Returns empty if the
+     * document does not exist.
+     */
+    @Transactional
+    public Optional<List<TenancyChargeTerm>> writeSchedule(UUID uuid, List<RentStep> steps) {
+        Optional<InstrumentRow> rowOpt = instrumentRepository.findById(uuid);
+        if (rowOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        InstrumentRow row = requireDraft(rowOpt.get());
+        TenancyTermSource source = chargeTermSourceFor(row);
+
+        return chargeTermService.createForDocument(
+                row.tenancy(), row.agreementType(), steps, source, row.uuid());
+    }
+
+    /**
+     * Cancels this document's charge terms that have not taken effect yet.
+     * Used when a lease ends early. Returns empty if the document does not exist.
+     */
+    @Transactional
+    public Optional<List<TenancyChargeTerm>> cancelFutureChargeTerms(UUID uuid, String cancelReason) {
+        return instrumentRepository.findById(uuid)
+                .map(row -> chargeTermService.cancelFutureForDocument(row.uuid(), cancelReason));
     }
 
     // ---- what the office worker typed ----------------------------------------
@@ -295,7 +464,7 @@ public class InstrumentService {
      * forbids the answer.
      */
     public Optional<LeasePreview> preview(UUID instrumentUuid) {
-        return instrumentRepository.findById(instrumentUuid).map(this::assemble);
+        return instrumentRepository.findById(instrumentUuid).map(row -> assemble(row).preview());
     }
 
     /**
@@ -306,7 +475,7 @@ public class InstrumentService {
      * looks wrong cannot quietly come out right -- two assemblies would
      * eventually disagree, and the once they did would be on a signed lease.
      */
-    private LeasePreview assemble(InstrumentRow row) {
+    private Assembly assemble(InstrumentRow row) {
         Tenancy tenancy = tenancyService.findTenancyById(row.tenancy())
                 .orElseThrow(() -> missing("tenancy", row.tenancy()));
         Lot lot = lotService.findById(tenancy.lotId())
@@ -320,9 +489,9 @@ public class InstrumentService {
         }
 
         PropertyDocumentAssignment assignment = assignmentService
-                .findForGenerate(property.uuid(), schedule.get(0).agreementType(), row.type())
+                .findForGenerate(property.uuid(), row.agreementType(), row.type())
                 .orElseThrow(() -> RuleConflict.of("property.no_document",
-                        row.type(), schedule.get(0).agreementType()));
+                        row.type(), row.agreementType()));
 
         TokenResolver.LeaseFacts facts = new TokenResolver.LeaseFacts(
                 row.toInstrument(),
@@ -342,13 +511,17 @@ public class InstrumentService {
                 findAdditions(row.uuid()),
                 TokenResolver.resolve(facts));
 
-        return new LeasePreview(
+        LeasePreview preview = new LeasePreview(
                 row.uuid(),
                 assignment.document().uuid(),
                 assignment.document().name(),
                 assignment.document().version(),
                 frozen);
+        return new Assembly(preview, assignment);
     }
+
+    /** What assemble produced, plus the park's document assignment that generate records. */
+    private record Assembly(LeasePreview preview, PropertyDocumentAssignment assignment) {}
 
     /**
      * Who signs, in the order the tenancy holds them.
@@ -388,6 +561,90 @@ public class InstrumentService {
 
     // ---- internals -----------------------------------------------------------
 
+    /**
+     * A lease (also an assumption or waiver) must have its start date and number
+     * of months before it is generated. The database refuses it otherwise
+     * (instrument_lease_has_term); this names the field instead.
+     */
+    private static void requireTermDates(InstrumentRow row) {
+        if (!row.toInstrument().carriesTerm()) {
+            return;
+        }
+        if (row.termStart() == null) {
+            throw InvalidRequest.onField("termStart", "instrument.term_start_needed");
+        }
+        if (row.termMonths() == null) {
+            throw InvalidRequest.onField("termMonths", "instrument.term_months_needed");
+        }
+    }
+
+    /** Throws a 400 listing everything the preview says is missing. */
+    private static void requireComplete(DocumentFreeze.Frozen frozen) {
+        List<DomainProblem.Problem> problems = new ArrayList<>();
+        for (String token : frozen.unresolved()) {
+            problems.add(DomainProblem.Problem.of("instrument.unresolved_token", token));
+        }
+        for (String section : frozen.omittedRequired()) {
+            problems.add(DomainProblem.Problem.of("instrument.required_section_empty", section));
+        }
+        for (String reference : frozen.brokenReferences()) {
+            problems.add(DomainProblem.Problem.of("instrument.broken_reference", reference));
+        }
+        for (String pair : frozen.separatedPairs()) {
+            problems.add(DomainProblem.Problem.of("instrument.separated_pair", pair));
+        }
+        if (!problems.isEmpty()) {
+            throw InvalidRequest.withDetails("instrument.not_complete", problems);
+        }
+    }
+
+    /**
+     * Saves every section and clause exactly as printed. Anything saved by an
+     * earlier attempt on this draft is removed first.
+     */
+    private void saveFrozen(UUID instrument, DocumentFreeze.Frozen frozen) {
+        clauseRepository.deleteByInstrument(instrument);
+        sectionRepository.deleteByInstrument(instrument);
+
+        for (DocumentFreeze.FrozenSection section : frozen.sections()) {
+            InstrumentSectionRow savedSection =
+                    sectionRepository.save(InstrumentSectionRow.from(instrument, section));
+            for (DocumentFreeze.FrozenClause clause : section.clauses()) {
+                clauseRepository.save(
+                        InstrumentClauseRow.from(instrument, savedSection.uuid(), clause, clause.origin()));
+            }
+        }
+    }
+
+    /**
+     * Where a new lease starts unless the office worker changes it.
+     *
+     * <p>If the tenancy already has a lease, the new one starts the day after
+     * the latest one ends. A new lease must never cut the current lease short.
+     * Otherwise the new lease starts on the tenancy's start date.
+     *
+     * <p>Abandoned leases are skipped, and so are leases with no dates yet.
+     * Returns null if there is nothing to go on.
+     */
+    private LocalDate defaultLeaseStart(Tenancy tenancy) {
+        return instrumentRepository.findByTenancy(tenancy.uuid()).stream()
+                .map(InstrumentRow::toInstrument)
+                .filter(doc -> doc.type() == InstrumentType.LEASE)
+                .filter(doc -> doc.status() != InstrumentStatus.ABANDONED)
+                .map(Instrument::termEnd)
+                .flatMap(Optional::stream)
+                .max(Comparator.naturalOrder())
+                .orElse(tenancy.startDate());
+    }
+
+    /**
+     * The kind of charge term this document creates. Throws a 400 for a
+     * document type that changes no charge terms (WAIVER, PAY_OR_VACATE).
+     */
+    private static TenancyTermSource chargeTermSourceFor(InstrumentRow row) {
+        return TenancyTermSource.producedBy(row.type())
+                .orElseThrow(() -> InvalidRequest.of("instrument.takes_no_charge_terms", row.type()));
+    }
 
     /**
      * JSON has three types and Postgres has a dozen. The columns that need

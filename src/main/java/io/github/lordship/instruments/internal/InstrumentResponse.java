@@ -4,6 +4,7 @@ import io.github.lordship.instruments.Instrument;
 import io.github.lordship.instruments.InstrumentStatus;
 import io.github.lordship.instruments.OnExpiry;
 import io.github.lordship.instruments.ServiceMethod;
+import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 
 import java.time.LocalDate;
@@ -22,6 +23,7 @@ public record InstrumentResponse(
         UUID uuid,
         UUID tenancyId,
         InstrumentType type,
+        AgreementType agreementType,
         InstrumentStatus status,
         String serial,
         UUID amends,
@@ -51,6 +53,7 @@ public record InstrumentResponse(
                 instrument.uuid(),
                 instrument.tenancy(),
                 instrument.type(),
+                instrument.agreementType(),
                 instrument.status(),
                 instrument.serial(),
                 instrument.amends(),

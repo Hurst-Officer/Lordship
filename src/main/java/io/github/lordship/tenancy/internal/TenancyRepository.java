@@ -1,8 +1,5 @@
 package io.github.lordship.tenancy.internal;
 
-import io.github.lordship.persons.internal.PersonRow;
-import io.github.lordship.tenancy.Tenancy;
-import io.github.lordship.tenancy.internal.TenancyRow;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -29,15 +26,21 @@ public class TenancyRepository {
         this.jdbc = jdbcClient;
     }
 
+    // A tenancy with no start date. Test fixtures use this.
     public TenancyRow save(UUID lotUuid) {
+        return save(lotUuid, null);
+    }
+
+    public TenancyRow save(UUID lotUuid, LocalDate startDate) {
         return jdbc.sql("""
                         INSERT INTO tenancy (
-                                lot_id
+                                lot_id, start_date
                             ) VALUES (
-                                :lotId
+                                :lotId, :startDate
                             ) RETURNING *
                         """)
                 .param("lotId", lotUuid)
+                .param("startDate", startDate)
                 .query(TenancyRow.class)
                 .single();
     }
@@ -47,6 +50,14 @@ public class TenancyRepository {
                 .param("uuid", uuid)
                 .query(TenancyRow.class)
                 .optional();
+    }
+
+    // Every tenancy on the lot, ended ones included. Used by the two-per-month rule.
+    public List<TenancyRow> findByLot(UUID lotId) {
+        return jdbc.sql("SELECT * FROM tenancy WHERE lot_id = :lotId AND deleted_at IS NULL")
+                .param("lotId", lotId)
+                .query(TenancyRow.class)
+                .list();
     }
 
     // Some lots may have two tenancies at a time

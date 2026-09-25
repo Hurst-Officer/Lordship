@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
 import java.util.*;
 
@@ -40,10 +41,29 @@ public class TenancyService {
     }
 
     /**
-     * A lot admits a new tenancy only when it is rentable, and never more than
-     * two at a time. Two is deliberate: an outgoing tenancy and its replacement
-     * overlap while the first is being wound up, and the office cannot be made
-     * to wait on that to set the next one up.
+     * The start date used when the office leaves it blank. The office is
+     * usually setting up next month, not today. Before the 10th, that is the
+     * 1st of this month. From the 10th on, it is the 1st of next month.
+     */
+    public static LocalDate billingPeriodStart(LocalDate today) {
+        return today.getDayOfMonth() < 10
+                ? today.withDayOfMonth(1)
+                : today.plusMonths(1).withDayOfMonth(1);
+    }
+
+    /** Creates a tenancy with a guessed start date. See {@link #create(UUID, LocalDate)}. */
+    @Transactional
+    public Tenancy create(UUID lotId) {
+        return create(lotId, null);
+    }
+
+    /**
+     * startDate is when the household takes possession. If it is null, the
+     * billing-period guess is used (see {@link #billingPeriodStart}). The
+     * office can change it later with a PATCH.
+     *
+     * <p>A lot admits a new tenancy only when it is rentable, and only if no
+     * month would end up with three tenancies (see {@link #requireRoomOnLot}).
      *
      * <p>{@code is_rentable} governs new tenancies only. A lot that becomes
      * flooded, condemned or held for a road widening keeps the tenants already
@@ -54,7 +74,7 @@ public class TenancyService {
      * refuses a tenancy on a lot that was deleted.
      */
     @Transactional
-    public Tenancy create(UUID lotId) {
+    public Tenancy create(UUID lotId, LocalDate startDate) {
         Lot lot = lotService.findById(lotId)
                 .orElseThrow(() -> new EntityNotFoundException("Lot not found: " + lotId));
 
@@ -63,13 +83,10 @@ public class TenancyService {
                     + " cannot take a new tenancy: " + lot.notRentableReason());
         }
 
-        List<TenancyRow> active = tenancyRepository.findActiveByLot(lotId);
+        LocalDate start = (startDate != null) ? startDate : billingPeriodStart(LocalDate.now());
+        requireRoomOnLot(lotId, null, start, null);
 
-        if (active.size() >= 2) {
-            throw new IllegalStateException("Lot cannot have more than two tenancies at a time");
-        }
-
-        TenancyRow row = tenancyRepository.save(lotId);
+        TenancyRow row = tenancyRepository.save(lotId, start);
         Tenancy tenancy = row.toTenancy();
         accountService.createAccount(tenancy.uuid(), null);
 
@@ -77,44 +94,6 @@ public class TenancyService {
         auditService.recordInsert("tenancy", row.uuid(), AuditMapper.toMap(row));
         return tenancy;
     }
-
-    /**
-     * Closes the newer of two overlapping tenancies once it has had its month.
-     * Does nothing while a lot has fewer than two, and does nothing while any
-     * active tenancy is missing its possession date: a tenancy with no
-     * start_date cannot be ranked against the others, and closing the wrong one
-     * is worse than closing neither.
-     */
-    @Transactional
-    public void enforceSecondTenancyLimit(UUID lotId) {
-        List<TenancyRow> active = tenancyRepository.findActiveByLot(lotId);
-
-        if (active.size() < 2) {
-            return;
-        }
-        if (active.stream().anyMatch(t -> t.startDate() == null)) {
-            return;
-        }
-
-        TenancyRow second = active.stream()
-                .max(Comparator.comparing(TenancyRow::startDate))
-                .orElseThrow();
-
-        LocalDate start = second.startDate();
-        LocalDate now = LocalDate.now();
-
-        // Set to one full month (date) instead of an amount of days
-        if(!start.plusMonths(1).isAfter(now)) {
-            tenancyRepository.close(second.uuid(), now);
-            auditService.recordUpdate(
-                    "tenancy",
-                    second.uuid(),
-                    Map.of("end_date", start),
-                    Map.of("end_date", now)
-            );
-        }
-    }
-
 
     public Optional<Tenancy> findTenancyById(UUID uuid) {
         return tenancyRepository.findById(uuid).map(TenancyRow::toTenancy);
@@ -220,16 +199,10 @@ public class TenancyService {
                     "endDate " + endAfter + " cannot be before startDate " + startAfter);
         }
 
-        boolean reopening = before.endDate() != null && endAfter == null;
-        if (reopening) {
-            long othersActive = tenancyRepository.findActiveByLot(before.lotId()).stream()
-                    .filter(row -> !Objects.equals(row.uuid(), uuid))
-                    .count();
-
-            if (othersActive >= 2) {
-                throw new IllegalStateException(
-                        "Cannot reopen tenancy " + uuid + ": its lot already has two active tenancies");
-            }
+        // Moving either date (reopening included) must not put a third tenancy in any month.
+        boolean datesChanged = mutable.containsKey("start_date") || mutable.containsKey("end_date");
+        if (datesChanged) {
+            requireRoomOnLot(before.lotId(), uuid, startAfter, endAfter);
         }
 
         Optional<TenancyRow> updatedTenancy = tenancyRepository.patch(uuid, mutable);
@@ -244,6 +217,66 @@ public class TenancyService {
         }
 
         return Optional.of(after.toTenancy());
+    }
+
+    // ---- the two-per-month rule ------------------------------------------------
+
+    /**
+     * Throws a 409 if this tenancy would make any month have three tenancies on the lot.
+     *
+     * <p>Two may share a month: the household moving out and the one moving in.
+     * A third may not. Dates are compared by month, so a tenancy that ends on
+     * the 15th still counts for that whole month.
+     *
+     * <p>A missing start date counts as "since forever". A missing end date
+     * counts as "still going".
+     *
+     * @param self the tenancy being changed, so it is not counted twice. Null when creating.
+     */
+    private void requireRoomOnLot(UUID lotId, UUID self, LocalDate start, LocalDate end) {
+        MonthSpan target = MonthSpan.of(start, end);
+
+        List<MonthSpan> others = tenancyRepository.findByLot(lotId).stream()
+                .filter(row -> !Objects.equals(row.uuid(), self))
+                .map(row -> MonthSpan.of(row.startDate(), row.endDate()))
+                .filter(target::overlaps)
+                .toList();
+
+        // Any two others that share a month with each other AND with this one make three.
+        for (int a = 0; a < others.size(); a++) {
+            for (int b = a + 1; b < others.size(); b++) {
+                MonthSpan shared = target.intersect(others.get(a));
+                if (shared.overlaps(others.get(b))) {
+                    YearMonth month = shared.intersect(others.get(b)).from();
+                    throw new IllegalStateException(
+                            "Lot already has two tenancies in " + month + ". A lot can have at most two in any month");
+                }
+            }
+        }
+    }
+
+    /** The months a tenancy covers, first and last included. */
+    private record MonthSpan(YearMonth from, YearMonth to) {
+
+        private static final YearMonth EARLIEST = YearMonth.of(1, 1);
+        private static final YearMonth LATEST = YearMonth.of(9999, 12);
+
+        static MonthSpan of(LocalDate start, LocalDate end) {
+            return new MonthSpan(
+                    start == null ? EARLIEST : YearMonth.from(start),
+                    end == null ? LATEST : YearMonth.from(end));
+        }
+
+        boolean overlaps(MonthSpan other) {
+            return !from.isAfter(other.to) && !other.from.isAfter(to);
+        }
+
+        /** Only call on two spans that overlap. */
+        MonthSpan intersect(MonthSpan other) {
+            YearMonth laterStart = from.isAfter(other.from) ? from : other.from;
+            YearMonth earlierEnd = to.isBefore(other.to) ? to : other.to;
+            return new MonthSpan(laterStart, earlierEnd);
+        }
     }
 
     @Transactional

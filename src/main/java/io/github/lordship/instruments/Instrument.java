@@ -1,5 +1,6 @@
 package io.github.lordship.instruments;
 
+import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 
 import java.time.LocalDate;
@@ -11,6 +12,7 @@ public record Instrument(
         UUID uuid,
         UUID tenancy,
         InstrumentType type,
+        AgreementType agreementType, // chosen when the draft is created
         InstrumentStatus status,
 
         String serial,  // printed on the paper, assigned at GENERATED; typed back in to find the lease
