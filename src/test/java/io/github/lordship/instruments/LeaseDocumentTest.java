@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -313,7 +312,7 @@ class LeaseDocumentTest {
         String html = LeaseDocument.render(lease, null);
 
         // Assert
-        assertTrue(html.contains("<span class=\"rule\" style=\"width:30ch\"></span>"), html);
+        assertTrue(html.contains("<span class=\"rule\" style=\"width:15em\"></span>"), html);
         assertTrue(html.contains(".rule { display: inline-block;"), html);
     }
 

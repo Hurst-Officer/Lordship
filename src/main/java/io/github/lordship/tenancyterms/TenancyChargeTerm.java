@@ -54,9 +54,9 @@ public record TenancyChargeTerm(
 
         TenancyTermStatus status,
         TenancyTermSource source,
-        UUID sourceUuid,    // the instrument that produced this deal
+        UUID sourceUuid,    // the document this term was written for; null for MIGRATION and CORRECTION
         UUID termsTemplate, // which template seeded the values
-        UUID batch,         // groups one bulk run
+        String correctionReason, // why an admin entered this term; required for CORRECTION
 
         OffsetDateTime cancelledAt,
         UUID cancelledBy,

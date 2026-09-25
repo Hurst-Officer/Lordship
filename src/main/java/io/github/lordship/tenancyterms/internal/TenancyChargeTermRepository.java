@@ -1,6 +1,5 @@
 package io.github.lordship.tenancyterms.internal;
 
-import io.github.lordship.shared.AgreementType;
 import io.github.lordship.tenancyterms.ChargeTermConfiguration;
 import io.github.lordship.tenancyterms.RentHistoryYear;
 import io.github.lordship.tenancyterms.TenancyTermStatus;
@@ -18,9 +17,9 @@ import java.util.UUID;
 @Repository
 public class TenancyChargeTermRepository {
 
-    // tenancy, agreement_type, terms_template, batch, created_by and created_at
-    // are set once at creation. status, source_uuid and the cancel columns move
-    // through the transition methods below, never through PATCH.
+    // Set once at creation and never patched: tenancy, agreement_type, source,
+    // source_uuid, terms_template, correction_reason, created_by, created_at.
+    // status and the cancel columns change only through the methods below.
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
             "valid_at", "rate",
             "car_fee", "allowed_cars", "cars_max",
@@ -126,11 +125,8 @@ public class TenancyChargeTermRepository {
     }
 
     /**
-     * The deal one document produced, earliest step first.
-     *
-     * <p>source_uuid is stamped when the instrument is created rather than when
-     * the term activates, so this answers before anything is signed -- which is
-     * what lets a document substitute from a term it has not yet put in force.
+     * Every charge term written for one document, earliest first.
+     * Works before the document is signed, which is how preview reads them.
      */
     public List<TenancyChargeTermRow> findBySource(UUID sourceUuid) {
         return jdbc.sql("""
@@ -159,7 +155,7 @@ public class TenancyChargeTermRepository {
                     sewer_method, sewer_flat_amount,
                     trash_method, trash_flat_amount,
                     security_deposit_method, security_deposit_amount,
-                    status, source, source_uuid, terms_template, batch,
+                    status, source, source_uuid, terms_template, correction_reason,
                     note, created_by
                 ) VALUES (
                     :tenancy, :validAt, :agreementType::agreement_type,
@@ -173,7 +169,7 @@ public class TenancyChargeTermRepository {
                     :sewerMethod, :sewerFlatAmount,
                     :trashMethod, :trashFlatAmount,
                     :securityDepositMethod, :securityDepositAmount,
-                    :status, :source, :sourceUuid, :termsTemplate, :batch,
+                    :status, :source, :sourceUuid, :termsTemplate, :correctionReason,
                     :note, :createdBy
                 ) RETURNING *
                 """)
@@ -208,7 +204,7 @@ public class TenancyChargeTermRepository {
                 .param("source", nameOf(row.source()))
                 .param("sourceUuid", row.sourceUuid())
                 .param("termsTemplate", row.termsTemplate())
-                .param("batch", row.batch())
+                .param("correctionReason", row.correctionReason())
                 .param("note", row.note())
                 .param("createdBy", row.createdBy())
                 .query(rowMapper)
@@ -249,18 +245,6 @@ public class TenancyChargeTermRepository {
                 .param("on", on)
                 .query(rowMapper)
                 .optional();
-    }
-
-    // One bulk run, so it can be reviewed or abandoned together.
-    public List<TenancyChargeTermRow> findByBatch(UUID batch) {
-        return jdbc.sql("""
-                SELECT * FROM tenancy_charge_term
-                WHERE batch = :batch AND deleted_at IS NULL
-                ORDER BY valid_at DESC, uuid DESC
-                """)
-                .param("batch", batch)
-                .query(rowMapper)
-                .list();
     }
 
     // Plain CRUD: whether the term is still editable is the service's call, so
@@ -307,22 +291,6 @@ public class TenancyChargeTermRepository {
                 .param("uuid", uuid)
                 .param("from", nameOf(from))
                 .param("to", nameOf(to))
-                .query(rowMapper)
-                .optional();
-    }
-
-    // The instrument that produced this deal. Separate from PATCH because of the
-    // composite FK to instrument(uuid, tenancy): a document from another tenancy
-    // cannot be attached, and the database is what enforces it.
-    public Optional<TenancyChargeTermRow> attachSource(UUID uuid, UUID sourceUuid) {
-        return jdbc.sql("""
-                UPDATE tenancy_charge_term
-                SET source_uuid = :sourceUuid
-                WHERE uuid = :uuid AND deleted_at IS NULL
-                RETURNING *
-                """)
-                .param("uuid", uuid)
-                .param("sourceUuid", sourceUuid)
                 .query(rowMapper)
                 .optional();
     }

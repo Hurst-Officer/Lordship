@@ -1,10 +1,19 @@
 package io.github.lordship.instruments.internal;
 
+import io.github.lordship.documentfiles.StoredFile;
 import io.github.lordship.instruments.InstrumentService;
+import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
+import io.github.lordship.tenancyterms.RentStep;
+import io.github.lordship.tenancyterms.TenancyChargeTerm;
+import io.github.lordship.tenancyterms.TenancyChargeTermResponse;
 import org.springframework.context.MessageSource;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -68,16 +77,16 @@ public class InstrumentController {
         this.documentTemplateService = documentTemplateService;
     }
 
-    /**
-     * {@code batchId} is the deal this paper is being written for -- the batch
-     * the charge terms were drafted under. Optional, because a notice carries
-     * no term of its own; supplied, every step of the deal points at this
-     * document from the moment it exists.
-     */
+    // agreementType picks the document template and the terms template.
     public record CreateDraftRequest(
             @NotNull UUID tenancyId,
             @NotNull InstrumentType type,
-            UUID batchId) { }
+            @NotNull AgreementType agreementType) { }
+
+    // The rent steps the office worker confirmed, saved exactly as given.
+    public record ScheduleRequest(@NotEmpty List<RentStep> steps) { }
+
+    public record CancelFutureRequest(@NotBlank String cancelReason) { }
 
     public record AddClauseRequest(@NotNull UUID sectionId) { }
 
@@ -169,7 +178,7 @@ public class InstrumentController {
             @Valid @RequestBody CreateDraftRequest request) {
 
         return instrumentService.createDraft(
-                        request.tenancyId(), request.type(), request.batchId())
+                        request.tenancyId(), request.type(), request.agreementType())
                 .map(InstrumentResponse::from)
                 .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
                 .orElse(ResponseEntity.notFound().build());
@@ -195,6 +204,79 @@ public class InstrumentController {
     public ResponseEntity<InstrumentResponse> abandon(@PathVariable UUID uuid) {
         return instrumentService.abandon(uuid)
                 .map(InstrumentResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // ---- generate ------------------------------------------------------------
+
+    // Freezes the wording, stamps the serial, saves the PDF and moves the charge
+    // terms to PENDING. 400 lists what is missing. 409 if it is not a draft.
+    @PreAuthorize("hasAuthority('instrument:edit')")
+    @PostMapping("/{uuid}/generate")
+    public ResponseEntity<InstrumentResponse> generate(@PathVariable UUID uuid) {
+        return instrumentService.generate(uuid)
+                .map(InstrumentResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // The generated PDF. 404 if the document does not exist or was not generated yet.
+    @PreAuthorize("hasAuthority('instrument:view')")
+    @GetMapping("/{uuid}/file")
+    public ResponseEntity<byte[]> downloadFile(@PathVariable UUID uuid) {
+        return instrumentService.readGeneratedFile(uuid)
+                .map(InstrumentController::fileResponse)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // ---- charge terms --------------------------------------------------------
+    // The charge terms of a document are created here, already linked to it.
+    // Fees are then edited with PATCH /api/tenancy-charge-terms/{uuid}.
+
+    @PreAuthorize("hasAuthority('tenancy_term:view')")
+    @GetMapping("/{uuid}/charge-terms")
+    public ResponseEntity<List<TenancyChargeTermResponse>> listChargeTerms(@PathVariable UUID uuid) {
+        return instrumentService.findChargeTerms(uuid)
+                .map(InstrumentController::toTermResponses)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // What the office worker sees before confirming. Nothing is saved.
+    // 400 if the document's start date or number of months is not set.
+    @PreAuthorize("hasAuthority('tenancy_term:create')")
+    @GetMapping("/{uuid}/charge-terms/schedule")
+    public ResponseEntity<List<RentStep>> previewSchedule(@PathVariable UUID uuid) {
+        return instrumentService.previewSchedule(uuid)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // Saves the confirmed steps as charge terms linked to this document.
+    // Posting again replaces them and keeps the fees already set.
+    // 409 once the document has left DRAFT.
+    @PreAuthorize("hasAuthority('tenancy_term:create')")
+    @PostMapping("/{uuid}/charge-terms/schedule")
+    public ResponseEntity<List<TenancyChargeTermResponse>> writeSchedule(
+            @PathVariable UUID uuid,
+            @Valid @RequestBody ScheduleRequest request) {
+
+        return instrumentService.writeSchedule(uuid, request.steps())
+                .map(InstrumentController::toTermResponses)
+                .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // Cancels the steps that have not taken effect yet. Used when a lease ends early.
+    @PreAuthorize("hasAuthority('tenancy_term:cancel')")
+    @PostMapping("/{uuid}/charge-terms/cancel-future")
+    public ResponseEntity<List<TenancyChargeTermResponse>> cancelFutureChargeTerms(
+            @PathVariable UUID uuid,
+            @Valid @RequestBody CancelFutureRequest request) {
+
+        return instrumentService.cancelFutureChargeTerms(uuid, request.cancelReason())
+                .map(InstrumentController::toTermResponses)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -240,6 +322,21 @@ public class InstrumentController {
     }
 
     // ---- internals -----------------------------------------------------------
+
+    // "inline" so a browser opens the PDF instead of only saving it.
+    private static ResponseEntity<byte[]> fileResponse(StoredFile stored) {
+        ContentDisposition disposition = ContentDisposition.inline()
+                .filename(stored.file().fileName())
+                .build();
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(stored.file().contentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                .body(stored.content());
+    }
+
+    private static List<TenancyChargeTermResponse> toTermResponses(List<TenancyChargeTerm> terms) {
+        return terms.stream().map(TenancyChargeTermResponse::from).toList();
+    }
 
     private static Map<String, Object> columns(Map<String, Object> request, Map<String, String> allowed) {
         Map<String, Object> changes = new HashMap<>();

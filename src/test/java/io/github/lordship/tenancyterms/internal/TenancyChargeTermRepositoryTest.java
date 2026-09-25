@@ -118,6 +118,7 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
         assertEquals(TenancyTermStatus.PROPOSED, read.status());
         assertEquals(TenancyTermSource.CORRECTION, read.source());
         assertEquals(template.uuid(), read.termsTemplate());
+        assertEquals("CT found the 2019 lease", read.correctionReason());
         assertEquals("CT round trip", read.note());
         assertEquals(SystemPrincipal.AGENT_UUID, read.createdBy());
     }
@@ -152,16 +153,22 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
     }
 
     @Test
-    void findByBatch_shouldReturnOnlyThatRun() {
-        // Arrange -- a bulk run has to be reviewable and abandonable on its own
-        UUID batch = UUID.randomUUID();
-        tenancyChargeTermRepository.save(draft(LocalDate.of(2026, 9, 1), batch));
-        tenancyChargeTermRepository.save(draft(LocalDate.of(2026, 10, 1), batch));
-        tenancyChargeTermRepository.save(draft(LocalDate.of(2026, 11, 1), UUID.randomUUID()));
+    void findBySource_shouldReturnOnlyThatDocumentsTerms_earliestFirst() {
+        // Arrange -- two terms on this document, one on another, one with none
+        UUID document = insertInstrument(tenancy);
+        UUID otherDocument = insertInstrument(tenancy);
+        tenancyChargeTermRepository.save(draftFor(LocalDate.of(2027, 11, 1), document));
+        tenancyChargeTermRepository.save(draftFor(LocalDate.of(2026, 11, 1), document));
+        tenancyChargeTermRepository.save(draftFor(LocalDate.of(2026, 11, 1), otherDocument));
         tenancyChargeTermRepository.save(draft(LocalDate.of(2026, 12, 1)));
 
-        // Act / Assert
-        assertEquals(2, tenancyChargeTermRepository.findByBatch(batch).size());
+        // Act
+        List<TenancyChargeTermRow> found = tenancyChargeTermRepository.findBySource(document);
+
+        // Assert
+        assertEquals(
+                List.of(LocalDate.of(2026, 11, 1), LocalDate.of(2027, 11, 1)),
+                found.stream().map(TenancyChargeTermRow::validAt).toList());
     }
 
     // ---- patch ---------------------------------------------------------------
@@ -378,34 +385,51 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
         assertThrows(DataIntegrityViolationException.class, () -> activeTermAt(LocalDate.of(2026, 9, 1)));
     }
 
-    // ---- attachSource: the composite foreign key -----------------------------
+    // ---- source_uuid: the composite foreign key -------------------------------
 
     @Test
-    void attachSource_shouldAcceptAnInstrumentFromTheSameTenancy() {
+    void save_shouldAcceptADocumentFromTheSameTenancy() {
         // Arrange
-        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(draft(LocalDate.of(2026, 9, 1)));
         UUID instrument = insertInstrument(tenancy);
 
         // Act
-        TenancyChargeTermRow attached =
-                tenancyChargeTermRepository.attachSource(saved.uuid(), instrument).orElseThrow();
+        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(draftFor(LocalDate.of(2026, 9, 1), instrument));
 
         // Assert
-        assertEquals(instrument, attached.sourceUuid());
+        assertEquals(instrument, saved.sourceUuid());
     }
 
-    // The composite FK to instrument(uuid, tenancy) is the only thing standing
-    // between a signed lease and the wrong tenant's file.
+    // The composite foreign key to instrument(uuid, tenancy) stops a term from
+    // being linked to another tenancy's document.
     @Test
-    void attachSource_shouldRejectAnInstrumentFromAnotherTenancy() {
+    void save_shouldRejectADocumentFromAnotherTenancy() {
         // Arrange
-        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(draft(LocalDate.of(2026, 9, 1)));
         LotRow otherLot = testData.insertLot(property, "2");
         UUID otherTenancy = testData.insertTenancy(otherLot.uuid()).uuid();
         UUID foreignInstrument = insertInstrument(otherTenancy);
 
         // Act / Assert
-        assertThrows(DataIntegrityViolationException.class, () -> tenancyChargeTermRepository.attachSource(saved.uuid(), foreignInstrument));
+        assertThrows(DataIntegrityViolationException.class,
+                () -> tenancyChargeTermRepository.save(draftFor(LocalDate.of(2026, 9, 1), foreignInstrument)));
+    }
+
+    @Test
+    void updateStatus_shouldActivateACorrectionWithNoDocument() {
+        // Arrange -- term_in_force_needs_paper allows MIGRATION and CORRECTION
+        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(
+                TenancyChargeTermRow.fromTemplate(
+                        tenancy, template, new BigDecimal("650.00"), LocalDate.of(2026, 9, 1),
+                        TenancyTermSource.CORRECTION, null, SystemPrincipal.AGENT_UUID)
+                        .withCorrectionReason("found an unscanned lease"));
+        tenancyChargeTermRepository.updateStatus(
+                saved.uuid(), TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING).orElseThrow();
+
+        // Act
+        Optional<TenancyChargeTermRow> active = tenancyChargeTermRepository.updateStatus(
+                saved.uuid(), TenancyTermStatus.PENDING, TenancyTermStatus.ACTIVE);
+
+        // Assert
+        assertTrue(active.isPresent());
     }
 
     // ---- configurations in force ---------------------------------------------
@@ -478,15 +502,16 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
                 property, name, AgreementType.LAND, SystemPrincipal.AGENT_UUID)).toTermsTemplate();
     }
 
-    /** A consistent draft copied from the template, as the service would build it. */
+    /** A consistent LEASE draft copied from the template, not linked to a document. */
     private TenancyChargeTermRow draft(LocalDate validAt) {
-        return draft(validAt, null);
+        return draftFor(validAt, null);
     }
 
-    private TenancyChargeTermRow draft(LocalDate validAt, UUID batch) {
+    /** The same draft, linked to a document. */
+    private TenancyChargeTermRow draftFor(LocalDate validAt, UUID document) {
         return TenancyChargeTermRow.fromTemplate(
                 tenancy, template, new BigDecimal("650.00"), validAt,
-                TenancyTermSource.LEASE, batch, SystemPrincipal.AGENT_UUID);
+                TenancyTermSource.LEASE, document, SystemPrincipal.AGENT_UUID);
     }
 
     /**
@@ -508,8 +533,8 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
 
     private UUID insertInstrument(UUID forTenancy) {
         return jdbc.sql("""
-                INSERT INTO instrument (tenancy, type, created_by)
-                VALUES (:tenancy, :type::instrument_type, :createdBy)
+                INSERT INTO instrument (tenancy, type, agreement_type, created_by)
+                VALUES (:tenancy, :type::instrument_type, 'LAND'::agreement_type, :createdBy)
                 RETURNING uuid
                 """)
                 .param("tenancy", forTenancy)
@@ -551,7 +576,7 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
                 TenancyTermSource.CORRECTION,
                 null,
                 template.uuid(),
-                null,
+                "CT found the 2019 lease",
                 null, null, null,
                 null,
                 "CT round trip",

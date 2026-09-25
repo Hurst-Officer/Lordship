@@ -1,9 +1,11 @@
 package io.github.lordship.instruments.internal;
 
+import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,7 +16,7 @@ import java.util.UUID;
 @Repository
 public class InstrumentRepository {
 
-    // tenancy, type, created_by and created_at are set once at creation. serial
+    // tenancy, type, agreement_type, created_by and created_at are set once at creation. serial
     // and the provenance columns are stamped by markGenerated; the delivery
     // columns move through their own transitions. None of those go through
     // PATCH, because each one belongs to a CHECK that reads several columns at
@@ -36,18 +38,31 @@ public class InstrumentRepository {
      * and who asked for it. Lands in DRAFT with nothing printed, which is the
      * only state its clauses may be rewritten in.
      */
-    public InstrumentRow save(UUID tenancy, InstrumentType type, UUID createdBy) {
+    public InstrumentRow save(UUID tenancy, InstrumentType type, AgreementType agreementType, UUID createdBy) {
+        return save(tenancy, type, agreementType, null, createdBy);
+    }
+
+    // termStart may be null. It is filled in for a new lease; see InstrumentService.createDraft.
+    public InstrumentRow save(UUID tenancy,
+                              InstrumentType type,
+                              AgreementType agreementType,
+                              LocalDate termStart,
+                              UUID createdBy) {
         return jdbc.sql("""
-                        INSERT INTO instrument (tenancy, type, created_by)
+                        INSERT INTO instrument (tenancy, type, agreement_type, term_start, created_by)
                         VALUES (
                             :tenancy,
                             CAST(:type AS instrument_type),
+                            CAST(:agreementType AS agreement_type),
+                            :termStart,
                             :createdBy
                         )
                         RETURNING *
                         """)
                 .param("tenancy", tenancy)
                 .param("type", type.name())
+                .param("agreementType", agreementType.name())
+                .param("termStart", termStart)
                 .param("createdBy", createdBy)
                 .query(rowMapper)
                 .single();

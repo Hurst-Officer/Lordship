@@ -226,10 +226,10 @@ public class InstrumentPreviewIT extends IntegrationTest {
 
     @Test
     void preview_shouldReturn409_whenNoDealIsAttached() throws Exception {
-        // Arrange -- paper started before the deal was drafted
+        // Arrange -- a lease draft whose rent schedule was never confirmed
         clause("rent", "The monthly rent is {{term.rate}}.");
         assignDocument();
-        UUID instrument = createDraft(null);
+        UUID instrument = createDraft();
 
         // Act + Assert
         mockMvc.perform(get("/api/instruments/{uuid}/preview", instrument)
@@ -357,24 +357,9 @@ public class InstrumentPreviewIT extends IntegrationTest {
                 .andExpect(status().isCreated());
     }
 
-    /** A draft with the deal attached and a term of its own, as generate needs it. */
+    /** A lease draft with its dates set and a one-step rent schedule confirmed. */
     private UUID draftWithTerm() throws Exception {
-        UUID batch = UUID.randomUUID();
-        mockMvc.perform(post("/api/tenancy-charge-terms/schedule")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {
-                                  "tenancy": "%s",
-                                  "agreementType": "LAND",
-                                  "steps": [ { "validAt": "2026-11-01", "rate": 650.00 } ],
-                                  "source": "LEASE",
-                                  "batch": "%s"
-                                }
-                                """.formatted(tenancy, batch)))
-                .andExpect(status().isCreated());
-
-        UUID instrument = createDraft(batch);
+        UUID instrument = createDraft();
         mockMvc.perform(patch("/api/instruments/{uuid}", instrument)
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -386,17 +371,24 @@ public class InstrumentPreviewIT extends IntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isOk());
+
+        mockMvc.perform(post("/api/instruments/{uuid}/charge-terms/schedule", instrument)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "steps": [ { "validAt": "2026-11-01", "rate": 650.00 } ] }
+                                """))
+                .andExpect(status().isCreated());
         return instrument;
     }
 
-    private UUID createDraft(UUID batch) throws Exception {
-        String batchField = batch == null ? "" : ", \"batchId\": \"%s\"".formatted(batch);
+    private UUID createDraft() throws Exception {
         MvcResult result = mockMvc.perform(post("/api/instruments")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "tenancyId": "%s", "type": "LEASE"%s }
-                                """.formatted(tenancy, batchField)))
+                                { "tenancyId": "%s", "type": "LEASE", "agreementType": "LAND" }
+                                """.formatted(tenancy)))
                 .andExpect(status().isCreated())
                 .andReturn();
         return uuidAt(result, "$.uuid");

@@ -290,21 +290,25 @@ public final class LeaseDocument {
                 .keep { page-break-inside: avoid; }
                 .depth-2 { margin-left: 8mm; }
                 .depth-3 { margin-left: 16mm; }
-                /* The number hangs in front of the text. */
-                .num { display: inline-block; min-width: 8mm; font-weight: bold; text-indent: 0; }
-                /* A wrapped line lines up with the text, not with the number. */
-                .hang { padding-left: 8mm; text-indent: -8mm; }
-                /* A body with a list or table is a block: its number floats beside the first line instead. */
-                div.hang { text-indent: 0; }
-                div.hang > .num { float: left; margin-left: -8mm; }
+                /* The number in front of a clause title. */
+                .num { display: inline-block; min-width: 8mm; font-weight: bold; }
+                /* A clause with no title: the number sits in the left gutter and every
+                   line of text lines up to its right. Done with a float, not a negative
+                   text-indent: the PDF engine mis-measures the first line with text-indent
+                   and runs it past the right margin. */
+                .hang { padding-left: 8mm; }
+                .hang > .num { float: left; width: 8mm; min-width: 0; margin-left: -8mm; }
                 /* Frozen bodies carry their own line breaks, blank lines, tabs and
-                   signature rules. pre-wrap prints them; break-word keeps a long
-                   run of underscores inside the margin instead of off the page. */
-                .body { margin: 0; white-space: pre-wrap; overflow-wrap: break-word; }
+                   signature rules. pre-wrap prints them. word-wrap keeps a very long
+                   word inside the margin (the PDF engine does not know overflow-wrap). */
+                .body { margin: 0; white-space: pre-wrap; word-wrap: break-word; }
                 /* A line somebody writes on. inline-block so the width holds:
-                   an inline span would collapse to nothing, having no text. */
+                   an inline span would collapse to nothing, having no text.
+                   Its width is set in em by ClauseMarkup.ruleWidth. */
                 .rule { display: inline-block; border-bottom: 1px solid #111; vertical-align: -0.4mm; }
-                .statute { font-size: 8pt; color: #555; margin: 1mm 0 0 0; font-style: italic; }
+                /* A statute line stays on the same page as its clause, and indents with a hanging clause. */
+                .statute { font-size: 8pt; color: #555; margin: 1mm 0 0 0; font-style: italic; page-break-before: avoid; }
+                .hang + .statute { margin-left: 8mm; }
                 /* Lists and tables inside a body: normal wrapping, not the body's pre-wrap. */
                 .body ul, .body ol { margin: 1mm 0 2mm 0; padding-left: 7mm; white-space: normal; }
                 .body li { margin: 0 0 1.5mm 0; }

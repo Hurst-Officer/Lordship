@@ -58,6 +58,10 @@ public class TenancyChargeTermService {
 
     private static final Set<String> FLAT_ONLY = Set.of(FeeMethod.FLAT.name());
 
+    // The columns that may differ between the steps of one document's schedule.
+    // Every other column is kept the same on all of them.
+    private static final Set<String> PER_STEP_COLUMNS = Set.of("valid_at", "rate", "note");
+
     /**
      * A method column and the amount column it governs.
      *
@@ -167,48 +171,63 @@ public class TenancyChargeTermService {
         return tenancyChargeTermRepository.findRentHistoryByLot(lotId, fromYear, toYear);
     }
 
-    /** The deal one document produced, earliest step first. */
+    /** Every charge term written for one document, earliest first. */
     public List<TenancyChargeTerm> findBySource(UUID sourceUuid) {
         return tenancyChargeTermRepository.findBySource(sourceUuid).stream()
                 .map(TenancyChargeTermRow::toTenancyChargeTerm)
                 .toList();
     }
 
-    // One bulk run, so it can be reviewed or abandoned together.
-    public List<TenancyChargeTerm> findByBatch(UUID batch) {
-        return tenancyChargeTermRepository.findByBatch(batch).stream()
-                .map(TenancyChargeTermRow::toTenancyChargeTerm)
-                .toList();
-    }
-
     /**
-     * Creates a term by copying the property's template for this agreement type.
-     * There is no blank create: every value column is NOT NULL with no default,
-     * so the copy is the create. Lands in PROPOSED with no instrument attached,
-     * which is what lets an incomplete draft be saved and finished later.
+     * Creates a MIGRATION or CORRECTION term: one an admin enters directly,
+     * with no document behind it. Every setting is copied from the property's
+     * terms template. The term starts as PROPOSED so it can be finished later.
      *
-     * <p>Empty means the tenancy does not exist. A lot that does not permit the
-     * agreement type, or a property that was never given a template for it, is a
-     * rule violation rather than a missing record.
+     * <p>All other terms are created from their document, through
+     * {@link #createForDocument}.
+     *
+     * <p>A CORRECTION must have a reason. Other sources must not have one.
+     *
+     * <p>Returns empty if the tenancy does not exist. Throws a 409 if the lot
+     * does not allow this agreement type or the property has no terms template
+     * for it.
      */
     @Transactional
     public Optional<TenancyChargeTerm> createFromTemplate(UUID tenancy,
                                                           AgreementType agreementType,
                                                           LocalDate validAt,
                                                           TenancyTermSource source,
-                                                          UUID batch) {
+                                                          String correctionReason) {
+        String reason = (correctionReason == null || correctionReason.isBlank())
+                ? null
+                : correctionReason.trim();
+
+        if (source.requiresInstrument()) {
+            throw InvalidRequest.onField("source", "term.needs_a_document", source);
+        }
+        if (source == TenancyTermSource.CORRECTION && reason == null) {
+            throw InvalidRequest.onField("correctionReason", "term.correction_needs_reason");
+        }
+        if (source != TenancyTermSource.CORRECTION && reason != null) {
+            throw InvalidRequest.onField("correctionReason", "term.reason_only_for_corrections");
+        }
+
         Optional<LeaseContext> contextOpt = contextFor(tenancy, agreementType);
         if (contextOpt.isEmpty()) {
             return Optional.empty();
         }
         LeaseContext context = contextOpt.get();
 
-        return Optional.of(saveStep(
+        TenancyChargeTermRow row = TenancyChargeTermRow.fromTemplate(
                 tenancy,
                 context.template(),
-                new RentStep(validAt, resolveRate(context.lot(), context.template(), source)),
+                resolveRate(context.lot(), context.template(), source),
+                validAt,
                 source,
-                batch));
+                null,
+                ActingAgent.resolve(auditContext));
+
+        return Optional.of(save(row.withCorrectionReason(reason)));
     }
 
     /**
@@ -241,28 +260,28 @@ public class TenancyChargeTermService {
     }
 
     /**
-     * Writes the steps the office worker confirmed, one charge term each, all
-     * sharing one batch.
+     * Writes the rent schedule for one document. Each step becomes a PROPOSED
+     * charge term linked to the document.
      *
-     * <p>The steps are taken as given rather than recomputed. What was on the
-     * screen is what gets written, which is also what lets a lease drafted
-     * elsewhere be entered verbatim.
+     * <p>Only InstrumentService calls this. It has already checked that the
+     * document is a DRAFT and that the source matches the document type.
      *
-     * <p>Every step is written now, at PROPOSED, rather than materialising later:
-     * source_uuid is set when the instrument is created, so the document can only
-     * print the schedule if the rows already exist. Generating them at activation
-     * would leave the renderer computing the figures a second time, which is how
-     * the paper and the ledger come to disagree by a penny.
+     * <p>The steps are saved exactly as given, so what the office worker
+     * confirmed on screen is what gets written.
+     *
+     * <p>If the document already has charge terms, they are replaced. The new
+     * steps keep the fees and settings of the old first step, so edits the
+     * office worker already made are not lost. Only PROPOSED terms can be
+     * replaced.
+     *
+     * <p>Returns empty if the tenancy does not exist.
      */
     @Transactional
-    public Optional<List<TenancyChargeTerm>> createSchedule(UUID tenancy,
-                                                            AgreementType agreementType,
-                                                            List<RentStep> steps,
-                                                            TenancyTermSource source,
-                                                            UUID batch) {
-
-        UUID scheduleBatch = (batch == null) ? UUID.randomUUID() : batch;
-
+    public Optional<List<TenancyChargeTerm>> createForDocument(UUID tenancy,
+                                                               AgreementType agreementType,
+                                                               List<RentStep> steps,
+                                                               TenancyTermSource source,
+                                                               UUID document) {
         if (steps == null || steps.isEmpty()) {
             throw InvalidRequest.of("term.schedule_needs_a_step");
         }
@@ -273,30 +292,37 @@ public class TenancyChargeTermService {
         }
         TermsTemplate template = contextOpt.get().template();
 
+        List<TenancyChargeTermRow> existing = tenancyChargeTermRepository.findBySource(document);
+        for (TenancyChargeTermRow row : existing) {
+            if (row.status() != TenancyTermStatus.PROPOSED) {
+                throw RuleConflict.of("term.schedule_already_submitted", row.status());
+            }
+        }
+        for (TenancyChargeTermRow row : existing) {
+            deleteChargeTerm(row.uuid());
+        }
+
+        UUID agent = ActingAgent.resolve(auditContext);
         List<TenancyChargeTerm> created = new ArrayList<>();
         for (RentStep step : steps) {
-            created.add(saveStep(tenancy, template, step, source, scheduleBatch));
+            TenancyChargeTermRow row = existing.isEmpty()
+                    ? TenancyChargeTermRow.fromTemplate(
+                            tenancy, template, step.rate(), step.validAt(), source, document, agent)
+                    : TenancyChargeTermRow.copyForStep(
+                            existing.get(0), step.rate(), step.validAt(), agent);
+            created.add(save(row));
         }
         return Optional.of(created);
     }
 
-    /** Abandons a draft schedule. In-force steps are left alone by the repository guard. */
-    @Transactional
-    public int deleteBatch(UUID batch) {
-        int deleted = 0;
-        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
-            if (deleteChargeTerm(row.uuid())) {
-                deleted++;
-            }
-        }
-        return deleted;
-    }
-
-
     /**
-     * Edits a draft. Only PROPOSED terms are editable: once a document is out
-     * for signature the deal on paper and the deal in the database have to stay
-     * the same, so a change after that is a new term, not an edit.
+     * Edits a PROPOSED term. Once a document is out for signature the terms
+     * must match the paper, so they can no longer be edited.
+     *
+     * <p>If the term belongs to a document, fee and setting changes are copied
+     * to every other PROPOSED term on that document. Only the date, rent and
+     * note stay per step. This keeps a multi-year schedule consistent: changing
+     * the pet fee on year one changes it on every year.
      */
     @Transactional
     public Optional<TenancyChargeTerm> patchChargeTerm(UUID uuid, Map<String, Object> changes) {
@@ -309,10 +335,32 @@ public class TenancyChargeTermService {
         if (!before.status().isEditable()) {
             throw InvalidRequest.of("term.not_editable", before.status());
         }
-        changes = coerce(changes);
+        Map<String, Object> coerced = coerce(changes);
+
+        Optional<TenancyChargeTermRow> afterOpt = patchOne(before, new LinkedHashMap<>(coerced));
+        if (afterOpt.isEmpty()) {
+            return Optional.empty();
+        }
+
+        Map<String, Object> shared = new LinkedHashMap<>(coerced);
+        shared.keySet().removeAll(PER_STEP_COLUMNS);
+
+        if (before.sourceUuid() != null && !shared.isEmpty()) {
+            for (TenancyChargeTermRow sibling : tenancyChargeTermRepository.findBySource(before.sourceUuid())) {
+                if (!sibling.uuid().equals(uuid) && sibling.status() == TenancyTermStatus.PROPOSED) {
+                    patchOne(sibling, new LinkedHashMap<>(shared));
+                }
+            }
+        }
+
+        return Optional.of(afterOpt.get().toTenancyChargeTerm());
+    }
+
+    /** Applies one patch to one term and writes the change to the audit log. */
+    private Optional<TenancyChargeTermRow> patchOne(TenancyChargeTermRow before, Map<String, Object> changes) {
         reconcileMethodAmountPairs(before, changes);
 
-        Optional<TenancyChargeTermRow> afterOpt = tenancyChargeTermRepository.patch(uuid, changes);
+        Optional<TenancyChargeTermRow> afterOpt = tenancyChargeTermRepository.patch(before.uuid(), changes);
         if (afterOpt.isEmpty()) {
             return Optional.empty();
         }
@@ -320,10 +368,9 @@ public class TenancyChargeTermService {
 
         AuditMapper.Diff diff = AuditMapper.diff(before, after);
         if (!diff.before().isEmpty()) {
-            auditService.recordUpdate("tenancy_charge_term", uuid, diff.before(), diff.after());
+            auditService.recordUpdate("tenancy_charge_term", before.uuid(), diff.before(), diff.after());
         }
-
-        return Optional.of(after.toTenancyChargeTerm());
+        return Optional.of(after);
     }
 
     /**
@@ -349,7 +396,7 @@ public class TenancyChargeTermService {
     @Transactional
     public Optional<TenancyChargeTerm> activate(UUID uuid) {
         return transition(uuid, TenancyTermStatus.PENDING, TenancyTermStatus.ACTIVE, row -> {
-            if (row.source() != TenancyTermSource.MIGRATION && row.sourceUuid() == null) {
+            if (row.source().requiresInstrument() && row.sourceUuid() == null) {
                 throw InvalidRequest.of("term.no_instrument");
             }
         });
@@ -387,32 +434,6 @@ public class TenancyChargeTermService {
     }
 
     /**
-     * Records the instrument that produced this deal. Kept off PATCH because of
-     * the composite foreign key to instrument(uuid, tenancy): the database is
-     * what guarantees a document from another tenancy cannot be attached here.
-     */
-    @Transactional
-    public Optional<TenancyChargeTerm> attachSource(UUID uuid, UUID sourceUuid) {
-        Optional<TenancyChargeTermRow> beforeOpt = tenancyChargeTermRepository.findById(uuid);
-        if (beforeOpt.isEmpty()) {
-            return Optional.empty();
-        }
-        TenancyChargeTermRow before = beforeOpt.get();
-
-        Optional<TenancyChargeTermRow> afterOpt = tenancyChargeTermRepository.attachSource(uuid, sourceUuid);
-        if (afterOpt.isEmpty()) {
-            return Optional.empty();
-        }
-        TenancyChargeTermRow after = afterOpt.get();
-
-        AuditMapper.Diff diff = AuditMapper.diff(before, after);
-        if (!diff.before().isEmpty()) {
-            auditService.recordUpdate("tenancy_charge_term", uuid, diff.before(), diff.after());
-        }
-        return Optional.of(after.toTenancyChargeTerm());
-    }
-
-    /**
      * Soft delete, and only for a term that never generated charges. The
      * repository carries the status guard, so an in-force term answers false
      * rather than raising term_delete_only_before_force.
@@ -428,66 +449,70 @@ public class TenancyChargeTermService {
         }).orElse(false);
     }
 
-    // ---- whole-schedule operations -----------------------------------------
-    // A scheduled lease moves as one. Until the instrument exists, source_uuid
-    // is null on every step, so batch is the only handle that groups them --
-    // which is why all four of these key off it rather than off the document.
-    //
-    // Each one delegates to the single-term method so the guards, the audit
-    // entries and the error messages stay identical whether a term is moved on
-    // its own or as part of a schedule.
+    // ---- whole-document operations ------------------------------------------
+    // Every charge term written for one document is found by its source_uuid.
+    // These methods act on all of them at once. Each one calls the single-term
+    // method, so the checks, audit entries and error messages are the same.
 
-    /** PROPOSED to PENDING for the whole schedule. */
+    /**
+     * PROPOSED to PENDING for every term on the document. Called at generate.
+     * Terms that are already PENDING are left as they are.
+     */
     @Transactional
-    public List<TenancyChargeTerm> submitBatch(UUID batch) {
+    public List<TenancyChargeTerm> submitForDocument(UUID document) {
         List<TenancyChargeTerm> moved = new ArrayList<>();
-        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
-            submit(row.uuid()).ifPresent(moved::add);
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findBySource(document)) {
+            if (row.status() == TenancyTermStatus.PROPOSED) {
+                submit(row.uuid()).ifPresent(moved::add);
+            }
         }
         return moved;
     }
 
-    /** PENDING to ACTIVE for the whole schedule, once the paper is signed. */
+    /** PENDING to ACTIVE for every term on the document. Called at approve. */
     @Transactional
-    public List<TenancyChargeTerm> activateBatch(UUID batch) {
+    public List<TenancyChargeTerm> activateForDocument(UUID document) {
         List<TenancyChargeTerm> moved = new ArrayList<>();
-        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findBySource(document)) {
             activate(row.uuid()).ifPresent(moved::add);
         }
         return moved;
     }
 
-    /** Points every step at the one instrument that produced them. */
-    @Transactional
-    public List<TenancyChargeTerm> attachSourceToBatch(UUID batch, UUID sourceUuid) {
-        List<TenancyChargeTerm> attached = new ArrayList<>();
-        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
-            attachSource(row.uuid(), sourceUuid).ifPresent(attached::add);
-        }
-        return attached;
-    }
-
     /**
-     * Retires the steps of a schedule that have not taken effect yet -- what a
-     * lease ending early calls for.
+     * Cancels the document's terms that have not taken effect yet. Used when a
+     * lease ends early.
      *
-     * <p>Deliberately not every step. A term whose valid_at has passed WAS in
-     * force, and cancelling it would claim otherwise: it is excluded from
-     * resolution entirely, so the rent-history disclosure and the in-force
-     * configuration query would both lose a year that really happened. Ending a
-     * tenancy is tenancy.end_date; cancelling is for a deal that was retracted.
+     * <p>Terms whose valid_at has already passed are left alone. They really were
+     * in force, and cancelling them would remove that year from the rent history.
+     * Ending a tenancy is done with tenancy.end_date, not by cancelling terms.
      */
     @Transactional
-    public List<TenancyChargeTerm> cancelFutureInBatch(UUID batch, String cancelReason) {
+    public List<TenancyChargeTerm> cancelFutureForDocument(UUID document, String cancelReason) {
         LocalDate today = LocalDate.now();
         List<TenancyChargeTerm> cancelled = new ArrayList<>();
 
-        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByBatch(batch)) {
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findBySource(document)) {
             if (row.status() == TenancyTermStatus.ACTIVE && row.validAt().isAfter(today)) {
                 cancel(row.uuid(), cancelReason).ifPresent(cancelled::add);
             }
         }
         return cancelled;
+    }
+
+    /**
+     * Deletes the document's terms that never went into force. Called when the
+     * document is abandoned. Returns how many were deleted.
+     */
+    @Transactional
+    public int deleteForDocument(UUID document) {
+        int deleted = 0;
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findBySource(document)) {
+            if (deleteChargeTerm(row.uuid())) {
+                deleted++;
+            }
+        }
+        return deleted;
     }
 
     // ---- internals ---------------------------------------------------------
@@ -525,22 +550,9 @@ public class TenancyChargeTermService {
         return Optional.of(new LeaseContext(lot, template));
     }
 
-    /** One step written as one charge term, with its audit entry. */
-    private TenancyChargeTerm saveStep(UUID tenancy,
-                                       TermsTemplate template,
-                                       RentStep step,
-                                       TenancyTermSource source,
-                                       UUID batch) {
-        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(
-                TenancyChargeTermRow.fromTemplate(
-                        tenancy,
-                        template,
-                        step.rate(),
-                        step.validAt(),
-                        source,
-                        batch,
-                        ActingAgent.resolve(auditContext)));
-
+    /** Saves a new term and writes it to the audit log. */
+    private TenancyChargeTerm save(TenancyChargeTermRow row) {
+        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(row);
         auditService.recordInsert("tenancy_charge_term", saved.uuid(), AuditMapper.toMap(saved));
         return saved.toTenancyChargeTerm();
     }

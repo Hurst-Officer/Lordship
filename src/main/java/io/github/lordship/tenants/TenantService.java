@@ -36,16 +36,24 @@ public class TenantService {
         this.auditService = auditService;
     }
 
-    /**
-     * The office is usually setting up next month's household, not today's, so an
-     * omitted start_date lands on the first of a billing period rather than on
-     * the date the row happened to be typed. Before the 10th the current period
-     * is still the one in hand; after it, the work is for the period ahead.
-     */
+    /** The billing-period guess. Same rule a tenancy uses: see TenancyService.billingPeriodStart. */
     static LocalDate defaultStartDate(LocalDate today) {
-        return today.getDayOfMonth() < 10
-                ? today.withDayOfMonth(1)
-                : today.plusMonths(1).withDayOfMonth(1);
+        return TenancyService.billingPeriodStart(today);
+    }
+
+    /**
+     * The start date used when the office leaves it blank.
+     *
+     * <p>The first tenant ever added to a tenancy starts on the tenancy's start
+     * date, because they moved in with it. Anyone added later (a spouse, a
+     * roommate) gets the billing-period guess instead.
+     */
+    private LocalDate defaultStartFor(Tenancy tenancy) {
+        boolean firstTenant = tenantRepository.findByTenancy(tenancy.uuid()).isEmpty();
+        if (firstTenant && tenancy.startDate() != null) {
+            return tenancy.startDate();
+        }
+        return defaultStartDate(LocalDate.now());
     }
 
     /**
@@ -77,7 +85,7 @@ public class TenantService {
 
         LocalDate startDate = startDateOpt != null
                 ? startDateOpt
-                : defaultStartDate(LocalDate.now());
+                : defaultStartFor(tenancy);
 
         TenantRow row = tenantRepository.save(tenancy.uuid(), personId, startDate);
 

@@ -1,13 +1,11 @@
 package io.github.lordship.tenancyterms.internal;
 
 import io.github.lordship.shared.AgreementType;
-import io.github.lordship.tenancyterms.RentStep;
-import io.github.lordship.tenancyterms.TenancyChargeTerm;
+import io.github.lordship.tenancyterms.TenancyChargeTermResponse;
 import io.github.lordship.tenancyterms.TenancyChargeTermService;
 import io.github.lordship.tenancyterms.TenancyTermSource;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -59,26 +57,18 @@ public class TenancyChargeTermController {
         this.tenancyChargeTermService = tenancyChargeTermService;
     }
 
-    // batch is optional -- set it to group one bulk run so it can be reviewed
-    // or abandoned together.
+    // Only for MIGRATION and CORRECTION terms. Every other term is created from
+    // its document: POST /api/instruments/{uuid}/charge-terms/schedule.
+    // correctionReason is required for CORRECTION and not allowed otherwise.
     public record CreateChargeTermRequest (
             @NotNull UUID tenancy,
             @NotNull AgreementType agreementType,
             @NotNull LocalDate validAt,
             @NotNull TenancyTermSource source,
-            UUID batch) {}
-
-    public record CreateScheduleRequest(
-            @NotNull UUID tenancy,
-            @NotNull AgreementType agreementType,
-            @NotEmpty List<RentStep> steps,
-            @NotNull TenancyTermSource source,
-            UUID batch) {}
+            String correctionReason) {}
 
 
     public record CancelChargeTermRequest(@NotBlank String cancelReason) {}
-
-    public record AttachSourceRequest(@NotNull UUID sourceUuid) {}
 
     // The deal history for one tenancy, newest first.
     @PreAuthorize("hasAuthority('tenancy_term:view')")
@@ -89,33 +79,6 @@ public class TenancyChargeTermController {
                 tenancyChargeTermService.findByTenancy(tenancy).stream()
                         .map(TenancyChargeTermResponse::from)
                         .toList());
-    }
-
-    // One bulk run, so it can be reviewed or abandoned together.
-    @PreAuthorize("hasAuthority('tenancy_term:view')")
-    @GetMapping("/batch/{batch}")
-    public ResponseEntity<List<TenancyChargeTermResponse>> listByBatch(@PathVariable UUID batch) {
-        return ResponseEntity.ok(
-                tenancyChargeTermService.findByBatch(batch).stream()
-                        .map(TenancyChargeTermResponse::from)
-                        .toList());
-    }
-
-    // What the office worker is shown before committing to a schedule. Writes
-    // nothing -- termMonths belongs to the lease being written, not the template.
-    @PreAuthorize("hasAuthority('tenancy_term:create')")
-    @GetMapping("/schedule/preview")
-    public ResponseEntity<List<RentStep>> previewSchedule(
-            @RequestParam("tenancy") UUID tenancy,
-            @RequestParam("agreementType") AgreementType agreementType,
-            @RequestParam("start") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate start,
-            @RequestParam("termMonths") int termMonths,
-            @RequestParam("source") TenancyTermSource source) {
-
-        return tenancyChargeTermService
-                .previewSchedule(tenancy, agreementType, start, termMonths, source)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
     }
 
     // What billing asks: the term in force on the first day of the period.
@@ -140,8 +103,8 @@ public class TenancyChargeTermController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @PreAuthorize("hasAuthority('tenancy_term:create') and "
-            + "(#request.source().name() != 'MIGRATION' or hasAuthority('tenancy_term:create_migrations'))")
+    // Admin only. The same permission covers migrations and corrections.
+    @PreAuthorize("hasAuthority('tenancy_term:create_migrations')")
     @PostMapping
     public ResponseEntity<TenancyChargeTermResponse> createChargeTerm(
             @Valid @RequestBody CreateChargeTermRequest request) {
@@ -151,27 +114,8 @@ public class TenancyChargeTermController {
                         request.agreementType(),
                         request.validAt(),
                         request.source(),
-                        request.batch())
+                        request.correctionReason())
                 .map(TenancyChargeTermResponse::from)
-                .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
-                .orElse(ResponseEntity.notFound().build());
-    }
-
-    // Writes the steps the office worker confirmed, verbatim. The batch is
-    // minted server-side when absent, since the steps have to share one.
-    @PreAuthorize("hasAuthority('tenancy_term:create') and "
-            + "(#request.source().name() != 'MIGRATION' or hasAuthority('tenancy_term:create_migrations'))")
-    @PostMapping("/schedule")
-    public ResponseEntity<List<TenancyChargeTermResponse>> createSchedule(
-            @Valid @RequestBody CreateScheduleRequest request) {
-
-        return tenancyChargeTermService.createSchedule(
-                        request.tenancy(),
-                        request.agreementType(),
-                        request.steps(),
-                        request.source(),
-                        request.batch())
-                .map(terms -> terms.stream().map(TenancyChargeTermResponse::from).toList())
                 .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -195,52 +139,6 @@ public class TenancyChargeTermController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @PreAuthorize("hasAuthority('tenancy_term:edit')")
-    @PostMapping("/batch/{batch}/submit")
-    public ResponseEntity<List<TenancyChargeTermResponse>> submitBatch(@PathVariable UUID batch) {
-        return ResponseEntity.ok(toResponses(tenancyChargeTermService.submitBatch(batch)));
-    }
-
-    @PreAuthorize("hasAuthority('tenancy_term:edit')")
-    @PutMapping("/batch/{batch}/source")
-    public ResponseEntity<List<TenancyChargeTermResponse>> attachSourceToBatch(
-            @PathVariable UUID batch,
-            @Valid @RequestBody AttachSourceRequest request) {
-        return ResponseEntity.ok(
-                toResponses(tenancyChargeTermService.attachSourceToBatch(batch, request.sourceUuid())));
-    }
-
-    @PreAuthorize("hasAuthority('tenancy_term:activate')")
-    @PostMapping("/batch/{batch}/activate")
-    public ResponseEntity<List<TenancyChargeTermResponse>> activateBatch(@PathVariable UUID batch) {
-        return ResponseEntity.ok(toResponses(tenancyChargeTermService.activateBatch(batch)));
-    }
-
-    // Only the steps that have not taken effect. A step whose valid_at has
-    // passed WAS in force, and cancelling it would erase a year that happened.
-    @PreAuthorize("hasAuthority('tenancy_term:cancel')")
-    @PostMapping("/batch/{batch}/cancel")
-    public ResponseEntity<List<TenancyChargeTermResponse>> cancelFutureInBatch(
-            @PathVariable UUID batch,
-            @Valid @RequestBody CancelChargeTermRequest request) {
-        return ResponseEntity.ok(
-                toResponses(tenancyChargeTermService.cancelFutureInBatch(batch, request.cancelReason())));
-    }
-
-    // Abandons a draft schedule the lease never came back for.
-    @PreAuthorize("hasAuthority('tenancy_term:delete')")
-    @DeleteMapping("/batch/{batch}")
-    public ResponseEntity<Void> deleteBatch(@PathVariable UUID batch) {
-        return tenancyChargeTermService.deleteBatch(batch) > 0
-                ? ResponseEntity.noContent().build()
-                : ResponseEntity.notFound().build();
-    }
-
-    private static List<TenancyChargeTermResponse> toResponses(List<TenancyChargeTerm> terms) {
-        return terms.stream().map(TenancyChargeTermResponse::from).toList();
-    }
-
-
     // The draft is finished and a document is going out. 400 carries the list
     // of fields that are not ready.
     @PreAuthorize("hasAuthority('tenancy_term:edit')")
@@ -262,23 +160,11 @@ public class TenancyChargeTermController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    // The instrument that produced this deal. Separate from PATCH because the
-    // composite foreign key to instrument(uuid, tenancy) is what stops a
-    // document from another tenancy being attached.
-    @PreAuthorize("hasAuthority('tenancy_term:edit')")
-    @PutMapping("/{uuid}/source")
-    public ResponseEntity<TenancyChargeTermResponse> attachSource(
-            @PathVariable UUID uuid,
-            @Valid @RequestBody AttachSourceRequest request) {
+    // There is no endpoint for linking a term to a document. A term is created
+    // already linked, by POST /api/instruments/{uuid}/charge-terms/schedule.
 
-        return tenancyChargeTermService.attachSource(uuid, request.sourceUuid())
-                .map(TenancyChargeTermResponse::from)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
-    }
-
-    // Ends a term that HAS gone into effect. 404 also covers a term that was
-    // never in force -- delete that one instead.
+    // Ends a term that has gone into force. Returns 404 for a term that never
+    // went into force. Delete that one instead.
     @PreAuthorize("hasAuthority('tenancy_term:cancel')")
     @PostMapping("/{uuid}/cancel")
     public ResponseEntity<TenancyChargeTermResponse> cancelChargeTerm(

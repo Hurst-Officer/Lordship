@@ -3,6 +3,7 @@ package io.github.lordship.instruments.internal;
 import io.github.lordship.instruments.InstrumentStatus;
 import io.github.lordship.instruments.OnExpiry;
 import io.github.lordship.instruments.ServiceMethod;
+import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
@@ -27,6 +28,7 @@ public class InstrumentRowMapper implements RowMapper<InstrumentRow> {
                 rs.getObject("uuid", UUID.class),
                 rs.getObject("tenancy", UUID.class),
                 enumOf(InstrumentType.class, rs.getString("type")),
+                enumOf(AgreementType.class, rs.getString("agreement_type")),
                 enumOf(InstrumentStatus.class, rs.getString("status")),
 
                 rs.getString("serial"),

@@ -65,7 +65,7 @@ public class TenancyChargeTermRowMapper implements RowMapper<TenancyChargeTermRo
                 enumOf(TenancyTermSource.class, rs.getString("source")),
                 (UUID) rs.getObject("source_uuid"),
                 (UUID) rs.getObject("terms_template"),
-                (UUID) rs.getObject("batch"),
+                rs.getString("correction_reason"),
 
                 rs.getObject("cancelled_at", OffsetDateTime.class),
                 (UUID) rs.getObject("cancelled_by"),

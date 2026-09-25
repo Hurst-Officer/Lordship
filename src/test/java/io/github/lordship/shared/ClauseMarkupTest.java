@@ -114,10 +114,9 @@ class ClauseMarkupTest {
         // Act
         String html = ClauseMarkup.toHtml(body);
 
-        // Assert -- ch rather than mm, so a rule keeps its share of the line
-        // when the document's typeface changes
-        assertTrue(html.contains("<span class=\"rule\" style=\"width:30ch\"></span>"), html);
-        assertTrue(html.contains("<span class=\"rule\" style=\"width:40ch\"></span>"), html);
+        // Assert -- half an em per character
+        assertTrue(html.contains("<span class=\"rule\" style=\"width:15em\"></span>"), html);
+        assertTrue(html.contains("<span class=\"rule\" style=\"width:20em\"></span>"), html);
     }
 
     @Test
@@ -129,7 +128,7 @@ class ClauseMarkupTest {
         String html = ClauseMarkup.toHtml(body);
 
         // Assert
-        assertTrue(html.contains("style=\"width:" + (ClauseMarkup.MAX_RULE_WIDTH / 2) + "ch\""), html);
+        assertTrue(html.contains("style=\"width:" + ClauseMarkup.ruleWidth(ClauseMarkup.MAX_RULE_WIDTH / 2) + "\""), html);
     }
 
     @Test
@@ -142,7 +141,15 @@ class ClauseMarkupTest {
         String html = ClauseMarkup.toHtml(body);
 
         // Assert
-        assertTrue(html.contains("width:" + ClauseMarkup.MAX_RULE_WIDTH + "ch"), html);
+        assertTrue(html.contains("width:" + ClauseMarkup.ruleWidth(ClauseMarkup.MAX_RULE_WIDTH)), html);
+    }
+
+    @Test
+    void ruleWidth_shouldBeHalfAnEmPerCharacter() {
+        // Act / Assert
+        assertEquals("15em", ClauseMarkup.ruleWidth(30));
+        assertEquals("3.5em", ClauseMarkup.ruleWidth(7));
+        assertEquals("0.5em", ClauseMarkup.ruleWidth(1));
     }
 
     // ---- marks the author got wrong ------------------------------------------

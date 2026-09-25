@@ -58,7 +58,7 @@ public class InstrumentAdditionRepositoryTest extends IntegrationTest {
         UUID assignmentId = assignmentRepository.save(propertyId, template.uuid(),
                 template.agreementType(), template.instrumentType(), SYSTEM_AGENT).uuid();
         UUID instrumentId = instrumentRepository.save(
-                tenancyId, InstrumentType.LEASE, SYSTEM_AGENT).uuid();
+                tenancyId, InstrumentType.LEASE, AgreementType.LAND, SYSTEM_AGENT).uuid();
 
         return new World(propertyId, template.uuid(), sectionId, assignmentId, instrumentId);
     }

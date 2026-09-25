@@ -28,16 +28,21 @@ public class TenancyController {
         this.tenancyService = tenancyService;
     }
 
+    // startDate is optional (yyyy-MM-dd). If left out, the service picks the
+    // billing period the office is working in. See TenancyService.billingPeriodStart.
     public record TenancyCreateRequest(
             @NotNull
-            UUID lotId
+            UUID lotId,
+
+            LocalDate startDate
     ) { }
 
 
     @PreAuthorize("hasAuthority('tenancy:create')")
     @PostMapping("/create")
     public ResponseEntity<TenancyResponse> createTenancy(@RequestBody @Valid TenancyCreateRequest tenancyCreateRequest) {
-        Tenancy tenancy = tenancyService.create(tenancyCreateRequest.lotId());
+        Tenancy tenancy = tenancyService.create(
+                tenancyCreateRequest.lotId(), tenancyCreateRequest.startDate());
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(TenancyResponse.from(tenancy));

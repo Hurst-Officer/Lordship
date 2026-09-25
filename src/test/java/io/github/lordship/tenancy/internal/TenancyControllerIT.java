@@ -59,10 +59,15 @@ public class TenancyControllerIT extends IntegrationTest {
         return testData.insertLot(testData.insertProperty(propertyCode).uuid(), "1").uuid();
     }
 
+    // Starts on the 1st of last month, so closing it today is always a valid end date.
     private UUID createTenancy(UUID lotId) throws Exception {
+        return createTenancy(lotId, LocalDate.now().minusMonths(1).withDayOfMonth(1));
+    }
+
+    private UUID createTenancy(UUID lotId, LocalDate startDate) throws Exception {
         var json = """
-                    { "lotId": "%s" }
-                """.formatted(lotId);
+                    { "lotId": "%s", "startDate": "%s" }
+                """.formatted(lotId, startDate);
 
         MvcResult createResult = mockMvc.perform(post("/api/tenancy/create")
                         .header("Authorization", "Bearer " + token())
@@ -106,9 +111,38 @@ public class TenancyControllerIT extends IntegrationTest {
     }
 
     @Test
+    void createTenancy_shouldGuessTheStartDate_whenNoneIsGiven() throws Exception {
+        // Arrange
+        UUID lotId = lot("C011");
+        String expected = io.github.lordship.tenancy.TenancyService.billingPeriodStart(LocalDate.now()).toString();
+
+        // Act & Assert
+        mockMvc.perform(post("/api/tenancy/create")
+                        .header("Authorization", "Bearer " + token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lotId\": \"" + lotId + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.startDate").value(expected));
+    }
+
+    @Test
+    void createTenancy_shouldKeepTheStartDate_whenOneIsGiven() throws Exception {
+        // Arrange
+        UUID lotId = lot("C012");
+
+        // Act & Assert
+        mockMvc.perform(post("/api/tenancy/create")
+                        .header("Authorization", "Bearer " + token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lotId\": \"" + lotId + "\", \"startDate\": \"2026-11-01\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.startDate").value("2026-11-01"));
+    }
+
+    @Test
     void createTenancy_shouldReturn401_whenNoTokenProvided() throws Exception {
         // Arrange
-        var request = new TenancyController.TenancyCreateRequest(UUID.randomUUID());
+        var request = new TenancyController.TenancyCreateRequest(UUID.randomUUID(), null);
 
         // Act & Assert
         mockMvc.perform(post("/api/tenancy/create")
@@ -173,6 +207,47 @@ public class TenancyControllerIT extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"lotId\": \"" + lotId + "\"}"))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void createTenancy_shouldAllowANewTenancy_whenTheOldOneEndedInAnEarlierMonth() throws Exception {
+        // Arrange -- A leaves in June, B arrives in June, C arrives in November
+        UUID lotId = lot("C013");
+        UUID a = createTenancy(lotId, LocalDate.of(2026, 1, 1));
+        closeTenancy(a, LocalDate.of(2026, 6, 30));
+        createTenancy(lotId, LocalDate.of(2026, 6, 1));
+
+        // Act & Assert
+        mockMvc.perform(post("/api/tenancy/create")
+                        .header("Authorization", "Bearer " + token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lotId\": \"" + lotId + "\", \"startDate\": \"2026-11-01\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
+    void createTenancy_shouldReturn409_whenTheMonthAlreadyHasTwo() throws Exception {
+        // Arrange -- June already has A (leaving) and B (arriving)
+        UUID lotId = lot("C014");
+        UUID a = createTenancy(lotId, LocalDate.of(2026, 1, 1));
+        closeTenancy(a, LocalDate.of(2026, 6, 30));
+        createTenancy(lotId, LocalDate.of(2026, 6, 1));
+
+        // Act & Assert
+        mockMvc.perform(post("/api/tenancy/create")
+                        .header("Authorization", "Bearer " + token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lotId\": \"" + lotId + "\", \"startDate\": \"2026-06-15\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value(Matchers.containsString("2026-06")));
+    }
+
+    private void closeTenancy(UUID tenancyId, LocalDate endDate) throws Exception {
+        mockMvc.perform(patch("/api/tenancy/{uuid}", tenancyId)
+                        .header("Authorization", "Bearer " + token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"endDate\": \"" + endDate + "\"}"))
+                .andExpect(status().isOk());
     }
 
     // ---- read ---------------------------------------------------------------

@@ -160,6 +160,21 @@ public class TenancyRepositoryTest extends IntegrationTest {
     }
 
     @Test
+    void findByLot_shouldIncludeClosedTenancies() {
+        // Arrange -- the two-per-month rule needs tenancies that have ended too
+        UUID lotId = lot("T020");
+        TenancyRow closed = tenancyRepository.save(lotId);
+        tenancyRepository.close(closed.uuid(), LocalDate.now());
+        TenancyRow open = tenancyRepository.save(lotId);
+
+        // Act
+        List<TenancyRow> all = tenancyRepository.findByLot(lotId);
+
+        // Assert
+        assertEquals(Set.of(closed.uuid(), open.uuid()), uuids(all));
+    }
+
+    @Test
     void findActiveByLot_shouldExcludeClosedTenancies() {
         // Arrange
         UUID lotId = lot("T006");
@@ -229,8 +244,7 @@ public class TenancyRepositoryTest extends IntegrationTest {
         assertEquals(end, closed.endDate());
     }
 
-    // No guard at this layer: refusing to re-close is TenancyService's job, and
-    // enforceSecondTenancyLimit calls straight through here.
+    // No guard at this layer: refusing to re-close is TenancyService's job.
     @Test
     void close_shouldOverwriteAnExistingEndDate() {
         // Arrange

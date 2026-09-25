@@ -215,6 +215,7 @@ CREATE TABLE instrument ( -- WIP
                             uuid           UUID PRIMARY KEY DEFAULT uuidv7(),
                             tenancy        UUID NOT NULL REFERENCES tenancy(uuid),
                             type           instrument_type NOT NULL, -- includes paper that changes nothing: PAY_OR_VACATE, notices
+                            agreement_type agreement_type NOT NULL,  -- chosen when the draft is created; picks the template and the terms
 
                             status         TEXT NOT NULL DEFAULT 'DRAFT'
                                 CONSTRAINT instrument_status_must_be_known CHECK (status IN ('DRAFT','GENERATED','SENT','SERVED','APPROVED','ABANDONED')),
@@ -393,8 +394,8 @@ CREATE TABLE instrument_addition (
 
 -- ── Charge term ──────────────────────────────────────────────────────────────
 -- to go into effect two conditions must be met: now() >= valid_at && status = 'ACTIVE'
--- source_uuid is set when the instrument is CREATED, not when the term activates,
--- so the document has a term to substitute from before it renders.
+-- source_uuid is the document the term was written for. It is set when the term is created.
+-- MIGRATION and CORRECTION terms have no document.
 
 CREATE TABLE tenancy_charge_term (
                                      uuid              UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -457,7 +458,7 @@ CREATE TABLE tenancy_charge_term (
 
                                      terms_template    UUID REFERENCES terms_template(uuid), -- which template seeded the values
 
-                                     batch             UUID,     -- groups one bulk run so it can be reviewed or abandoned together
+                                     correction_reason TEXT,     -- required when source = 'CORRECTION'
 
                                      cancelled_at      TIMESTAMPTZ,
                                      cancelled_by      UUID REFERENCES agent(uuid),
@@ -523,7 +524,7 @@ CREATE TABLE tenancy_charge_term (
 
                                      CONSTRAINT term_in_force_needs_paper CHECK (
                                          status NOT IN ('ACTIVE','CANCELLED')
-                                             OR source = 'MIGRATION'
+                                             OR source IN ('MIGRATION','CORRECTION')
                                              OR source_uuid IS NOT NULL
                                          ),
 

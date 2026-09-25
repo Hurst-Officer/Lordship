@@ -103,6 +103,7 @@ public class TenantServiceTests {
         tenantService.create(tenancyId, personId, null);
 
         verify(tenantRepository).findActiveByTenancyAndPerson(tenancyId, personId);
+        verify(tenantRepository).findByTenancy(tenancyId); // read only: is this the first tenant?
         verify(tenantRepository).save(eq(tenancyId), eq(personId), any());
         verifyNoMoreInteractions(tenantRepository);
     }
@@ -129,18 +130,43 @@ public class TenantServiceTests {
     }
 
     @Test
-    void create_derivesStartDate_whenTheCallerOmitsIt() {
+    void create_startsTheFirstTenantOnTheTenancysStartDate() {
+        // Arrange -- nobody has ever been on this tenancy
+        UUID tenancyId = UUID.randomUUID();
+        UUID personId = UUID.randomUUID();
+        Tenancy tenancy = tenancy(tenancyId);
+        TenantRow saved = row(tenancyId, personId, tenancy.startDate(), null);
+
+        when(tenancyService.findTenancyById(tenancyId)).thenReturn(Optional.of(tenancy));
+        when(tenantRepository.findActiveByTenancyAndPerson(tenancyId, personId)).thenReturn(Optional.empty());
+        when(tenantRepository.findByTenancy(tenancyId)).thenReturn(List.of());
+        when(tenantRepository.save(tenancyId, personId, tenancy.startDate())).thenReturn(saved);
+
+        // Act
+        tenantService.create(tenancyId, personId, null);
+
+        // Assert
+        verify(tenantRepository).save(tenancyId, personId, tenancy.startDate());
+    }
+
+    @Test
+    void create_givesALaterTenantTheBillingPeriodGuess() {
+        // Arrange -- a spouse joining after the household moved in
         UUID tenancyId = UUID.randomUUID();
         UUID personId = UUID.randomUUID();
         LocalDate expected = TenantService.defaultStartDate(LocalDate.now());
+        TenantRow first = row(tenancyId, UUID.randomUUID(), LocalDate.now().minusMonths(6), null);
         TenantRow saved = row(tenancyId, personId, expected, null);
 
         when(tenancyService.findTenancyById(tenancyId)).thenReturn(Optional.of(tenancy(tenancyId)));
         when(tenantRepository.findActiveByTenancyAndPerson(tenancyId, personId)).thenReturn(Optional.empty());
+        when(tenantRepository.findByTenancy(tenancyId)).thenReturn(List.of(first));
         when(tenantRepository.save(tenancyId, personId, expected)).thenReturn(saved);
 
+        // Act
         tenantService.create(tenancyId, personId, null);
 
+        // Assert
         verify(tenantRepository).save(tenancyId, personId, expected);
     }
 

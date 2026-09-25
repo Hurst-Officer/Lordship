@@ -1,21 +1,20 @@
-package io.github.lordship.tenancyterms.internal;
+package io.github.lordship.tenancyterms;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
-import io.github.lordship.tenancyterms.TenancyChargeTerm;
-import io.github.lordship.tenancyterms.TenancyTermSource;
-import io.github.lordship.tenancyterms.TenancyTermStatus;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-// What the API returns. deletedAt is deliberately absent: a soft-deleted term
-// is never fetched, and carrying it would put the domain record's isSoftDeleted()
-// accessor on the wire as "softDeleted". Every field here is one we chose.
+// What the API returns for a charge term. Public so the instruments package can
+// return a document's charge terms in the same shape.
+//
+// deletedAt is left out on purpose. A soft-deleted term is never fetched, and
+// returning the domain record directly would also put isSoftDeleted() on the wire.
 public record TenancyChargeTermResponse(
         UUID uuid,
         UUID tenancy,
@@ -64,7 +63,7 @@ public record TenancyChargeTermResponse(
         TenancyTermSource source,
         UUID sourceUuid,
         UUID termsTemplate,
-        UUID batch,
+        String correctionReason,
 
         OffsetDateTime cancelledAt,
         UUID cancelledBy,
@@ -89,7 +88,7 @@ public record TenancyChargeTermResponse(
                 term.trashMethod(), term.trashFlatAmount(),
                 term.securityDepositMethod(), term.securityDepositAmount(),
                 term.status(), term.isEditable(),
-                term.source(), term.sourceUuid(), term.termsTemplate(), term.batch(),
+                term.source(), term.sourceUuid(), term.termsTemplate(), term.correctionReason(),
                 term.cancelledAt(), term.cancelledBy(), term.cancelReason(),
                 term.note(), term.createdAt(), term.createdBy()
         );
