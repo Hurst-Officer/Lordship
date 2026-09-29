@@ -2,13 +2,14 @@ package io.github.lordship.properties;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 public record Property(
         UUID uuid,
         String propertyCode,
         String propertyName,
-        String propertyAddress,
+        String propertyStreet,
         String propertyCity,
         String propertyState,
         String propertyZip,
@@ -18,6 +19,7 @@ public record Property(
         String payableTo,
         String remittanceAddress,
         Integer yearBuilt,
+        Map<String, Object> customFields,
         OffsetDateTime createdAt,
         OffsetDateTime deletedAt
 ) {}

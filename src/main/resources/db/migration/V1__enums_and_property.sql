@@ -33,22 +33,37 @@ INSERT INTO global_settings (id) VALUES (1);
 
 CREATE TABLE property (
                           uuid             UUID PRIMARY KEY DEFAULT uuidv7(),
-                          property_code    VARCHAR(255),
-                          property_name    TEXT NOT NULL,
-                          property_address TEXT NOT NULL,
-                          property_city    TEXT,
-                          property_state   VARCHAR(2),
-                          property_zip     TEXT,
+                          property_code    VARCHAR(255) CONSTRAINT property_code_must_not_be_blank CHECK (length(trim(property_code)) > 0), -- optional; set after create
+                          property_name    TEXT NOT NULL CONSTRAINT property_name_must_not_be_blank CHECK (length(trim(property_name)) > 0),
+
+                          -- the address arrives already split (autocomplete), so all four parts are required
+                          property_street  TEXT NOT NULL CONSTRAINT property_street_must_not_be_blank CHECK (length(trim(property_street)) > 0),
+                          property_city    TEXT NOT NULL CONSTRAINT property_city_must_not_be_blank CHECK (length(trim(property_city)) > 0),
+                          property_state   VARCHAR(2) NOT NULL CONSTRAINT property_state_must_be_two_capital_letters CHECK (property_state ~ '^[A-Z]{2}$'),
+                          property_zip     TEXT NOT NULL CONSTRAINT property_zip_must_be_5_digits_or_zip_plus_4 CHECK (property_zip ~ '^[0-9]{5}(-[0-9]{4})?$'),
+
                           purchase_date    DATE,
                           property_zoning  TEXT,
                           property_parcel  TEXT,
                           payable_to       TEXT, -- who to pay
                           remittance_address TEXT, -- where checks are mailed;
-                          year_built       INT,
+                          year_built       INT CONSTRAINT property_year_built_must_be_1800_to_2100 CHECK (year_built BETWEEN 1800 AND 2100),
+                          custom_fields    JSONB NOT NULL DEFAULT '{}'::jsonb CONSTRAINT property_custom_fields_must_be_an_object CHECK (jsonb_typeof(custom_fields) = 'object'), -- labels the office adds later; people are linked in property_contact
                           property_manager UUID, -- FK to agent added in V3 after agent table exists
                           created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
                           deleted_at       TIMESTAMPTZ
 );
+
+-- A code names one live property. A deleted property gives its code back.
+CREATE UNIQUE INDEX uq_property_code_active
+    ON property (LOWER(property_code)) WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_property_name
+    ON property (LOWER(property_name)) WHERE deleted_at IS NULL;
+
+-- Serves "which properties have a 'Gate code' entry" and "which have this value".
+CREATE INDEX idx_property_custom_fields
+    ON property USING GIN (custom_fields) WHERE deleted_at IS NULL;
 
 
 CREATE TABLE terms_template ( -- note when the property is NULL this is a global default accessible to admins to copy towards properties

@@ -25,7 +25,9 @@ public class PropertyController {
     @PreAuthorize("hasAuthority('properties:create')")
     @PostMapping("/create")
     ResponseEntity<Property> createProperty(@Valid @RequestBody PropertyCreateRequest request) {
-        Property property = propertyService.createProperty(request.propertyName(), request.propertyAddress());
+        Property property = propertyService.createProperty(
+                request.propertyName(), request.propertyStreet(), request.propertyCity(),
+                request.propertyState(), request.propertyZip());
         return new ResponseEntity<>(property, HttpStatus.CREATED);
     }
 
@@ -53,7 +55,7 @@ public class PropertyController {
 
         if (request.containsKey("propertyCode"))    changes.put("property_code", request.get("propertyCode"));
         if (request.containsKey("propertyName"))    changes.put("property_name", request.get("propertyName"));
-        if (request.containsKey("propertyAddress")) changes.put("property_address", request.get("propertyAddress"));
+        if (request.containsKey("propertyStreet"))  changes.put("property_street", request.get("propertyStreet"));
         if (request.containsKey("propertyCity"))    changes.put("property_city", request.get("propertyCity"));
         if (request.containsKey("propertyState"))   changes.put("property_state", request.get("propertyState"));
         if (request.containsKey("propertyZip"))     changes.put("property_zip", request.get("propertyZip"));
@@ -63,6 +65,7 @@ public class PropertyController {
         if (request.containsKey("yearBuilt"))       changes.put("year_built", request.get("yearBuilt"));
         if (request.containsKey("propertyParcel"))  changes.put("property_parcel", request.get("propertyParcel"));
         if (request.containsKey("propertyManager")) changes.put("property_manager", request.get("propertyManager"));
+        if (request.containsKey("customFields"))    changes.put("custom_fields", request.get("customFields"));
 
 
         if (request.containsKey("purchaseDate")) {

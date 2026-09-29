@@ -30,10 +30,16 @@ public class AuditService {
     private static final Set<String> INSERT_EXCLUDED_KEYS = Set.of("createdAt", "uuid");
     private static final Set<String> DELETE_EXCLUDED_KEYS = Set.of("uuid");
 
+    // Null, blank text and empty maps carry no data, so insert and delete logs leave them out.
+    private static boolean hasNoData(Object value) {
+        return value == null
+                || (value instanceof String s && s.isBlank())
+                || (value instanceof Map<?, ?> m && m.isEmpty());
+    }
+
     private static Map<String, Object> sanitizeForInsertLog(Map<String, Object> map) {
         return map.entrySet().stream()
-                .filter(e -> e.getValue() != null)
-                .filter(e -> !(e.getValue() instanceof String s && s.isBlank()))
+                .filter(e -> !hasNoData(e.getValue()))
                 .filter(e -> !INSERT_EXCLUDED_KEYS.contains(e.getKey()))
                 .collect(Collectors.toMap(
                         Map.Entry::getKey,
@@ -45,8 +51,7 @@ public class AuditService {
 
     private static Map<String, Object> sanitizeForDeleteLog(Map<String, Object> map) {
         return map.entrySet().stream()
-                .filter(e -> e.getValue() != null)
-                .filter(e -> !(e.getValue() instanceof String s && s.isBlank()))
+                .filter(e -> !hasNoData(e.getValue()))
                 .filter(e -> !DELETE_EXCLUDED_KEYS.contains(e.getKey()))
                 .collect(Collectors.toMap(
                         Map.Entry::getKey,

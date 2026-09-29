@@ -55,7 +55,7 @@ public class TransactionServiceTest {
     // -------------------------------------------------------------------------
 
     private Account createTestAccount() {
-        Property property = propertyService.createProperty("Test Mobile Park", "999 Test Ave");
+        Property property = propertyService.createProperty("Test Mobile Park", "999 Test Ave", "Testville", "WA", "98000");
         Lot lot = lotService.createLot(property.uuid(), "1");
         UUID tenancyId = tenancyService.create(lot.uuid()).uuid();
         return accountService.getAccountByTenancyId(tenancyId).orElseThrow();

@@ -217,7 +217,7 @@ public final class TokenResolver {
     private static void putProperty(TokenValues.Builder out, Property property) {
         put(out, DocumentToken.COMMUNITY_NAME, property.propertyName());
         put(out, DocumentToken.PROPERTY_CODE, property.propertyCode());
-        put(out, DocumentToken.PROPERTY_ADDRESS, property.propertyAddress());
+        put(out, DocumentToken.PROPERTY_STREET_ADDRESS, property.propertyStreet());
         put(out, DocumentToken.PROPERTY_CITY, property.propertyCity());
         put(out, DocumentToken.PROPERTY_STATE, property.propertyState());
         put(out, DocumentToken.PROPERTY_ZIP, property.propertyZip());
