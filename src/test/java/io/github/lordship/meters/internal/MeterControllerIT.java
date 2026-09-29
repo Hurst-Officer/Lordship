@@ -5,12 +5,10 @@ import io.github.lordship.IntegrationTest;
 import io.github.lordship.TestAuthSupport;
 import io.github.lordship.meters.MeterMeasurement;
 import io.github.lordship.meters.MeterType;
-import io.github.lordship.properties.internal.PropertyRow;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,12 +46,9 @@ public class MeterControllerIT extends IntegrationTest {
     @Autowired
     MeterRepository meterRepository;
 
-    @Autowired
-    JdbcClient jdbc;
-
-    private MeterRow buildRow(UUID meterId) {
+    private MeterRow buildRow(UUID lotId) {
         return MeterRow.forInsert(
-                meterId,
+                lotId,
                 1.0,
                 2.0,
                 MeterType.WATER,
@@ -66,27 +61,25 @@ public class MeterControllerIT extends IntegrationTest {
         );
     }
 
-    private UUID insertTestProperty() {
-        return testData.insertProperty("Test Mobile Park", "999 Test Ave", "TST01").uuid();
+    private UUID insertLot() {
+        return testData.insertChainToLot().uuid();
     }
 
-    private UUID insertTestLot(UUID propertyId) {
-        return jdbc.sql("""
-            INSERT INTO lot (property_id, lot_number, sort_order) VALUES (:propertyId, '1', 1) RETURNING uuid
-            """).param("propertyId", propertyId).query(UUID.class).single();
+    // Two lots on one property, for the tests that link a parent meter to a child meter.
+    private UUID[] insertTwoLots() {
+        UUID propertyId = testData.insertProperty("TP").uuid();
+        return new UUID[]{
+                testData.insertLot(propertyId, "1").uuid(),
+                testData.insertLot(propertyId, "2").uuid()
+        };
     }
 
-    private UUID setupFullChain() {
-        UUID propertyId = insertTestProperty();
-        return insertTestLot(propertyId);
-    }
-
-    private UUID createTestMeter(String token, UUID meterId) throws Exception {
+    private UUID createTestMeter(String token, UUID lotId) throws Exception {
         MvcResult result = mockMvc.perform(
                         post("/meters/create")
                                 .header("Authorization", "Bearer " + token)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(new MeterCreateRequest(meterId, 1.0, 1.0, MeterType.WATER, MeterMeasurement.GAL, true, 99999,                 1.0,
+                                .content(objectMapper.writeValueAsString(new MeterCreateRequest(lotId, 1.0, 1.0, MeterType.WATER, MeterMeasurement.GAL, true, 99999,                 1.0,
                                         15,
                                         false)))
                 )
@@ -96,12 +89,12 @@ public class MeterControllerIT extends IntegrationTest {
         return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
     }
 
-    private UUID createChildMeter(String token, UUID meterId) throws Exception {
+    private UUID createChildMeter(String token, UUID lotId) throws Exception {
         MvcResult result = mockMvc.perform(
                         post("/meters/create")
                                 .header("Authorization", "Bearer " + token)
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(new MeterCreateRequest(meterId, 1.0, 1.0, MeterType.WATER, MeterMeasurement.GAL, false, 99999,                 1.0,
+                                .content(objectMapper.writeValueAsString(new MeterCreateRequest(lotId, 1.0, 1.0, MeterType.WATER, MeterMeasurement.GAL, false, 99999,                 1.0,
                                         15,
                                         false)))
                 )
@@ -115,7 +108,6 @@ public class MeterControllerIT extends IntegrationTest {
     // REPOSITORY TESTS
     @Test
     void findAMeterById() {
-        UUID meterId = setupFullChain();
         MeterRow saved = testData.insertChainToMeters();
 
         Optional<MeterRow> found = meterRepository.findById(saved.uuid());
@@ -126,8 +118,8 @@ public class MeterControllerIT extends IntegrationTest {
 
     @Test
     void softDeleteRemovesFromTable() {
-        UUID meterId = setupFullChain();
-        MeterRow saved = meterRepository.save(buildRow(meterId));
+        UUID lotId = insertLot();
+        MeterRow saved = meterRepository.save(buildRow(lotId));
 
         meterRepository.softDelete(saved.uuid());
 
@@ -137,8 +129,8 @@ public class MeterControllerIT extends IntegrationTest {
 
     @Test
     void patchUpdatesAllowedFields() {
-        UUID meterId = setupFullChain();
-        MeterRow saved = meterRepository.save(buildRow(meterId));
+        UUID lotId = insertLot();
+        MeterRow saved = meterRepository.save(buildRow(lotId));
 
         Map<String, Object> mutable = Map.of(
                 "title", "Updated Title"
@@ -187,7 +179,7 @@ public class MeterControllerIT extends IntegrationTest {
     @Test
     void patchMeter_shouldReturn400_whenInvalidDateProvided() throws Exception {
         String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID lotId = setupFullChain();
+        UUID lotId = insertLot();
 
         UUID meterId = createTestMeter(token, lotId);
 
@@ -213,7 +205,7 @@ public class MeterControllerIT extends IntegrationTest {
     @Test
     void patchMeter_shouldReturn200_whenValidDateProvided() throws Exception {
         String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID lotId = setupFullChain();
+        UUID lotId = insertLot();
         UUID meterUuid = createTestMeter(token, lotId);
 
         mockMvc.perform(patch("/meters/{uuid}", meterUuid)
@@ -228,7 +220,7 @@ public class MeterControllerIT extends IntegrationTest {
     void recordRead_shouldReturn201_withCorrectFields() throws Exception {
         String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
 
-        UUID lotId = setupFullChain();
+        UUID lotId = insertLot();
         UUID meterUuid = createTestMeter(token, lotId);
 
         String body = """
@@ -259,8 +251,9 @@ public class MeterControllerIT extends IntegrationTest {
     @Test
     void linkMeters_shouldReturn201_whenParentIsMasterAndTypesMatch() throws Exception {
         String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID lotId = setupFullChain();
-        UUID lotId2 = setupFullChain();
+        UUID[] lots = insertTwoLots();
+        UUID lotId = lots[0];
+        UUID lotId2 = lots[1];
         UUID parentUuid = createTestMeter(token, lotId);
         UUID childUuid = createTestMeter(token, lotId2);
 
@@ -278,8 +271,9 @@ public class MeterControllerIT extends IntegrationTest {
     @Test
     void linkMeters_shouldReturn400_whenParentIsNotMasterMeter() throws Exception {
         String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID lotId = setupFullChain();
-        UUID lotId2 = setupFullChain();
+        UUID[] lots = insertTwoLots();
+        UUID lotId = lots[0];
+        UUID lotId2 = lots[1];
         UUID notMaster = createChildMeter(token, lotId);
         UUID child = createChildMeter(token, lotId2);
 
@@ -297,8 +291,9 @@ public class MeterControllerIT extends IntegrationTest {
     @Test
     void resolveParentMeter_shouldReturn200_afterLinking() throws Exception {
         String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID lotId = setupFullChain();
-        UUID lotId2 = setupFullChain();
+        UUID[] lots = insertTwoLots();
+        UUID lotId = lots[0];
+        UUID lotId2 = lots[1];
         UUID parentUuid = createTestMeter(token, lotId);
         UUID childUuid = createTestMeter(token, lotId2);
 
@@ -320,7 +315,7 @@ public class MeterControllerIT extends IntegrationTest {
     @Test
     void resolveParentMeter_shouldReturn404_whenNoRelationshipExists() throws Exception {
         String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID lotId = setupFullChain();
+        UUID lotId = insertLot();
         UUID childUuid = createTestMeter(token, lotId);
 
         mockMvc.perform(get("/meters/relationships/{childMeterId}/parent", childUuid)

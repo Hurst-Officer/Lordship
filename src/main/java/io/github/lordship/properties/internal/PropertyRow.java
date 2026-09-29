@@ -5,13 +5,14 @@ import io.github.lordship.properties.Property;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 public record PropertyRow(
         UUID uuid,
         String propertyCode,
         String propertyName,
-        String propertyAddress,
+        String propertyStreet,
         String propertyCity,
         String propertyState,
         String propertyZip,
@@ -21,6 +22,7 @@ public record PropertyRow(
         String payableTo,
         String remittanceAddress,
         Integer yearBuilt,
+        Map<String, Object> customFields,
         OffsetDateTime createdAt,
         OffsetDateTime deletedAt
 ) {
@@ -30,7 +32,7 @@ public record PropertyRow(
                 this.uuid,
                 this.propertyCode,
                 this.propertyName,
-                this.propertyAddress,
+                this.propertyStreet,
                 this.propertyCity,
                 this.propertyState,
                 this.propertyZip,
@@ -40,49 +42,56 @@ public record PropertyRow(
                 this.payableTo,
                 this.remittanceAddress,
                 this.yearBuilt,
+                this.customFields,
                 this.createdAt,
                 this.deletedAt
         );
-}
-public PropertyRow(String propertyName, String propertyAddress){
+    }
+
+    // The fields a new property needs. Everything else is filled in later.
+    public PropertyRow(String propertyName, String propertyStreet, String propertyCity,
+                       String propertyState, String propertyZip) {
         this(
                 null,
                 null,
                 propertyName,
-                propertyAddress,
+                propertyStreet,
+                propertyCity,
+                propertyState,
+                propertyZip,
                 null,
                 null,
                 null,
                 null,
                 null,
                 null,
-                null,
-                null,
-                null,
+                Map.of(),
                 null,
                 null
         );
-}
+    }
 
-public PropertyRow(UUID uuid, String propertyCode, String propertyName, String propertyAddress,
-                   String propertyCity, String propertyState, String propertyZip,
-                   LocalDate purchaseDate, String propertyZoning, String propertyParcel, String payableTo, String remittanceAddress, Integer yearBuilt) {
-    this(
-            uuid,
-            propertyCode,
-            propertyName,
-            propertyAddress,
-            propertyCity,
-            propertyState,
-            propertyZip,
-            purchaseDate,
-            propertyZoning,
-            propertyParcel,
-            payableTo,
-            remittanceAddress,
-            yearBuilt,
-            null,
-            null
-    );
+    // A row before the database has set createdAt and deletedAt.
+    public PropertyRow(UUID uuid, String propertyCode, String propertyName, String propertyStreet,
+                       String propertyCity, String propertyState, String propertyZip,
+                       LocalDate purchaseDate, String propertyZoning, String propertyParcel, String payableTo, String remittanceAddress, Integer yearBuilt) {
+        this(
+                uuid,
+                propertyCode,
+                propertyName,
+                propertyStreet,
+                propertyCity,
+                propertyState,
+                propertyZip,
+                purchaseDate,
+                propertyZoning,
+                propertyParcel,
+                payableTo,
+                remittanceAddress,
+                yearBuilt,
+                Map.of(),
+                null,
+                null
+        );
     }
 }

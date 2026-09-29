@@ -19,7 +19,27 @@ public class AuditMapper {
         for (String key : afterMap.keySet()) {
             Object oldVal = beforeMap.get(key);
             Object newVal = afterMap.get(key);
-            if (!Objects.equals(oldVal, newVal)) {
+            if (Objects.equals(oldVal, newVal)) {
+                continue;
+            }
+            if (oldVal instanceof Map<?, ?> oldMap && newVal instanceof Map<?, ?> newMap) {
+                // A map field logs only the entries that changed, not the whole map.
+                // An entry that was added shows null before. One that was removed shows null after.
+                Map<Object, Object> oldEntries = new LinkedHashMap<>();
+                Map<Object, Object> newEntries = new LinkedHashMap<>();
+                Set<Object> entryKeys = new LinkedHashSet<>(oldMap.keySet());
+                entryKeys.addAll(newMap.keySet());
+                for (Object entryKey : entryKeys) {
+                    Object oldEntry = oldMap.get(entryKey);
+                    Object newEntry = newMap.get(entryKey);
+                    if (!Objects.equals(oldEntry, newEntry)) {
+                        oldEntries.put(entryKey, oldEntry);
+                        newEntries.put(entryKey, newEntry);
+                    }
+                }
+                changedBefore.put(key, oldEntries);
+                changedAfter.put(key, newEntries);
+            } else {
                 changedBefore.put(key, oldVal);
                 changedAfter.put(key, newVal);
             }

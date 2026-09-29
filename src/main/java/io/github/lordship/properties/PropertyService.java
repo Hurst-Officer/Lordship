@@ -27,12 +27,14 @@ public class PropertyService {
     }
 //
     @Transactional
-    public Property createProperty(String propertyName, String propertyAddress) {
+    public Property createProperty(String propertyName, String propertyStreet, String propertyCity,
+                                   String propertyState, String propertyZip) {
         Set<String> usedCodes = propertyRepository.findUsedPropertyCodes();
 
         String propertyCode = generatePropertyCode(propertyName, usedCodes);
 
-        PropertyRow saved = propertyRepository.save(propertyName, propertyAddress, propertyCode);
+        PropertyRow saved = propertyRepository.save(
+                propertyName, propertyStreet, propertyCity, propertyState, propertyZip, propertyCode);
         auditService.recordInsert("property", saved.uuid(), AuditMapper.toMap(saved));
         return saved.toProperty();
     }

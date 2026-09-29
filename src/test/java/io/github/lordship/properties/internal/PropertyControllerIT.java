@@ -15,6 +15,8 @@ import tools.jackson.databind.ObjectMapper;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -46,7 +48,10 @@ public class PropertyControllerIT extends IntegrationTest {
                         .content("""
                                 {
                                     "propertyName": "Test Mobile Park",
-                                    "propertyAddress": "999 Test Ave"
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyCity": "Testville",
+                                    "propertyState": "WA",
+                                    "propertyZip": "98000"
                                 }
                                 """))
                 .andExpect(status().isUnauthorized());
@@ -92,14 +97,21 @@ public class PropertyControllerIT extends IntegrationTest {
                         .content("""
                                 {
                                     "propertyName": "Test Mobile Park",
-                                    "propertyAddress": "999 Test Ave"
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyCity": "Testville",
+                                    "propertyState": "WA",
+                                    "propertyZip": "98000"
                                 }
                                 """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.uuid").exists())
                 .andExpect(jsonPath("$.propertyCode").exists())
                 .andExpect(jsonPath("$.propertyName").value("Test Mobile Park"))
-                .andExpect(jsonPath("$.propertyAddress").value("999 Test Ave"))
+                .andExpect(jsonPath("$.propertyStreet").value("999 Test Ave"))
+                .andExpect(jsonPath("$.propertyCity").value("Testville"))
+                .andExpect(jsonPath("$.propertyState").value("WA"))
+                .andExpect(jsonPath("$.propertyZip").value("98000"))
+                .andExpect(jsonPath("$.customFields").isEmpty())
                 .andExpect(jsonPath("$.createdAt").exists());
     }
 
@@ -113,7 +125,10 @@ public class PropertyControllerIT extends IntegrationTest {
                         .content("""
                                 {
                                     "propertyName": "",
-                                    "propertyAddress": "999 Test Ave"
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyCity": "Testville",
+                                    "propertyState": "WA",
+                                    "propertyZip": "98000"
                                 }
                                 """))
                 .andExpect(status().isBadRequest());
@@ -130,7 +145,10 @@ public class PropertyControllerIT extends IntegrationTest {
                         .content("""
                                 {
                                     "propertyName": "Test Mobile Park",
-                                    "propertyAddress": "999 Test Ave"
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyCity": "Testville",
+                                    "propertyState": "WA",
+                                    "propertyZip": "98000"
                                 }
                                 """))
                 .andExpect(status().isCreated())
@@ -178,7 +196,10 @@ public class PropertyControllerIT extends IntegrationTest {
                         .content("""
                                 {
                                     "propertyName": "Test Mobile Park",
-                                    "propertyAddress": "999 Test Ave"
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyCity": "Testville",
+                                    "propertyState": "WA",
+                                    "propertyZip": "98000"
                                 }
                                 """))
                 .andExpect(status().isCreated())
@@ -202,7 +223,10 @@ public class PropertyControllerIT extends IntegrationTest {
                         .content("""
                                 {
                                     "propertyName": "Test Mobile Park",
-                                    "propertyAddress": "999 Test Ave"
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyCity": "Testville",
+                                    "propertyState": "WA",
+                                    "propertyZip": "98000"
                                 }
                                 """))
                 .andExpect(status().isCreated())
@@ -230,7 +254,7 @@ public class PropertyControllerIT extends IntegrationTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.propertyName").value("Updated Park Name"))
-                .andExpect(jsonPath("$.propertyAddress").value("999 Test Ave"));
+                .andExpect(jsonPath("$.propertyStreet").value("999 Test Ave"));
     }
 
     @Test
@@ -259,7 +283,7 @@ public class PropertyControllerIT extends IntegrationTest {
                         .content("""
                                 {
                                     "propertyName": "Updated Park Name",
-                                    "propertyAddress": "989 Test Ave",
+                                    "propertyStreet": "989 Test Ave",
                                     "propertyZip": "94123",
                                     "propertyState" : "WA",
                                     "propertyParcel" : "11-12-0001-0014-00-1",
@@ -272,7 +296,7 @@ public class PropertyControllerIT extends IntegrationTest {
                 .andExpect(jsonPath("$.propertyState").value("WA"))
                 .andExpect(jsonPath("$.propertyParcel").value("11-12-0001-0014-00-1"))
                 .andExpect(jsonPath("$.propertyZoning").value("Residential"))
-                .andExpect(jsonPath("$.propertyAddress").value("989 Test Ave"));
+                .andExpect(jsonPath("$.propertyStreet").value("989 Test Ave"));
     }
 
     @Test
@@ -285,7 +309,10 @@ public class PropertyControllerIT extends IntegrationTest {
                         .content("""
                                 {
                                     "propertyName": "Test Mobile Park",
-                                    "propertyAddress": "999 Test Ave"
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyCity": "Testville",
+                                    "propertyState": "WA",
+                                    "propertyZip": "98000"
                                 }
                                 """))
                 .andExpect(status().isCreated())
@@ -303,5 +330,98 @@ public class PropertyControllerIT extends IntegrationTest {
         mockMvc.perform(get("/api/properties/{propertyUuid}", propertyUuid)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void createProperty_shouldReturn400_whenCityIsMissing() throws Exception {
+        String token = loginAsRoot();
+
+        mockMvc.perform(post("/api/properties/create")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                    "propertyName": "Test Mobile Park",
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyState": "WA",
+                                    "propertyZip": "98000"
+                                }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void createProperty_shouldReturn400_whenStateIsNotTwoCapitalLetters() throws Exception {
+        String token = loginAsRoot();
+
+        mockMvc.perform(post("/api/properties/create")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                    "propertyName": "Test Mobile Park",
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyCity": "Testville",
+                                    "propertyState": "Washington",
+                                    "propertyZip": "98000"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(not(containsString("{"))));
+    }
+
+    @Test
+    void createProperty_shouldReturn400_whenZipIsMalformed() throws Exception {
+        String token = loginAsRoot();
+
+        mockMvc.perform(post("/api/properties/create")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                    "propertyName": "Test Mobile Park",
+                                    "propertyStreet": "999 Test Ave",
+                                    "propertyCity": "Testville",
+                                    "propertyState": "WA",
+                                    "propertyZip": "9800"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(not(containsString("{"))));
+    }
+
+    @Test
+    void patchProperty_shouldSaveCustomFields() throws Exception {
+        String token = loginAsRoot();
+        String propertyUuid = createTestProperty();
+
+        mockMvc.perform(patch("/api/properties/{uuid}", propertyUuid)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "customFields": { "Gate code": "4412", "Water shutoff": "Behind the office" } }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customFields['Gate code']").value("4412"))
+                .andExpect(jsonPath("$.customFields['Water shutoff']").value("Behind the office"));
+
+        mockMvc.perform(get("/api/properties/{uuid}", propertyUuid)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.customFields['Gate code']").value("4412"));
+    }
+
+    @Test
+    void patchProperty_shouldReturn400_whenCustomFieldsIsNotAnObject() throws Exception {
+        String token = loginAsRoot();
+        String propertyUuid = createTestProperty();
+
+        mockMvc.perform(patch("/api/properties/{uuid}", propertyUuid)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "customFields": ["Gate code"] }
+                                """))
+                .andExpect(status().isBadRequest());
     }
 }

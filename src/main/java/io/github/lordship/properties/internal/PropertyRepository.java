@@ -2,6 +2,7 @@ package io.github.lordship.properties.internal;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -9,49 +10,59 @@ import java.util.stream.Collectors;
 @Repository
 public class PropertyRepository {
     private final JdbcClient jdbc;
+    private final ObjectMapper objectMapper;
+    private final PropertyRowMapper rowMapper;
 
-    public PropertyRepository(JdbcClient jdbc) {
+    public PropertyRepository(JdbcClient jdbc, ObjectMapper objectMapper) {
         this.jdbc = jdbc;
+        this.objectMapper = objectMapper;
+        this.rowMapper = new PropertyRowMapper(objectMapper);
     }
 
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
-            "property_code", "property_name", "property_address", "property_city",
+            "property_code", "property_name", "property_street", "property_city",
             "property_state", "property_zip","purchase_date", "property_zoning", "property_parcel",
-            "payable_to", "remittance_address", "year_built", "property_manager"
+            "payable_to", "remittance_address", "year_built", "custom_fields", "property_manager"
     );
 
-    public PropertyRow save(String propertyName, String propertyAddress, String propertyCode) {
+    public PropertyRow save(String propertyName, String propertyStreet, String propertyCity,
+                            String propertyState, String propertyZip, String propertyCode) {
         return jdbc.sql("""
                         INSERT INTO property (
-                            property_code, property_name, property_address
+                            property_code, property_name, property_street,
+                            property_city, property_state, property_zip
                         ) VALUES (
-                            :propertyCode, :propertyName, :propertyAddress
+                            :propertyCode, :propertyName, :propertyStreet,
+                            :propertyCity, :propertyState, :propertyZip
                         ) RETURNING *
                         """)
                 .param("propertyCode", propertyCode)
                 .param("propertyName", propertyName)
-                .param("propertyAddress", propertyAddress)
-                .query(PropertyRow.class)
+                .param("propertyStreet", propertyStreet)
+                .param("propertyCity", propertyCity)
+                .param("propertyState", propertyState)
+                .param("propertyZip", propertyZip)
+                .query(rowMapper)
                 .single();
     }
 
     public Optional<PropertyRow> findByCode(String propertyCode) {
         return jdbc.sql("SELECT * FROM property WHERE property_code = :propertyCode AND deleted_at IS NULL")
                 .param("propertyCode", propertyCode)
-                .query(PropertyRow.class)
+                .query(rowMapper)
                 .optional();
     }
 
     public Optional<PropertyRow> findById(UUID propertyId) {
         return jdbc.sql("SELECT * FROM property WHERE uuid = :propertyId AND deleted_at IS NULL")
                 .param("propertyId", propertyId)
-                .query(PropertyRow.class)
+                .query(rowMapper)
                 .optional();
     }
 
     public List<PropertyRow> findAll() {
         return jdbc.sql("SELECT * FROM property WHERE deleted_at IS NULL")
-                .query(PropertyRow.class)
+                .query(rowMapper)
                 .list();
     }
 
@@ -64,8 +75,11 @@ public class PropertyRepository {
             }
         }
 
+        // custom_fields is jsonb, so it is sent as JSON text and cast
         String setClauses = changes.keySet().stream()
-                .map(col -> col + " = :" + col)
+                .map(col -> col.equals("custom_fields")
+                        ? col + " = CAST(:" + col + " AS jsonb)"
+                        : col + " = :" + col)
                 .collect(Collectors.joining(", "));
 
         String sql = "UPDATE property SET " + setClauses +
@@ -73,10 +87,13 @@ public class PropertyRepository {
 
         Map<String, Object> params = new HashMap<>(changes);
         params.put("uuid", uuid);
+        if (params.containsKey("custom_fields")) {
+            params.put("custom_fields", objectMapper.writeValueAsString(params.get("custom_fields")));
+        }
 
         return jdbc.sql(sql)
                 .params(params)
-                .query(PropertyRow.class)
+                .query(rowMapper)
                 .optional();
     }
 
