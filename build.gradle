@@ -53,6 +53,12 @@ dependencies {
     implementation 'io.github.openhtmltopdf:openhtmltopdf-core:1.1.65'
     implementation 'io.github.openhtmltopdf:openhtmltopdf-pdfbox:1.1.65'
     implementation 'io.github.openhtmltopdf:openhtmltopdf-slf4j:1.1.65'
+    // inline SVG in the PDF: the lot map page
+    implementation('io.github.openhtmltopdf:openhtmltopdf-svg-support:1.1.65') {
+        exclude group: 'org.apache.xmlgraphics'
+    }
+    implementation 'org.apache.xmlgraphics:batik-transcoder:1.19'
+    implementation 'org.apache.xmlgraphics:batik-codec:1.19'
     implementation 'org.jsoup:jsoup:1.18.3'
 }
 
@@ -60,6 +66,12 @@ dependencyManagement {
     imports {
         mavenBom "org.springframework.modulith:spring-modulith-bom:${springModulithVersion}"
     }
+}
+
+// Without this, javac reads sources in the platform encoding, which on
+// Windows is not UTF-8. The map page prints a middle dot; it should stay one.
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
 }
 
 tasks.named('test') {

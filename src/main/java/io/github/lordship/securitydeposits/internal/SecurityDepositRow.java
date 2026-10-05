@@ -8,7 +8,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
-// Component order matches the column order in V10__deposits.sql.
+// Component order matches the column order in V11__deposits.sql.
 public record SecurityDepositRow(
         UUID uuid,
         UUID tenancy,

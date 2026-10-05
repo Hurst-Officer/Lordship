@@ -1,5 +1,5 @@
 -- ============================================================
--- V12: All seed data — permissions, standard terms, roles, and role grants.
+-- V13: All seed data — permissions, standard terms, roles, and role grants.
 -- ============================================================
 
 INSERT INTO terms_template (property, created_by, name, agreement_type, target_rate, car_fee, allowed_cars, cars_max, allowed_pets, pet_fee, rule_violation_fee_method, rule_violation_fee_amount, nsf_fee_method, nsf_fee_amount, security_deposit_method, security_deposit_amount)

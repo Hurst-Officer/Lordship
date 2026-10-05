@@ -1,6 +1,7 @@
 package io.github.lordship.instruments;
 
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
+import com.openhtmltopdf.svgsupport.BatikSVGDrawer;
 import org.jsoup.Jsoup;
 import org.jsoup.helper.W3CDom;
 
@@ -25,6 +26,12 @@ public final class PdfRenderer {
 
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             PdfRendererBuilder builder = new PdfRendererBuilder();
+            // Without a drawer, inline SVG is skipped and the lot map page comes
+            // out blank. Batik draws it. The no-argument drawer runs no scripts
+            // and fetches no external files, which is what every Batik advisory
+            // is about; the two-argument constructor exists to relax that, and
+            // we do not want it relaxed.
+            builder.useSVGDrawer(new BatikSVGDrawer());
             builder.withW3cDocument(document, "");
             builder.toStream(out);
             builder.run();

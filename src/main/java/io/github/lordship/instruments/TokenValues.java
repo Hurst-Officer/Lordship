@@ -57,6 +57,13 @@ public record TokenValues(
         }
 
         /** Rows are keyed by the row token names the clause writes inside its repeat block. */
+        /** Everything already resolved, so a caller can add one more value. */
+        public Builder putAll(TokenValues values) {
+            scalars.putAll(values.scalars());
+            lists.putAll(values.lists());
+            return this;
+        }
+
         public Builder putList(String token, List<Map<String, String>> rows) {
             lists.put(token, List.copyOf(rows));
             return this;
@@ -66,4 +73,4 @@ public record TokenValues(
             return new TokenValues(scalars, lists);
         }
     }
-}
+}

@@ -299,6 +299,11 @@ public enum DocumentToken {
     // sql: LANDLORD_ADDRESS is remittance_address in property
     LANDLORD_ADDRESS("landlord.address", Source.PROPERTY, Format.TEXT,
             "Where notices are served on the landlord and tenants write in"),
+    // The lot description map, drawn by LotMapDrawing and frozen with the
+    // document. RCW 59.20.060(2)(k) wants the tenant's space shown in relation
+    // to the others, which is a picture, not a sentence.
+    SITE_MAP("lot.site_map", Source.COMPUTED, Format.DRAWING,
+            "A map of the park with this lot highlighted"),
     // sql: found in global_settings
     COMPLIANCE_EMAIL("landlord.compliance_email", Source.ORGANIZATION, Format.TEXT,
             "Address for compliance correspondence");
@@ -331,7 +336,8 @@ public enum DocumentToken {
         DATE,
         LIST,           // water, sewer and trash
         ENUM,           // the only format a clause condition may test
-        REPEAT          // not printed: a clause repeats over it, once per row
+        REPEAT,         // not printed: a clause repeats over it, once per row
+        DRAWING         // not printed as text: a picture the freeze keeps beside the body
     }
 
     /**
@@ -555,4 +561,4 @@ public enum DocumentToken {
     public static Set<String> tokenNames() {
         return BY_NAME.keySet();
     }
-}
+}

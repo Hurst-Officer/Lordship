@@ -63,6 +63,9 @@ public final class TokenFormatter {
             // A repeatable list has no scalar form: {{term.rent_schedule}} on its
             // own prints nothing, and the renderer expands it as a block instead.
             case REPEAT -> null;
+            // A drawing is already markup. It passes through untouched and the
+            // freeze keeps it beside the body rather than inside it.
+            case DRAWING -> String.valueOf(value);
         };
     }
 

@@ -68,6 +68,49 @@ public final class DocumentFreeze {
      * <p>{@code keepWithNext} and {@code style} are for whatever draws the page.
      * Neither is stored: the PDF is the record of how it looked.
      */
+    /** A body with its drawing token removed, and the picture that token named. */
+    private record Drawn(String body, String drawing, List<String> unresolved) {}
+
+    /**
+     * Pulls a drawing token out of a body.
+     *
+     * <p>The body keeps its words and loses the token; the picture travels
+     * beside it. A token with no value is reported the same way a missing rent
+     * figure is, so an unplaced park stops generation instead of printing a
+     * blank page.
+     */
+    private static Drawn takeDrawing(String template, TokenValues values) {
+        String body = template;
+        String drawing = null;
+        List<String> unresolved = new ArrayList<>();
+
+        for (String name : TokenSyntax.tokenNamesIn(template)) {
+            boolean isDrawing = DocumentToken.of(name)
+                    .filter(token -> token.format() == DocumentToken.Format.DRAWING)
+                    .isPresent();
+            if (!isDrawing) {
+                continue;
+            }
+            body = body.replace("{{" + name + "}}", "").strip();
+            String value = values.scalar(name);
+            if (value == null || value.isBlank()) {
+                unresolved.add(name);
+            } else {
+                drawing = value;
+            }
+        }
+        return new Drawn(body, drawing, unresolved);
+    }
+
+    private static List<String> merge(List<String> first, List<String> second) {
+        if (second.isEmpty()) {
+            return first;
+        }
+        List<String> all = new ArrayList<>(first);
+        all.addAll(second);
+        return List.copyOf(all);
+    }
+
     public record FrozenClause(
             BigDecimal ordinal,
             String clauseKey,
@@ -82,10 +125,20 @@ public final class DocumentFreeze {
             ClauseOrigin origin,
             List<String> unresolved,
             boolean keepWithNext,
-            UUID style
+            UUID style,
+            String drawing
     ) {
         public FrozenClause {
             unresolved = List.copyOf(unresolved);
+        }
+
+        /** A clause with no picture, which is nearly all of them. */
+        public FrozenClause(BigDecimal ordinal, String clauseKey, String title, String number,
+                            String label, int depth, String body, String bodyTemplate,
+                            String statuteRef, UUID sourceClause, ClauseOrigin origin,
+                            List<String> unresolved, boolean keepWithNext, UUID style) {
+            this(ordinal, clauseKey, title, number, label, depth, body, bodyTemplate,
+                    statuteRef, sourceClause, origin, unresolved, keepWithNext, style, null);
         }
 
         /** Whether this clause is fit to print as it stands. */
@@ -276,8 +329,13 @@ public final class DocumentFreeze {
                 Placed here = placed.get(i);
                 Candidate candidate = here.candidate();
 
-                BodyRenderer.Rendered rendered = BodyRenderer.render(candidate.body(), values);
+                // A drawing token is taken out of the body first. Its value is a
+                // picture, and a picture in a body would be escaped as text.
+                Drawn drawn = takeDrawing(candidate.body(), values);
+
+                BodyRenderer.Rendered rendered = BodyRenderer.render(drawn.body(), values);
                 unresolved.addAll(rendered.unresolved());
+                unresolved.addAll(drawn.unresolved());
                 String body = substituteRefs(rendered.text(), candidate, all, labelByGroup, brokenReferences);
 
                 boolean keepWithNext = false;
@@ -303,9 +361,10 @@ public final class DocumentFreeze {
                         candidate.statuteRef(),
                         candidate.source(),
                         candidate.origin(),
-                        rendered.unresolved(),
+                        merge(rendered.unresolved(), drawn.unresolved()),
                         keepWithNext,
-                        candidate.style()));
+                        candidate.style(),
+                        drawn.drawing()));
             }
 
             DocumentSection source = section.section();
