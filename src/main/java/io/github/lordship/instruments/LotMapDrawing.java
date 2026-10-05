@@ -1,12 +1,28 @@
 package io.github.lordship.instruments;
 
+import javax.imageio.IIOImage;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.MemoryCacheImageOutputStream;
+import java.awt.AlphaComposite;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.geom.AffineTransform;
 import java.awt.geom.Path2D;
 import java.awt.geom.PathIterator;
 import java.awt.geom.Rectangle2D;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 /**
  * Draws the lot map page: one park, one lot highlighted, as SVG.
@@ -19,8 +35,15 @@ import java.util.Locale;
  * the north arrow turns with it. What still does not fit runs off the edge
  * behind a fade.
  *
- * <p>Pure. Coordinates in, SVG out. No database, no Spring, no file system, so
- * the drawing can be unit tested the way a number format is.
+ * <p>With imagery, a satellite photo sits under the drawing. The photo is
+ * turned and cut to the sheet here, then set as the background of a div
+ * around the SVG. It is not put inside the SVG: Batik would have to load it,
+ * and the PDF renderer's Batik is locked down so it loads nothing. The PDF
+ * engine draws the background itself and keeps the JPEG as a JPEG.
+ *
+ * <p>Pure. Coordinates in, markup out. No database, no Spring, no file system,
+ * so the drawing can be unit tested the way a number format is. The photo is
+ * fetched by whoever passes in the {@link Imagery}.
  *
  * <p>Nothing here reads a clause body. The only text on the page is the park
  * name, lot numbers, road names and the credit line, and every one of them is
@@ -73,6 +96,40 @@ public final class LotMapDrawing {
     private static final double METRES_PER_DEGREE_LAT = 110574;
     private static final double FEET_PER_METRE = 3.28084;
 
+    /** How sharp the photo prints. 200 dpi is about what the imagery holds. */
+    private static final int PHOTO_DPI = 200;
+
+    /** JPEG quality for the photo. Lower makes a smaller PDF and a blurrier photo. */
+    private static final float PHOTO_QUALITY = 0.82f;
+
+    /**
+     * How much white is laid over the photo, from 0 to 1. A little makes the
+     * lines and numbers easier to read and uses less ink.
+     */
+    private static final float PHOTO_WASH = 0.15f;
+
+    /** Where the satellite photo comes from. Tests pass their own. */
+    public interface Imagery {
+
+        /** No photo. The map prints on white, as it always has. */
+        Imagery NONE = (west, south, east, north, metersPerPixel) -> Optional.empty();
+
+        /**
+         * A north-up photo covering at least this box of [lng, lat], or empty
+         * when there is none.
+         *
+         * @param metersPerPixel the detail the page wants
+         */
+        Optional<Photo> photo(double west, double south, double east, double north, double metersPerPixel);
+    }
+
+    /**
+     * A north-up photo, the [lng, lat] of its edges, and the credit line its
+     * license requires.
+     */
+    public record Photo(BufferedImage image, double west, double south, double east, double north,
+                        String credit) {}
+
     /** One lot: its number and its outline as [lng, lat] pairs. */
     public record Lot(String number, double[][] ring) {}
 
@@ -110,11 +167,21 @@ public final class LotMapDrawing {
     }
 
     /**
-     * The page, as one SVG element.
+     * The page, as one SVG element, on white.
      *
      * @throws IllegalArgumentException when the tenant's lot is not in the park
      */
     public static String draw(Park park) {
+        return draw(park, Imagery.NONE);
+    }
+
+    /**
+     * The page over a satellite photo. When the imagery has no photo, this is
+     * the same as {@link #draw(Park)}: one SVG element on white.
+     *
+     * @throws IllegalArgumentException when the tenant's lot is not in the park
+     */
+    public static String draw(Park park, Imagery imagery) {
         Lot tenant = park.lots().stream()
                 .filter(lot -> lot.number().equals(park.tenantLotNumber()))
                 .findFirst()
@@ -137,6 +204,14 @@ public final class LotMapDrawing {
         }
 
         Page page = new Page(to, turn, view);
+        Optional<Photo> photo = photoFor(page, imagery);
+        boolean onPhoto = photo.isPresent();
+
+        List<String> credits = new ArrayList<>(park.credits());
+        if (onPhoto && photo.get().credit() != null && !photo.get().credit().isBlank()) {
+            credits.add(photo.get().credit());
+        }
+
         StringBuilder out = new StringBuilder(16384);
 
         // One font for the whole drawing. Without it each renderer picks its
@@ -146,30 +221,144 @@ public final class LotMapDrawing {
                 .append("width=\"").append(mm(SHEET_WIDTH_MM)).append("mm\" ")
                 .append("height=\"").append(mm(SHEET_HEIGHT_MM)).append("mm\" ")
                 .append("viewBox=\"0 0 ").append(mm(SHEET_WIDTH_MM)).append(' ')
-                .append(mm(SHEET_HEIGHT_MM)).append("\">")
-                .append("<rect x=\"0\" y=\"0\" width=\"").append(mm(SHEET_WIDTH_MM))
-                .append("\" height=\"").append(mm(SHEET_HEIGHT_MM)).append("\" fill=\"#ffffff\"/>");
+                .append(mm(SHEET_HEIGHT_MM)).append("\">");
+
+        // On a photo the SVG stays see-through so the photo shows.
+        if (!onPhoto) {
+            out.append("<rect x=\"0\" y=\"0\" width=\"").append(mm(SHEET_WIDTH_MM))
+                    .append("\" height=\"").append(mm(SHEET_HEIGHT_MM)).append("\" fill=\"#ffffff\"/>");
+        }
 
         if (cropped) {
             out.append(fadeDefs());
         }
 
-        drawWater(out, park, page);
-        drawRoads(out, park, page);
-        drawBoundary(out, park, page);
-        drawLots(out, park, tenant, page);
-        drawHome(out, park, tenant, page);
-        drawLotNumbers(out, park, tenant, page);
+        // The photo already shows the water and the roads. Drawing them over
+        // it would only hide the real thing, so only the road names are kept.
+        if (onPhoto) {
+            drawRoadNames(out, park, page, true);
+        } else {
+            drawWater(out, park, page);
+            drawRoads(out, park, page);
+        }
+        drawBoundary(out, park, page, onPhoto);
+        drawLots(out, park, tenant, page, onPhoto);
+        drawHome(out, park, tenant, page, onPhoto);
+        drawLotNumbers(out, park, tenant, page, onPhoto);
 
         if (cropped) {
             drawFade(out);
         }
         double[] arrow = arrowAt(park, page, tenant);
         drawParkName(out, park, page, arrow);
-        drawFurniture(out, park, page, turn, arrow);
+        drawFurniture(out, park, page, turn, arrow, credits, onPhoto);
 
         out.append("</svg>");
-        return out.toString();
+
+        if (!onPhoto) {
+            return out.toString();
+        }
+        return "<div class=\"lot-map-photo\" style=\"width:" + mm(SHEET_WIDTH_MM) + "mm;height:"
+                + mm(SHEET_HEIGHT_MM) + "mm;background-image:url('data:image/jpeg;base64,"
+                + photoOnSheet(photo.get(), page) + "');background-size:" + mm(SHEET_WIDTH_MM) + "mm "
+                + mm(SHEET_HEIGHT_MM) + "mm;background-repeat:no-repeat\">" + out + "</div>";
+    }
+
+    // ---- the photo -----------------------------------------------------------
+
+    /** Asks the imagery for a photo of the ground the sheet shows. */
+    private static Optional<Photo> photoFor(Page page, Imagery imagery) {
+        if (imagery == null) {
+            return Optional.empty();
+        }
+
+        // The sheet is turned, so its corners are found one by one and the
+        // photo is asked for the box around all four.
+        double[][] corners = {
+                page.lngLat(0, 0),
+                page.lngLat(SHEET_WIDTH_MM, 0),
+                page.lngLat(0, SHEET_HEIGHT_MM),
+                page.lngLat(SHEET_WIDTH_MM, SHEET_HEIGHT_MM)};
+        double west = Double.MAX_VALUE;
+        double east = -Double.MAX_VALUE;
+        double south = Double.MAX_VALUE;
+        double north = -Double.MAX_VALUE;
+        for (double[] corner : corners) {
+            west = Math.min(west, corner[0]);
+            east = Math.max(east, corner[0]);
+            south = Math.min(south, corner[1]);
+            north = Math.max(north, corner[1]);
+        }
+
+        double mmPerPixel = 25.4 / PHOTO_DPI;
+        double metersPerPixel = mmPerPixel / page.view().mmPerMetre();
+        return imagery.photo(west, south, east, north, metersPerPixel);
+    }
+
+    /**
+     * The photo turned and cut to the sheet, as base64 JPEG.
+     *
+     * <p>Latitude is treated as evenly spaced down the photo. Web imagery is
+     * not quite, but across a park the difference is a few centimeters.
+     */
+    private static String photoOnSheet(Photo photo, Page page) {
+        int wide = (int) Math.round(SHEET_WIDTH_MM / 25.4 * PHOTO_DPI);
+        int tall = (int) Math.round(SHEET_HEIGHT_MM / 25.4 * PHOTO_DPI);
+        double pixelsPerMm = wide / SHEET_WIDTH_MM;
+
+        // Where three corners of the photo land on the sheet, in sheet pixels.
+        // Three corners are enough to place a picture that is only moved,
+        // turned and scaled.
+        BufferedImage source = photo.image();
+        double topLeftX = page.x(photo.west(), photo.north()) * pixelsPerMm;
+        double topLeftY = page.y(photo.west(), photo.north()) * pixelsPerMm;
+        double topRightX = page.x(photo.east(), photo.north()) * pixelsPerMm;
+        double topRightY = page.y(photo.east(), photo.north()) * pixelsPerMm;
+        double bottomLeftX = page.x(photo.west(), photo.south()) * pixelsPerMm;
+        double bottomLeftY = page.y(photo.west(), photo.south()) * pixelsPerMm;
+
+        AffineTransform place = new AffineTransform(
+                (topRightX - topLeftX) / source.getWidth(),
+                (topRightY - topLeftY) / source.getWidth(),
+                (bottomLeftX - topLeftX) / source.getHeight(),
+                (bottomLeftY - topLeftY) / source.getHeight(),
+                topLeftX,
+                topLeftY);
+
+        BufferedImage sheet = new BufferedImage(wide, tall, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = sheet.createGraphics();
+        try {
+            g.setColor(Color.WHITE);
+            g.fillRect(0, 0, wide, tall);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.drawImage(source, place, null);
+
+            g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, PHOTO_WASH));
+            g.fillRect(0, 0, wide, tall);
+        } finally {
+            g.dispose();
+        }
+        return Base64.getEncoder().encodeToString(jpeg(sheet));
+    }
+
+    private static byte[] jpeg(BufferedImage image) {
+        ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
+        ImageWriteParam settings = writer.getDefaultWriteParam();
+        settings.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+        settings.setCompressionQuality(PHOTO_QUALITY);
+
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (MemoryCacheImageOutputStream out = new MemoryCacheImageOutputStream(bytes)) {
+            writer.setOutput(out);
+            writer.write(null, new IIOImage(image, null, null), settings);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Could not write the map photo", e);
+        } finally {
+            writer.dispose();
+        }
+        return bytes.toByteArray();
     }
 
     // ---- turning the map -----------------------------------------------------
@@ -209,6 +398,17 @@ public final class LotMapDrawing {
             return (turned(to, turn, lng, lat)[1] - view.minY()) * view.mmPerMetre();
         }
 
+        /** The other way: a point on the page, in mm, back to [lng, lat]. */
+        double[] lngLat(double xMm, double yMm) {
+            double turnedX = xMm / view.mmPerMetre() + view.minX();
+            double turnedY = yMm / view.mmPerMetre() + view.minY();
+            double cos = Math.cos(turn);
+            double sin = Math.sin(turn);
+            double x = turnedX * cos + turnedY * sin;
+            double y = -turnedX * sin + turnedY * cos;
+            return to.lngLat(x, y);
+        }
+
         String path(double[][] points, boolean close) {
             StringBuilder d = new StringBuilder(points.length * 12);
             for (int i = 0; i < points.length; i++) {
@@ -245,7 +445,7 @@ public final class LotMapDrawing {
                     .append(mm(roadWidthMm(road, page)))
                     .append("\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/>");
         }
-        drawRoadNames(out, park, page);
+        drawRoadNames(out, park, page, false);
     }
 
     private static double roadWidthMm(Line road, Page page) {
@@ -261,7 +461,7 @@ public final class LotMapDrawing {
      * Batik then looks up an empty id and throws. Nothing in this drawing
      * refers to anything else now, which is the simplest way to keep it so.
      */
-    private static void drawRoadNames(StringBuilder out, Park park, Page page) {
+    private static void drawRoadNames(StringBuilder out, Park park, Page page, boolean onPhoto) {
         List<String> done = new ArrayList<>();
         for (Line road : park.roads()) {
             if (road.name() == null || road.name().isBlank() || done.contains(road.name())) {
@@ -300,24 +500,56 @@ public final class LotMapDrawing {
             double midX = (longest[0] + longest[2]) / 2;
             double midY = (longest[1] + longest[3]) / 2;
 
-            out.append("<text x=\"").append(mm(midX)).append("\" y=\"").append(mm(midY))
-                    .append("\" transform=\"rotate(").append(mm(angle)).append(' ')
-                    .append(mm(midX)).append(' ').append(mm(midY)).append(")\"")
-                    .append(" text-anchor=\"middle\" dy=\"-0.9\" font-size=\"").append(mm(ROAD_LABEL_MM))
-                    .append("\" fill=\"#6b6b6b\">")
-                    .append(escape(road.name())).append("</text>");
+            String place = "x=\"" + mm(midX) + "\" y=\"" + mm(midY) + "\" transform=\"rotate("
+                    + mm(angle) + ' ' + mm(midX) + ' ' + mm(midY) + ")\""
+                    + " text-anchor=\"middle\" dy=\"-0.9\" font-size=\"" + mm(ROAD_LABEL_MM) + "\"";
+            if (onPhoto) {
+                drawWithHalo(out, place, "", road.name());
+            } else {
+                out.append("<text ").append(place).append(" fill=\"#6b6b6b\">")
+                        .append(escape(road.name())).append("</text>");
+            }
         }
     }
 
-    private static void drawBoundary(StringBuilder out, Park park, Page page) {
+    /**
+     * White text with a dark outline under it, so it reads on any part of a
+     * photo.
+     *
+     * <p>Drawn as two text elements, outline first. Batik does not know
+     * paint-order, so one element with a stroke would put the outline over
+     * the letters.
+     */
+    private static void drawWithHalo(StringBuilder out, String place, String weight, String text) {
+        out.append("<text ").append(place).append(weight)
+                .append(" fill=\"none\" stroke=\"#000000\" stroke-opacity=\"0.75\" stroke-width=\"0.7\"")
+                .append(" stroke-linejoin=\"round\">").append(escape(text)).append("</text>")
+                .append("<text ").append(place).append(weight)
+                .append(" fill=\"#ffffff\">").append(escape(text)).append("</text>");
+    }
+
+    private static void drawBoundary(StringBuilder out, Park park, Page page, boolean onPhoto) {
         if (park.boundary() == null) {
             return;
         }
-        out.append("<path d=\"").append(page.path(park.boundary().ring(), true))
+        String d = page.path(park.boundary().ring(), true);
+        if (onPhoto) {
+            // A dark line under the white dashes keeps them visible on grass and on gravel.
+            out.append("<path d=\"").append(d)
+                    .append("\" fill=\"none\" stroke=\"#000000\" stroke-opacity=\"0.5\" stroke-width=\"0.9\"/>")
+                    .append("<path d=\"").append(d)
+                    .append("\" fill=\"none\" stroke=\"#ffffff\" stroke-width=\"0.5\" stroke-dasharray=\"2.5 1.8\"/>");
+            return;
+        }
+        out.append("<path d=\"").append(d)
                 .append("\" fill=\"none\" stroke=\"#8a8a8a\" stroke-width=\"0.5\" stroke-dasharray=\"2.5 1.8\"/>");
     }
 
-    private static void drawLots(StringBuilder out, Park park, Lot tenant, Page page) {
+    private static void drawLots(StringBuilder out, Park park, Lot tenant, Page page, boolean onPhoto) {
+        if (onPhoto) {
+            drawLotsOnPhoto(out, park, tenant, page);
+            return;
+        }
         for (Lot lot : park.lots()) {
             boolean isTenant = lot == tenant;
             out.append("<path d=\"").append(page.path(lot.ring(), true))
@@ -325,6 +557,27 @@ public final class LotMapDrawing {
                     .append("\" stroke=\"#333\" stroke-width=\"")
                     .append(isTenant ? "0.8" : "0.25").append("\"/>");
         }
+    }
+
+    /**
+     * Lots as lines only, so the photo shows through. Thin white lines for the
+     * other lots. The tenant's lot gets a light yellow tint and a thick yellow
+     * line with a dark edge, drawn last so nothing crosses it.
+     */
+    private static void drawLotsOnPhoto(StringBuilder out, Park park, Lot tenant, Page page) {
+        for (Lot lot : park.lots()) {
+            if (lot == tenant) {
+                continue;
+            }
+            out.append("<path d=\"").append(page.path(lot.ring(), true))
+                    .append("\" fill=\"none\" stroke=\"#ffffff\" stroke-opacity=\"0.9\" stroke-width=\"0.3\"/>");
+        }
+        String d = page.path(tenant.ring(), true);
+        out.append("<path d=\"").append(d)
+                .append("\" fill=\"#ffd84d\" fill-opacity=\"0.3\" stroke=\"#000000\" stroke-width=\"1.5\"")
+                .append(" stroke-linejoin=\"round\"/>")
+                .append("<path d=\"").append(d)
+                .append("\" fill=\"none\" stroke=\"#ffd84d\" stroke-width=\"0.9\" stroke-linejoin=\"round\"/>");
     }
 
     /**
@@ -337,7 +590,7 @@ public final class LotMapDrawing {
      * <p>The fill is darker than the lot's highlight so the home stands out,
      * but light enough that the bold lot number on top stays readable.
      */
-    private static void drawHome(StringBuilder out, Park park, Lot tenant, Page page) {
+    private static void drawHome(StringBuilder out, Park park, Lot tenant, Page page, boolean onPhoto) {
         if (park.home() == null) {
             return;
         }
@@ -348,6 +601,13 @@ public final class LotMapDrawing {
         StringBuilder d = new StringBuilder();
         for (double[][] piece : pieces) {
             d.append(page.path(piece, true));
+        }
+        // On a photo the real roof is already there, so the footprint is only
+        // a light outline around it.
+        if (onPhoto) {
+            out.append("<path d=\"").append(d)
+                    .append("\" fill=\"#ffffff\" fill-opacity=\"0.2\" stroke=\"#ffffff\" stroke-width=\"0.45\"/>");
+            return;
         }
         out.append("<path d=\"").append(d)
                 .append("\" fill=\"#a8946a\" stroke=\"#3d3528\" stroke-width=\"0.45\"/>");
@@ -411,7 +671,7 @@ public final class LotMapDrawing {
      * its number keeps its outline and loses the label. The tenant's own lot
      * always keeps it, since that is the one the page is about.
      */
-    private static void drawLotNumbers(StringBuilder out, Park park, Lot tenant, Page page) {
+    private static void drawLotNumbers(StringBuilder out, Park park, Lot tenant, Page page, boolean onPhoto) {
         for (Lot lot : park.lots()) {
             boolean isTenant = lot == tenant;
             double size = labelSizeMm(lot, page, isTenant);
@@ -419,11 +679,16 @@ public final class LotMapDrawing {
                 continue;
             }
             double[] at = labelPoint(lot.ring());
-            out.append("<text x=\"").append(mm(page.x(at[0], at[1])))
-                    .append("\" y=\"").append(mm(page.y(at[0], at[1]) + size * 0.35))
-                    .append("\" text-anchor=\"middle\" font-size=\"").append(mm(size))
-                    .append("\" font-weight=\"").append(isTenant ? "bold" : "normal")
-                    .append("\" fill=\"#222\">").append(escape(lot.number())).append("</text>");
+            String place = "x=\"" + mm(page.x(at[0], at[1])) + "\" y=\""
+                    + mm(page.y(at[0], at[1]) + size * 0.35)
+                    + "\" text-anchor=\"middle\" font-size=\"" + mm(size) + "\"";
+            String weight = " font-weight=\"" + (isTenant ? "bold" : "normal") + "\"";
+            if (onPhoto) {
+                drawWithHalo(out, place, weight, lot.number());
+            } else {
+                out.append("<text ").append(place).append(weight)
+                        .append(" fill=\"#222\">").append(escape(lot.number())).append("</text>");
+            }
         }
     }
 
@@ -617,8 +882,17 @@ public final class LotMapDrawing {
     }
 
     /** Scale bar and lot caption bottom left, north arrow in a free corner. */
-    private static void drawFurniture(StringBuilder out, Park park, Page page, double turn, double[] arrow) {
+    private static void drawFurniture(StringBuilder out, Park park, Page page, double turn, double[] arrow,
+                                      List<String> credits, boolean onPhoto) {
         double bottom = SHEET_HEIGHT_MM - MARGIN_MM;
+
+        // On a photo the small print along the bottom needs a white strip
+        // behind it, or it disappears into the picture.
+        if (onPhoto) {
+            out.append("<rect x=\"0\" y=\"").append(mm(bottom - 0.5)).append("\" width=\"")
+                    .append(mm(SHEET_WIDTH_MM)).append("\" height=\"").append(mm(SHEET_HEIGHT_MM - bottom + 0.5))
+                    .append("\" fill=\"#ffffff\" opacity=\"0.85\"/>");
+        }
 
         double metres = scaleBarMetres(page.view().width());
         double barMm = metres * page.view().mmPerMetre();
@@ -649,10 +923,14 @@ public final class LotMapDrawing {
                 .append("\" text-anchor=\"middle\" font-size=\"2.4\" fill=\"#6a6a6a\">")
                 .append("Measurements are approximate.</text>");
 
-        if (!park.credits().isEmpty()) {
+        if (!credits.isEmpty()) {
+            // The photo's credit makes the line longer. A line too long for
+            // the page is printed smaller rather than cut off.
+            String line = String.join("  ·  ", credits);
+            double size = Math.min(2.1, (SHEET_WIDTH_MM - 2 * MARGIN_MM) / (line.length() * 0.52));
             out.append("<text x=\"").append(mm(SHEET_WIDTH_MM / 2)).append("\" y=\"").append(mm(bottom + 5))
-                    .append("\" text-anchor=\"middle\" font-size=\"2.1\" fill=\"#8a8a8a\">")
-                    .append(escape(String.join("  ·  ", park.credits()))).append("</text>");
+                    .append("\" text-anchor=\"middle\" font-size=\"").append(mm(size))
+                    .append("\" fill=\"#8a8a8a\">").append(escape(line)).append("</text>");
         }
 
         // North turns with the map, so the arrow is drawn at the same angle.
@@ -714,6 +992,13 @@ public final class LotMapDrawing {
 
         double y(double lng, double lat) {
             return -(lat - lat0) * METRES_PER_DEGREE_LAT;
+        }
+
+        /** The other way: meters east and south back to [lng, lat]. */
+        double[] lngLat(double x, double y) {
+            return new double[] {
+                    lng0 + x / (111320 * Math.cos(Math.toRadians(lat0))),
+                    lat0 - y / METRES_PER_DEGREE_LAT};
         }
     }
 

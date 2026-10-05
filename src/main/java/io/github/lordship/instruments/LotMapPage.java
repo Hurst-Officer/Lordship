@@ -23,6 +23,11 @@ public final class LotMapPage {
     private LotMapPage() {}
 
     public static String draw(ParkMap map, UUID tenantLotId) {
+        return draw(map, tenantLotId, LotMapDrawing.Imagery.NONE);
+    }
+
+    /** The same page, over a satellite photo when the imagery has one. */
+    public static String draw(ParkMap map, UUID tenantLotId, LotMapDrawing.Imagery imagery) {
         String tenantNumber = null;
         List<LotMapDrawing.Lot> lots = new ArrayList<>();
 
@@ -76,6 +81,6 @@ public final class LotMapPage {
                 home,
                 boundary == null ? null : new LotMapDrawing.Area(boundary),
                 map.credits(),
-                map.placedOn()));
+                map.placedOn()), imagery);
     }
 }
