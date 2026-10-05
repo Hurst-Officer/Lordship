@@ -29,6 +29,8 @@ import org.springframework.web.bind.annotation.RestController;
 import io.github.lordship.documenttemplate.DocumentTemplate;
 import io.github.lordship.documenttemplate.DocumentTemplateService;
 import io.github.lordship.instruments.LeaseDocument;
+import io.github.lordship.instruments.LeasePreview;
+import io.github.lordship.instruments.PdfRenderer;
 import org.springframework.http.MediaType;
 
 
@@ -161,13 +163,34 @@ public class InstrumentController {
     @GetMapping(value = "/{uuid}/preview.html", produces = MediaType.TEXT_HTML_VALUE)
     public ResponseEntity<String> previewHtml(@PathVariable UUID uuid) {
         return instrumentService.preview(uuid)
-                .map(preview -> LeaseDocument.render(
-                        preview,
-                        "PREVIEW",
-                        documentTemplateService.findById(preview.documentTemplate())
-                                .map(DocumentTemplate::styles).orElse(List.of())))
+                .map(this::previewPage)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    // The draft as real pages, made by the same engine as generate, so the
+    // page breaks are the ones that will print. Nothing is saved.
+    @PreAuthorize("hasAuthority('instrument:view')")
+    @GetMapping(value = "/{uuid}/preview.pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    public ResponseEntity<byte[]> previewPdf(@PathVariable UUID uuid) {
+        return instrumentService.preview(uuid)
+                .map(this::previewPage)
+                .map(PdfRenderer::toPdf)
+                .map(pdf -> ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_PDF)
+                        .header(HttpHeaders.CONTENT_DISPOSITION,
+                                ContentDisposition.inline().filename("preview.pdf").build().toString())
+                        .body(pdf))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // The preview's HTML, with PREVIEW printed where the serial goes.
+    private String previewPage(LeasePreview preview) {
+        return LeaseDocument.render(
+                preview,
+                "PREVIEW",
+                documentTemplateService.findById(preview.documentTemplate())
+                        .map(DocumentTemplate::styles).orElse(List.of()));
     }
 
     // ---- the draft -----------------------------------------------------------
