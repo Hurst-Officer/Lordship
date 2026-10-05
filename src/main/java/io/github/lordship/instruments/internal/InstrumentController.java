@@ -30,7 +30,6 @@ import io.github.lordship.documenttemplate.DocumentTemplate;
 import io.github.lordship.documenttemplate.DocumentTemplateService;
 import io.github.lordship.instruments.LeaseDocument;
 import io.github.lordship.instruments.LeasePreview;
-import io.github.lordship.instruments.PdfRenderer;
 import org.springframework.http.MediaType;
 
 
@@ -173,9 +172,7 @@ public class InstrumentController {
     @PreAuthorize("hasAuthority('instrument:view')")
     @GetMapping(value = "/{uuid}/preview.pdf", produces = MediaType.APPLICATION_PDF_VALUE)
     public ResponseEntity<byte[]> previewPdf(@PathVariable UUID uuid) {
-        return instrumentService.preview(uuid)
-                .map(this::previewPage)
-                .map(PdfRenderer::toPdf)
+        return instrumentService.previewPdf(uuid)
                 .map(pdf -> ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_PDF)
                         .header(HttpHeaders.CONTENT_DISPOSITION,

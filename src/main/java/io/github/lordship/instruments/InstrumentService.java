@@ -48,6 +48,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -87,6 +88,7 @@ public class InstrumentService {
     private final InstrumentClauseRepository clauseRepository;
     private final DocumentFileService documentFileService;
     private final SiteMapService siteMapService;
+    private final SatelliteImagery satelliteImagery;
     private final String serialPrefix;
 
     public InstrumentService(InstrumentRepository instrumentRepository,
@@ -105,6 +107,7 @@ public class InstrumentService {
                              InstrumentClauseRepository clauseRepository,
                              DocumentFileService documentFileService,
                              SiteMapService siteMapService,
+                             SatelliteImagery satelliteImagery,
                              @Value("${lordship.serial.prefix}") String serialPrefix) {
         this.instrumentRepository = instrumentRepository;
         this.additionRepository = additionRepository;
@@ -122,6 +125,7 @@ public class InstrumentService {
         this.clauseRepository = clauseRepository;
         this.documentFileService = documentFileService;
         this.siteMapService = siteMapService;
+        this.satelliteImagery = satelliteImagery;
         this.serialPrefix = serialPrefix;
     }
 
@@ -263,7 +267,7 @@ public class InstrumentService {
      *   2. Assemble it exactly as preview does, and refuse if anything is missing (400, with the list).
      *   3. Move its charge terms to PENDING, so the deal cannot change under a printed document.
      *   4. Save every section and clause as printed.
-     *   5. Stamp a serial, render the PDF and save it.
+     *   5. Stamp a serial, render the PDF with the deal written into it, and save it.
      *   6. Mark the document GENERATED.
      *
      * <p>All in one transaction. A refusal at any step changes nothing.
@@ -289,7 +293,8 @@ public class InstrumentService {
 
         String serial = Serial.generate(serialPrefix, before.agreementType(), before.type());
         String html = LeaseDocument.render(preview, serial, assembly.assignment().document().styles());
-        byte[] pdf = PdfRenderer.toPdf(html);
+        byte[] pdf = PdfRenderer.toPdf(html, InstrumentMetadata.of(
+                assembly.facts(), preview, serial, InstrumentMetadata.Status.GENERATED, OffsetDateTime.now()));
 
         DocumentFile file = documentFileService.store(
                 serial + ".pdf",
@@ -474,6 +479,24 @@ public class InstrumentService {
     }
 
     /**
+     * The preview as a PDF, with PREVIEW printed where the serial goes.
+     *
+     * <p>It carries the same metadata as a generated lease, marked PREVIEW and
+     * with no serial, so a stray preview in a folder of leases says what it is.
+     * Nothing is saved.
+     */
+    public Optional<byte[]> previewPdf(UUID instrumentUuid) {
+        return instrumentRepository.findById(instrumentUuid).map(row -> {
+            Assembly assembly = assemble(row);
+            String html = LeaseDocument.render(
+                    assembly.preview(), "PREVIEW", assembly.assignment().document().styles());
+            return PdfRenderer.toPdf(html, InstrumentMetadata.of(
+                    assembly.facts(), assembly.preview(), null,
+                    InstrumentMetadata.Status.PREVIEW, OffsetDateTime.now()));
+        });
+    }
+
+    /**
      * Gather everything the document says, choose the clauses, and render them.
      *
      * <p>The whole of generate except the saving. Both call this, so a preview
@@ -524,11 +547,15 @@ public class InstrumentService {
                 assignment.document().name(),
                 assignment.document().version(),
                 frozen);
-        return new Assembly(preview, assignment);
+        return new Assembly(preview, assignment, facts);
     }
 
-    /** What assemble produced, plus the park's document assignment that generate records. */
-    private record Assembly(LeasePreview preview, PropertyDocumentAssignment assignment) {}
+    /**
+     * What assemble produced, plus the park's document assignment that generate
+     * records and the facts the PDF's metadata is written from.
+     */
+    private record Assembly(LeasePreview preview, PropertyDocumentAssignment assignment,
+                            TokenResolver.LeaseFacts facts) {}
 
     /**
      * Draws the lot map, when this document has a page for one.
@@ -565,7 +592,7 @@ public class InstrumentService {
 
         return TokenValues.builder()
                 .putAll(values)
-                .put(DocumentToken.SITE_MAP.token(), LotMapPage.draw(map.get(), lot.uuid()))
+                .put(DocumentToken.SITE_MAP.token(), LotMapPage.draw(map.get(), lot.uuid(), satelliteImagery))
                 .build();
     }
 
