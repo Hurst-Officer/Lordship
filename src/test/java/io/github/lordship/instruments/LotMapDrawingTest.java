@@ -36,8 +36,8 @@ public class LotMapDrawingTest {
         String svg = LotMapDrawing.draw(park(6, "1"));
 
         assertTrue(svg.startsWith("<svg xmlns=\"http://www.w3.org/2000/svg\""));
-        assertTrue(svg.contains("width=\"175.9mm\""));
-        assertTrue(svg.contains("height=\"237.4mm\""));
+        assertTrue(svg.contains("width=\"170.9mm\""));
+        assertTrue(svg.contains("height=\"230.4mm\""));
     }
 
     @Test

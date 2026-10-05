@@ -34,7 +34,7 @@ import java.util.UUID;
  * list on the clause says where to look. Matching the two is a string compare
  * on the token name, which is why the clause does not repeat the wording.
  */
-public record LeasePreviewResponse(
+public record LeasePreviewResponse (
         UUID instrumentId,
         UUID documentTemplateId,
         String documentName,

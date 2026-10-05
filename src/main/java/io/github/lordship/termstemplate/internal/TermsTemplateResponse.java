@@ -70,7 +70,7 @@ public record TermsTemplateResponse(
                 terms.carFee(), terms.allowedCars(), terms.carsMax(), terms.petFee(), terms.allowedPets(),
                 terms.paymentDueDay(), terms.gracePeriodDays(),
                 terms.ruleViolationFeeMethod(), terms.ruleViolationFeeAmount(),
-                terms.nsfFeeMethod(), terms.nsfFeeAmount(),
+                terms.nsfFeeMethod(),  terms.nsfFeeAmount(),
                 terms.lateFeeMethod(), terms.lateFeeAmount(),
                 terms.waterMethod(), terms.waterFlatAmount(),
                 terms.powerMethod(), terms.powerFlatAmount(),

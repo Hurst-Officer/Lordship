@@ -1,5 +1,8 @@
 package io.github.lordship.instruments;
 
+import java.awt.geom.Path2D;
+import java.awt.geom.PathIterator;
+import java.awt.geom.Rectangle2D;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -155,14 +158,15 @@ public final class LotMapDrawing {
         drawRoads(out, park, page);
         drawBoundary(out, park, page);
         drawLots(out, park, tenant, page);
-        drawHome(out, park, page);
+        drawHome(out, park, tenant, page);
         drawLotNumbers(out, park, tenant, page);
 
         if (cropped) {
             drawFade(out);
         }
-        drawParkName(out, park);
-        drawFurniture(out, park, page, turn, tenant);
+        double[] arrow = arrowAt(park, page, tenant);
+        drawParkName(out, park, page, arrow);
+        drawFurniture(out, park, page, turn, arrow);
 
         out.append("</svg>");
         return out.toString();
@@ -323,12 +327,80 @@ public final class LotMapDrawing {
         }
     }
 
-    private static void drawHome(StringBuilder out, Park park, Page page) {
+    /**
+     * The tenant's home, cut to the edges of their lot.
+     *
+     * <p>The footprint comes from OpenStreetMap and the lot from the plat, and
+     * the two rarely line up exactly. Cutting the home to the lot keeps it from
+     * spilling onto a neighbor's lot.
+     *
+     * <p>The fill is darker than the lot's highlight so the home stands out,
+     * but light enough that the bold lot number on top stays readable.
+     */
+    private static void drawHome(StringBuilder out, Park park, Lot tenant, Page page) {
         if (park.home() == null) {
             return;
         }
-        out.append("<path d=\"").append(page.path(park.home().ring(), true))
-                .append("\" fill=\"#d8cfae\" stroke=\"#5a5244\" stroke-width=\"0.3\"/>");
+        List<double[][]> pieces = insideOf(park.home().ring(), tenant.ring());
+        if (pieces.isEmpty()) {
+            return;
+        }
+        StringBuilder d = new StringBuilder();
+        for (double[][] piece : pieces) {
+            d.append(page.path(piece, true));
+        }
+        out.append("<path d=\"").append(d)
+                .append("\" fill=\"#a8946a\" stroke=\"#3d3528\" stroke-width=\"0.45\"/>");
+    }
+
+    /**
+     * The parts of {@code ring} that fall inside {@code within}, as rings of
+     * [lng, lat]. Empty when the two do not overlap.
+     *
+     * <p>The math is done in small numbers around {@code within}'s first
+     * point, about a tenth of a metre per unit, so the cut stays exact.
+     */
+    static List<double[][]> insideOf(double[][] ring, double[][] within) {
+        double originLng = within[0][0];
+        double originLat = within[0][1];
+        double scale = 1_000_000;
+
+        java.awt.geom.Area kept = new java.awt.geom.Area(shapeOf(ring, originLng, originLat, scale));
+        kept.intersect(new java.awt.geom.Area(shapeOf(within, originLng, originLat, scale)));
+
+        List<double[][]> rings = new ArrayList<>();
+        List<double[]> current = new ArrayList<>();
+        double[] point = new double[6];
+        for (PathIterator it = kept.getPathIterator(null); !it.isDone(); it.next()) {
+            int segment = it.currentSegment(point);
+            if (segment == PathIterator.SEG_MOVETO) {
+                current = new ArrayList<>();
+            }
+            if (segment == PathIterator.SEG_MOVETO || segment == PathIterator.SEG_LINETO) {
+                current.add(new double[] {
+                        originLng + point[0] / scale,
+                        originLat + point[1] / scale});
+            }
+            if (segment == PathIterator.SEG_CLOSE && current.size() >= 3) {
+                rings.add(current.toArray(new double[0][]));
+            }
+        }
+        return rings;
+    }
+
+    private static Path2D shapeOf(double[][] ring, double originLng, double originLat, double scale) {
+        Path2D.Double shape = new Path2D.Double();
+        for (int i = 0; i < ring.length; i++) {
+            double x = (ring[i][0] - originLng) * scale;
+            double y = (ring[i][1] - originLat) * scale;
+            if (i == 0) {
+                shape.moveTo(x, y);
+            } else {
+                shape.lineTo(x, y);
+            }
+        }
+        shape.closePath();
+        return shape;
     }
 
     /**
@@ -404,21 +476,148 @@ public final class LotMapDrawing {
                 .append("\" fill=\"url(#fade-bottom)\"/>");
     }
 
-    /** The community's name, top left, on a plate so it reads over the map. */
-    private static void drawParkName(StringBuilder out, Park park) {
-        double size = 6;
-        double width = park.name().length() * size * 0.55 + 5;
-        out.append("<rect x=\"").append(mm(MARGIN_MM - 2.5)).append("\" y=\"").append(mm(MARGIN_MM - 5))
-                .append("\" width=\"").append(mm(width))
-                .append("\" height=\"8\" fill=\"#ffffff\" opacity=\"0.85\"/>")
-                .append("<text x=\"").append(mm(MARGIN_MM)).append("\" y=\"").append(mm(MARGIN_MM))
-                .append("\" font-size=\"").append(mm(size))
-                .append("\" font-weight=\"bold\" fill=\"#111\">")
-                .append(escape(park.name())).append("</text>");
+    /** Name sizes to try, largest first. */
+    private static final double[] PARK_NAME_SIZES_MM = {6, 5, 4};
+
+    /** How far apart the spots tried for the name are, in mm. */
+    private static final double PARK_NAME_STEP_MM = 2;
+
+    /**
+     * The community's name, on a white plate, outside the park.
+     *
+     * <p>The plate never goes inside the park's outline (a band wrapped tight
+     * around all the lots), so it can never cover a lot, a street inside the
+     * park, or a street name. It also keeps clear of the north arrow and the
+     * strip along the bottom (scale bar, caption, credits).
+     *
+     * <p>It looks for the highest free spot across the page, at 6, then 5,
+     * then 4 mm. If there is none, the name is left off. The lease names the
+     * park elsewhere.
+     */
+    private static void drawParkName(StringBuilder out, Park park, Page page, double[] arrow) {
+        if (park.name() == null || park.name().isBlank()) {
+            return;
+        }
+        Path2D parkOutline = parkOutlineOnPage(park, page);
+        List<Rectangle2D> keepClear = List.of(
+                arrowBox(arrow),
+                new Rectangle2D.Double(0, SHEET_HEIGHT_MM - MARGIN_MM - 12, SHEET_WIDTH_MM, MARGIN_MM + 12));
+
+        for (double size : PARK_NAME_SIZES_MM) {
+            // About 0.6em per character in bold Helvetica, plus room at each end.
+            double wide = park.name().length() * size * 0.6 + 5;
+            double tall = size + 2;
+            Rectangle2D plate = freeSpot(wide, tall, parkOutline, keepClear);
+            if (plate != null) {
+                out.append("<rect x=\"").append(mm(plate.getX())).append("\" y=\"").append(mm(plate.getY()))
+                        .append("\" width=\"").append(mm(wide)).append("\" height=\"").append(mm(tall))
+                        .append("\" fill=\"#ffffff\" opacity=\"0.85\"/>")
+                        .append("<text x=\"").append(mm(plate.getX() + 2.5))
+                        .append("\" y=\"").append(mm(plate.getY() + size + 0.2))
+                        .append("\" font-size=\"").append(mm(size))
+                        .append("\" font-weight=\"bold\" fill=\"#111\">")
+                        .append(escape(park.name())).append("</text>");
+                return;
+            }
+        }
+    }
+
+    /**
+     * The highest spot this size that stays 1 mm clear of the park outline
+     * and touches nothing in keepClear. Null when there is none.
+     */
+    private static Rectangle2D freeSpot(double wide, double tall, Path2D parkOutline,
+                                        List<Rectangle2D> keepClear) {
+        double edge = MARGIN_MM - 5;
+        for (double y = edge; y <= SHEET_HEIGHT_MM - edge - tall; y += PARK_NAME_STEP_MM) {
+            for (double x = edge; x <= SHEET_WIDTH_MM - edge - wide; x += PARK_NAME_STEP_MM) {
+                Rectangle2D plate = new Rectangle2D.Double(x, y, wide, tall);
+                Rectangle2D withRoom = new Rectangle2D.Double(x - 1, y - 1, wide + 2, tall + 2);
+                if (!parkOutline.intersects(withRoom) && !touchesAny(plate, keepClear)) {
+                    return plate;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The park's outline on the page, in mm: the tightest shape with no dents
+     * that holds every corner of every lot (a convex hull).
+     */
+    private static Path2D parkOutlineOnPage(Park park, Page page) {
+        List<double[]> corners = new ArrayList<>();
+        for (Lot lot : park.lots()) {
+            for (double[] point : lot.ring()) {
+                corners.add(new double[] {page.x(point[0], point[1]), page.y(point[0], point[1])});
+            }
+        }
+        // Left to right. The hull is built as a bottom half and a top half,
+        // dropping any corner that would make a dent.
+        corners.sort((a, b) -> a[0] != b[0] ? Double.compare(a[0], b[0]) : Double.compare(a[1], b[1]));
+        List<double[]> hull = new ArrayList<>();
+        for (int pass = 0; pass < 2; pass++) {
+            int start = hull.size();
+            for (double[] corner : corners) {
+                while (hull.size() >= start + 2
+                        && turnsRight(hull.get(hull.size() - 2), hull.get(hull.size() - 1), corner)) {
+                    hull.remove(hull.size() - 1);
+                }
+                hull.add(corner);
+            }
+            hull.remove(hull.size() - 1);
+            corners = corners.reversed();
+        }
+
+        Path2D.Double outline = new Path2D.Double();
+        for (int i = 0; i < hull.size(); i++) {
+            if (i == 0) {
+                outline.moveTo(hull.get(i)[0], hull.get(i)[1]);
+            } else {
+                outline.lineTo(hull.get(i)[0], hull.get(i)[1]);
+            }
+        }
+        outline.closePath();
+        return outline;
+    }
+
+    /** Whether going a, then b, then c bends clockwise or runs straight. */
+    private static boolean turnsRight(double[] a, double[] b, double[] c) {
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) <= 0;
+    }
+
+    private static boolean touchesAny(Rectangle2D box, List<Rectangle2D> boxes) {
+        for (Rectangle2D other : boxes) {
+            if (other.intersects(box)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Where the north arrow goes: the top left corner of its drawing.
+     *
+     * <p>The scale bar has the bottom left, so the arrow takes whichever
+     * right-hand corner has less park under it.
+     */
+    private static double[] arrowAt(Park park, Page page, Lot tenant) {
+        double bottom = SHEET_HEIGHT_MM - MARGIN_MM;
+        double x = SHEET_WIDTH_MM - MARGIN_MM - 7;
+        double y = topRightIsBusier(park, page, tenant) ? bottom - 14 : MARGIN_MM + 4;
+        if (y > MARGIN_MM + 5 && bottomRightIsBusier(park, page, tenant)) {
+            y = MARGIN_MM + 4;
+        }
+        return new double[] {x, y};
+    }
+
+    /** The square around the arrow's white circle. */
+    private static Rectangle2D arrowBox(double[] arrow) {
+        return new Rectangle2D.Double(arrow[0] + 3 - 10, arrow[1] + 6 - 10, 20, 20);
     }
 
     /** Scale bar and lot caption bottom left, north arrow in a free corner. */
-    private static void drawFurniture(StringBuilder out, Park park, Page page, double turn, Lot tenant) {
+    private static void drawFurniture(StringBuilder out, Park park, Page page, double turn, double[] arrow) {
         double bottom = SHEET_HEIGHT_MM - MARGIN_MM;
 
         double metres = scaleBarMetres(page.view().width());
@@ -457,13 +656,8 @@ public final class LotMapDrawing {
         }
 
         // North turns with the map, so the arrow is drawn at the same angle.
-        // The name has the top left and the scale bar the bottom left, so the
-        // arrow takes whichever right-hand corner has less park under it.
-        double arrowX = SHEET_WIDTH_MM - MARGIN_MM - 7;
-        double arrowY = topRightIsBusier(park, page, tenant) ? bottom - 14 : MARGIN_MM + 4;
-        if (arrowY > MARGIN_MM + 5 && bottomRightIsBusier(park, page, tenant)) {
-            arrowY = MARGIN_MM + 4;
-        }
+        double arrowX = arrow[0];
+        double arrowY = arrow[1];
         out.append("<circle cx=\"").append(mm(arrowX + 3)).append("\" cy=\"").append(mm(arrowY + 6))
                 .append("\" r=\"10\" fill=\"#ffffff\" opacity=\"0.85\"/>")
                 .append("<g stroke=\"#333\" fill=\"#333\" transform=\"translate(")
