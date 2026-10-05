@@ -124,15 +124,25 @@ public final class LeaseDocument {
      * quietly stops being the same thing the moment anything is emitted above.
      */
     private static void section(StringBuilder out, DocumentFreeze.FrozenSection section, boolean first) {
+        // A section whose whole content is a drawing gets the sheet to itself,
+        // with no heading over it. A map is obviously a map, and the page is
+        // worth more to the picture than to a title.
+        boolean mapOnly = isMapOnly(section);
+
         out.append("<section class=\"sheet")
                 .append(first ? " first" : "")
+                .append(mapOnly ? " map-sheet" : "")
                 .append(section.style() == null ? "" : " " + styleClass(section.style()))
-                .append("\">\n<h2")
-                .append(section.titleStyle() == null ? "" : " class=\"" + styleClass(section.titleStyle()) + "\"")
-                .append(">").append(escape(section.name())).append("</h2>\n");
+                .append("\">\n");
 
-        if (section.statuteRef() != null) {
-            out.append("<p class=\"statute\">").append(escape(section.statuteRef())).append("</p>\n");
+        if (!mapOnly) {
+            out.append("<h2")
+                    .append(section.titleStyle() == null ? "" : " class=\"" + styleClass(section.titleStyle()) + "\"")
+                    .append(">").append(escape(section.name())).append("</h2>\n");
+
+            if (section.statuteRef() != null) {
+                out.append("<p class=\"statute\">").append(escape(section.statuteRef())).append("</p>\n");
+            }
         }
 
         // A run of clauses joined by keepWithNext shares one box, so a page
@@ -158,6 +168,25 @@ public final class LeaseDocument {
         out.append("</section>\n");
     }
 
+    /** Whether this section is one picture and nothing else worth printing. */
+    private static boolean isMapOnly(DocumentFreeze.FrozenSection section) {
+        boolean hasDrawing = false;
+        for (DocumentFreeze.FrozenClause clause : section.clauses()) {
+            if (clause.drawing() != null) {
+                hasDrawing = true;
+            }
+            // Words anywhere in the section -- including beside the drawing --
+            // mean this is an ordinary page that happens to carry a picture.
+            if (clause.body() != null && !clause.body().isBlank()) {
+                return false;
+            }
+            if (clause.title() != null && !clause.title().isBlank()) {
+                return false;
+            }
+        }
+        return hasDrawing;
+    }
+
     /**
      * A clause, with the number the freeze gave it hanging in front.
      *
@@ -175,19 +204,35 @@ public final class LeaseDocument {
                 : "<span class=\"num\">" + escape(clause.number()) + "</span>";
         boolean titled = clause.title() != null && !clause.title().isBlank();
 
+        // A clause that is nothing but a drawing prints nothing but the drawing.
+        // An empty paragraph and a statute line under a full-page map have
+        // nowhere to sit, so they push the map onto a second sheet.
+        boolean drawingOnly = clause.drawing() != null && !titled
+                && (clause.body() == null || clause.body().isBlank());
+
         if (titled) {
             out.append("<h3>").append(number).append(escape(clause.title())).append("</h3>\n");
         }
 
-        boolean hangs = !titled && clause.number() != null;
-        // A list or a table cannot sit inside a paragraph, so a body with one is a block.
-        String tag = ClauseMarkup.hasBlocks(clause.body()) ? "div" : "p";
-        out.append('<').append(tag).append(hangs ? " class=\"body hang\">" : " class=\"body\">")
-                .append(hangs ? number : "")
-                .append(ClauseMarkup.toHtml(clause.body()))
-                .append("</").append(tag).append(">\n");
+        if (!drawingOnly) {
+            boolean hangs = !titled && clause.number() != null;
+            // A list or a table cannot sit inside a paragraph, so a body with one is a block.
+            String tag = ClauseMarkup.hasBlocks(clause.body()) ? "div" : "p";
+            out.append('<').append(tag).append(hangs ? " class=\"body hang\">" : " class=\"body\">")
+                    .append(hangs ? number : "")
+                    .append(ClauseMarkup.toHtml(clause.body()))
+                    .append("</").append(tag).append(">\n");
+        }
 
-        if (clause.statuteRef() != null) {
+        // The drawing is written out as markup rather than escaped. It is the
+        // one thing on the page this class did not get from an author: the
+        // freeze put it here, LotMapDrawing built it from coordinates, and
+        // every label inside it was escaped there.
+        if (clause.drawing() != null) {
+            out.append("<div class=\"map\">").append(clause.drawing()).append("</div>\n");
+        }
+
+        if (!drawingOnly && clause.statuteRef() != null) {
             out.append("<p class=\"statute\">").append(escape(clause.statuteRef())).append("</p>\n");
         }
 
@@ -302,6 +347,17 @@ public final class LeaseDocument {
                    signature rules. pre-wrap prints them. word-wrap keeps a very long
                    word inside the margin (the PDF engine does not know overflow-wrap). */
                 .body { margin: 0; white-space: pre-wrap; word-wrap: break-word; }
+                /* The lot description map. It is sized in millimetres, so it
+                   prints at one scale whatever the page is scaled to. */
+                .map { margin: 2mm 0 0 0; page-break-inside: avoid; }
+                .map svg { display: block; }
+                /* A map-only sheet carries the drawing and nothing else. The
+                   drawing is already cut to the size of the printable area, so
+                   all it needs here is its own margins off. It cannot reach the
+                   paper's edge: a named @page keeps the margins of the ordinary
+                   one whatever it asks for, which PdfPageRulesTest records. */
+                .sheet.map-sheet .clause { margin: 0; }
+                .sheet.map-sheet .map { margin: 0; }
                 /* A line somebody writes on. inline-block so the width holds:
                    an inline span would collapse to nothing, having no text.
                    Its width is set in em by ClauseMarkup.ruleWidth. */

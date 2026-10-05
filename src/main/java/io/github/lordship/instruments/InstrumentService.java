@@ -26,11 +26,14 @@ import io.github.lordship.persons.PersonService;
 import io.github.lordship.properties.Property;
 import io.github.lordship.properties.PropertyService;
 import io.github.lordship.shared.ClauseBodyRules;
+import io.github.lordship.shared.DocumentToken;
 import io.github.lordship.shared.DomainProblem;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.RuleConflict;
+import io.github.lordship.sitemaps.ParkMap;
+import io.github.lordship.sitemaps.SiteMapService;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
 import io.github.lordship.tenancyterms.RentHistoryYear;
@@ -83,6 +86,7 @@ public class InstrumentService {
     private final InstrumentSectionRepository sectionRepository;
     private final InstrumentClauseRepository clauseRepository;
     private final DocumentFileService documentFileService;
+    private final SiteMapService siteMapService;
     private final String serialPrefix;
 
     public InstrumentService(InstrumentRepository instrumentRepository,
@@ -100,6 +104,7 @@ public class InstrumentService {
                              InstrumentSectionRepository sectionRepository,
                              InstrumentClauseRepository clauseRepository,
                              DocumentFileService documentFileService,
+                             SiteMapService siteMapService,
                              @Value("${lordship.serial.prefix}") String serialPrefix) {
         this.instrumentRepository = instrumentRepository;
         this.additionRepository = additionRepository;
@@ -116,6 +121,7 @@ public class InstrumentService {
         this.sectionRepository = sectionRepository;
         this.clauseRepository = clauseRepository;
         this.documentFileService = documentFileService;
+        this.siteMapService = siteMapService;
         this.serialPrefix = serialPrefix;
     }
 
@@ -505,11 +511,12 @@ public class InstrumentService {
                 rentHistory(lot.uuid(), row.termStart()));
 
         List<DocumentSection> sections = assignment.document().sectionsInOrder();
+
         DocumentFreeze.Frozen frozen = DocumentFreeze.freeze(
                 sections,
                 assignment.customizations(),
                 findAdditions(row.uuid()),
-                TokenResolver.resolve(facts));
+                withSiteMap(TokenResolver.resolve(facts), sections, property, lot));
 
         LeasePreview preview = new LeasePreview(
                 row.uuid(),
@@ -522,6 +529,45 @@ public class InstrumentService {
 
     /** What assemble produced, plus the park's document assignment that generate records. */
     private record Assembly(LeasePreview preview, PropertyDocumentAssignment assignment) {}
+
+    /**
+     * Draws the lot map, when this document has a page for one.
+     *
+     * <p>Asked of the document rather than of the instrument type: a template
+     * that prints the map says so by using the token, and one that does not
+     * never touches the site map tables.
+     *
+     * <p>The drawing is made here, with everything else, so that it is frozen
+     * with the document. Lots get corrected and surroundings get re-pulled; a
+     * signed lease has to keep showing what the tenant signed.
+     *
+     * <p>A park with no map, or a lot with no shape on it, leaves the token
+     * unset. The freeze then reports it as unresolved, so a preview still comes
+     * up and says what is missing, and generate refuses. Drawing nothing is a
+     * gap in the paperwork, not a broken request.
+     */
+    private TokenValues withSiteMap(TokenValues values, List<DocumentSection> sections,
+                                    Property property, Lot lot) {
+
+        String token = "{{" + DocumentToken.SITE_MAP.token() + "}}";
+        boolean wanted = sections.stream()
+                .flatMap(section -> section.clauses().stream())
+                .anyMatch(clause -> clause.body() != null && clause.body().contains(token));
+        if (!wanted) {
+            return values;
+        }
+
+        Optional<ParkMap> map = siteMapService.findForLease(
+                property.uuid(), lot.uuid(), property.propertyName());
+        if (map.isEmpty()) {
+            return values;
+        }
+
+        return TokenValues.builder()
+                .putAll(values)
+                .put(DocumentToken.SITE_MAP.token(), LotMapPage.draw(map.get(), lot.uuid()))
+                .build();
+    }
 
     /**
      * Who signs, in the order the tenancy holds them.

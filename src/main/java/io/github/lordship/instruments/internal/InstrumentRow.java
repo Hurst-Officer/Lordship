@@ -13,7 +13,7 @@ import java.util.UUID;
 
 /**
  * One row of {@code instrument}. Component order matches the column order in
- * V9__documents_and_deals.sql.
+ * V10__documents_and_deals.sql.
  *
  * <p>No {@code deletedAt}: an instrument is never soft-deleted. Paper that
  * never went out is ABANDONED, which is a fact about the document rather than

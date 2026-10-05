@@ -94,9 +94,9 @@ public class DocumentTemplateControllerIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + token()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("WA Manufactured Home Lot Lease 2026"))
-                .andExpect(jsonPath("$.sections.length()").value(7))
+                .andExpect(jsonPath("$.sections.length()").value(8))
                 .andExpect(jsonPath("$.sections[0].sectionKey").value("CHECKLIST"))
-                .andExpect(jsonPath("$.sections[6].sectionKey").value("SEPTIC"))
+                .andExpect(jsonPath("$.sections[7].sectionKey").value("SEPTIC"))
                 .andExpect(jsonPath("$.conditionWorklist.length()").value(11)); // changes if we add elements
     }
 
