@@ -75,7 +75,7 @@ public class LotControllerIT extends IntegrationTest {
                 // Assert: only what was supplied (plus DB defaults) comes back -- everything
                 // else is left for a follow-up PATCH, per the create-minimal design.
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.propertyId").value(propertyId.toString()))
                 .andExpect(jsonPath("$.lotNumber").value("12"))
                 .andExpect(jsonPath("$.isRentable").value(true))
@@ -101,11 +101,11 @@ public class LotControllerIT extends IntegrationTest {
 
         // Act
         mockMvc.perform(get("/api/lots")
-                        .param("property", "L002")
+                        .param("propertyCode", "L002")
                         .header("Authorization", "Bearer " + token))
                 // Assert
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].uuid").exists())
+                .andExpect(jsonPath("$[0].id").exists())
                 .andExpect(jsonPath("$[0].propertyId").value(propertyId.toString()))
                 .andExpect(jsonPath("$[0].lotNumber").value("7"));
     }

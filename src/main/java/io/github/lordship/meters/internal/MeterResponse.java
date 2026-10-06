@@ -10,7 +10,7 @@ import java.util.UUID;
 
 @JsonFormat
 public record MeterResponse(
-        UUID uuid,
+        UUID id,
         UUID meterId,
         String title,
         String description,

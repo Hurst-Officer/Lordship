@@ -1,6 +1,5 @@
 package io.github.lordship.vehicles.internal;
 
-import io.github.lordship.vehicles.Vehicle;
 import io.github.lordship.vehicles.VehicleService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -24,35 +23,36 @@ public class VehicleController {
 
     @PreAuthorize("hasAuthority('vehicles:create')")
     @PostMapping("/create")
-    public ResponseEntity<VehicleCreationResult> createVehicle(
+    public ResponseEntity<VehicleCreationResponse> createVehicle(
             @Valid @RequestBody VehicleCreateRequest request) {
-        VehicleCreationResult result = vehicleService.registerVehicle(request.tenancyUuid(), request.plateNumber());
-        return ResponseEntity.status(HttpStatus.CREATED).body(result);
+        VehicleCreationResult result = vehicleService.registerVehicle(request.tenancyId(), request.plateNumber());
+        return ResponseEntity.status(HttpStatus.CREATED).body(VehicleCreationResponse.from(result));
     }
 
     @PreAuthorize("hasAuthority('vehicles:view')")
     @GetMapping("/{uuid}")
-    public ResponseEntity<Vehicle> getVehicle(@PathVariable UUID uuid) {
+    public ResponseEntity<VehicleResponse> getVehicle(@PathVariable UUID uuid) {
         return vehicleService.findById(uuid)
+                .map(VehicleResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @PreAuthorize("hasAuthority('vehicles:view')")
     @GetMapping("/bytenancy/{tenancyUuid}")
-    public ResponseEntity<List<Vehicle>> getVehiclesByTenancy(@PathVariable UUID tenancyUuid) {
-        return ResponseEntity.ok(vehicleService.findByTenancy(tenancyUuid));
+    public ResponseEntity<List<VehicleResponse>> getVehiclesByTenancy(@PathVariable UUID tenancyUuid) {
+        return ResponseEntity.ok(vehicleService.findByTenancy(tenancyUuid).stream().map(VehicleResponse::from).toList());
     }
 
     @PreAuthorize("hasAuthority('vehicles:view')")
     @GetMapping("/byproperty/{propertyUuid}")
-    public ResponseEntity<List<Vehicle>> getVehiclesByProperty(@PathVariable UUID propertyUuid) {
-        return ResponseEntity.ok(vehicleService.findByProperty(propertyUuid));
+    public ResponseEntity<List<VehicleResponse>> getVehiclesByProperty(@PathVariable UUID propertyUuid) {
+        return ResponseEntity.ok(vehicleService.findByProperty(propertyUuid).stream().map(VehicleResponse::from).toList());
     }
 
     @PreAuthorize("hasAuthority('vehicles:edit')")
     @PatchMapping("/{uuid}")
-    public ResponseEntity<Vehicle> patchVehicle(
+    public ResponseEntity<VehicleResponse> patchVehicle(
             @PathVariable UUID uuid,
             @RequestBody Map<String, Object> request) {
 
@@ -66,6 +66,7 @@ public class VehicleController {
         if (request.containsKey("notes"))       changes.put("notes", request.get("notes"));
 
         return vehicleService.patchVehicle(uuid, changes)
+                .map(VehicleResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

@@ -24,30 +24,31 @@ public class PropertyController {
 
     @PreAuthorize("hasAuthority('properties:create')")
     @PostMapping("/create")
-    ResponseEntity<Property> createProperty(@Valid @RequestBody PropertyCreateRequest request) {
+    ResponseEntity<PropertyResponse> createProperty(@Valid @RequestBody PropertyCreateRequest request) {
         Property property = propertyService.createProperty(
                 request.propertyName(), request.propertyStreet(), request.propertyCity(),
                 request.propertyState(), request.propertyZip());
-        return new ResponseEntity<>(property, HttpStatus.CREATED);
+        return new ResponseEntity<>(PropertyResponse.from(property), HttpStatus.CREATED);
     }
 
     @PreAuthorize("hasAuthority('properties:view')")
     @GetMapping("/{propertyUuid}")
-    ResponseEntity<Property> getProperty(@PathVariable UUID propertyUuid) {
+    ResponseEntity<PropertyResponse> getProperty(@PathVariable UUID propertyUuid) {
         return propertyService.findByPropertyId(propertyUuid)
+                .map(PropertyResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @PreAuthorize("hasAuthority('properties:view')")
     @GetMapping("/getAll")
-    public ResponseEntity<List<Property>> getAllProperties() {
-        return ResponseEntity.ok(propertyService.findAll());
+    public ResponseEntity<List<PropertyResponse>> getAllProperties() {
+        return ResponseEntity.ok(propertyService.findAll().stream().map(PropertyResponse::from).toList());
     }
 
     @PreAuthorize("hasAuthority('properties:edit')")
     @PatchMapping("/{uuid}")
-    public ResponseEntity<Property> patchProperty(
+    public ResponseEntity<PropertyResponse> patchProperty(
             @PathVariable UUID uuid,
             @RequestBody Map<String, Object> request) {
 
@@ -64,7 +65,6 @@ public class PropertyController {
         if (request.containsKey("remittanceAddress"))  changes.put("remittance_address", request.get("remittanceAddress"));
         if (request.containsKey("yearBuilt"))       changes.put("year_built", request.get("yearBuilt"));
         if (request.containsKey("propertyParcel"))  changes.put("property_parcel", request.get("propertyParcel"));
-        if (request.containsKey("propertyManager")) changes.put("property_manager", request.get("propertyManager"));
         if (request.containsKey("customFields"))    changes.put("custom_fields", request.get("customFields"));
 
 
@@ -82,7 +82,23 @@ public class PropertyController {
             }
         }
 
+        // The column is a UUID, so the text from the JSON body must be parsed first.
+        // Null or blank clears the property manager.
+        if (request.containsKey("propertyManagerId")) {
+            Object rawManager = request.get("propertyManagerId");
+            if (rawManager instanceof String managerStr && !managerStr.isBlank()) {
+                try {
+                    changes.put("property_manager", UUID.fromString(managerStr));
+                } catch (IllegalArgumentException e) {
+                    return ResponseEntity.badRequest().build();
+                }
+            } else {
+                changes.put("property_manager", null);
+            }
+        }
+
         return propertyService.patchProperty(uuid, changes)
+                .map(PropertyResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

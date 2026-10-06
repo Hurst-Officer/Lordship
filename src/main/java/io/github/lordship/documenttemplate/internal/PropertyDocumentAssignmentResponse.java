@@ -22,7 +22,7 @@ import java.util.UUID;
  * section.
  */
 public record PropertyDocumentAssignmentResponse(
-        UUID uuid,
+        UUID id,
         UUID propertyId,
         AgreementType agreementType,
         InstrumentType instrumentType,

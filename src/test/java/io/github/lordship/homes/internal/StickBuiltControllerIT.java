@@ -49,7 +49,7 @@ public class StickBuiltControllerIT extends IntegrationTest {
                                 """.formatted(lotId)))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(objectMapper.readTree(body).get("uuid").asString());
+        return UUID.fromString(objectMapper.readTree(body).get("id").asString());
     }
 
     // ── the auth boundary ────────────────────────────────────────────────────────
@@ -73,7 +73,7 @@ public class StickBuiltControllerIT extends IntegrationTest {
 
         // 403, not 401 -- the token is fine, the authority is missing
         mockMvc.perform(get("/api/stick-builts")
-                        .param("lot", lotId.toString())
+                        .param("lotId", lotId.toString())
                         .header("Authorization", "Bearer " + agent.token()))
                 .andExpect(status().isForbidden());
     }
@@ -104,7 +104,7 @@ public class StickBuiltControllerIT extends IntegrationTest {
                 mockMvc, objectMapper, rootToken, "homes:view");
 
         mockMvc.perform(get("/api/stick-builts")
-                        .param("lot", lotId.toString())
+                        .param("lotId", lotId.toString())
                         .header("Authorization", "Bearer " + agent.token()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1));
@@ -124,7 +124,7 @@ public class StickBuiltControllerIT extends IntegrationTest {
                                 { "lotId": "%s" }
                                 """.formatted(lotId)))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.lotId").value(lotId.toString()))
                 .andExpect(jsonPath("$.name").value("Building on lot 4B"))
                 .andExpect(jsonPath("$.areaUnits").value("SQFT"))
@@ -377,7 +377,7 @@ public class StickBuiltControllerIT extends IntegrationTest {
         createStickBuilt(token, testData.insertLot(propertyId, "2").uuid());
 
         mockMvc.perform(get("/api/stick-builts")
-                        .param("property", "SC15")
+                        .param("propertyCode", "SC15")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2));
@@ -394,8 +394,8 @@ public class StickBuiltControllerIT extends IntegrationTest {
     @Test
     void listStickBuilts_shouldReturn400_whenBothFiltersGiven() throws Exception {
         mockMvc.perform(get("/api/stick-builts")
-                        .param("property", "SC16")
-                        .param("lot", UUID.randomUUID().toString())
+                        .param("propertyCode", "SC16")
+                        .param("lotId", UUID.randomUUID().toString())
                         .header("Authorization", "Bearer " + rootToken()))
                 .andExpect(status().isBadRequest());
     }
@@ -405,7 +405,7 @@ public class StickBuiltControllerIT extends IntegrationTest {
         String token = rootToken();
 
         mockMvc.perform(get("/api/stick-builts")
-                        .param("lot", lotOn("SC17", "1").toString())
+                        .param("lotId", lotOn("SC17", "1").toString())
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));

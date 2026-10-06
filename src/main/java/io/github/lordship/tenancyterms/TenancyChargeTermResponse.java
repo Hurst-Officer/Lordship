@@ -16,8 +16,8 @@ import java.util.UUID;
 // deletedAt is left out on purpose. A soft-deleted term is never fetched, and
 // returning the domain record directly would also put isSoftDeleted() on the wire.
 public record TenancyChargeTermResponse(
-        UUID uuid,
-        UUID tenancy,
+        UUID id,
+        UUID tenancyId,
         LocalDate validAt,
 
         AgreementType agreementType,
@@ -61,8 +61,8 @@ public record TenancyChargeTermResponse(
         boolean editable,
 
         TenancyTermSource source,
-        UUID sourceUuid,
-        UUID termsTemplate,
+        UUID sourceId,
+        UUID termsTemplateId,
         String correctionReason,
 
         OffsetDateTime cancelledAt,

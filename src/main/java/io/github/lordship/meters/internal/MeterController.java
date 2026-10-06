@@ -140,7 +140,7 @@ public class MeterController {
             @RequestBody @Valid MeterRelationCreateRequest request) {
         try {
             MeterRelation relationship = meterService.linkMeters(
-                    request.parentMeter(), request.childMeter(), request.hasUnmeteredRemainder(), request.effectiveFrom());
+                    request.parentMeterId(), request.childMeterId(), request.hasUnmeteredRemainder(), request.effectiveFrom());
             return ResponseEntity.status(HttpStatus.CREATED).body(MeterRelationResponse.from(relationship));
         } catch (EntityNotFoundException e) {
             return ResponseEntity.notFound().build();

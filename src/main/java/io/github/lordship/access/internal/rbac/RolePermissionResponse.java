@@ -4,7 +4,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 public record RolePermissionResponse(
-        UUID uuid,
+        UUID id,
         UUID roleId,
         UUID permissionId,
         Instant createdAt,

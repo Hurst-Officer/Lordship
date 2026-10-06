@@ -9,7 +9,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record HomeResponse(
-        UUID uuid,
+        UUID id,
         String name,
         UUID lotId,
         BigDecimal estimatedValue,

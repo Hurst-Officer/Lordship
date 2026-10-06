@@ -7,10 +7,10 @@ import java.util.UUID;
 
 public record MeterRelationCloseRequest(
         @NotNull
-        UUID parentMeter,
+        UUID parentMeterId,
 
         @NotNull
-        UUID childMeter,
+        UUID childMeterId,
 
         @NotNull
         Boolean hasUnmeteredRemainder,

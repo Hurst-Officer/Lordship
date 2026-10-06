@@ -4,7 +4,7 @@ import io.github.lordship.access.Role;
 
 import java.util.UUID;
 
-public record RoleCreationResponse(UUID uuid,
+public record RoleCreationResponse(UUID id,
                                    String roleName,
                                    String roleDescription) {
 

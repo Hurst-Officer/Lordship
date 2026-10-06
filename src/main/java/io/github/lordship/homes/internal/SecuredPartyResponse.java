@@ -7,7 +7,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record SecuredPartyResponse(
-        UUID uuid,
+        UUID id,
         UUID mobileHomeId,
         UUID personId,
         LocalDate startDate,

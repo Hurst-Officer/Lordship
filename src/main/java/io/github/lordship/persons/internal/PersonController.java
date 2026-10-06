@@ -77,7 +77,7 @@ public class PersonController {
         if (request.containsKey("personalEmail")) changes.put("personal_email", request.get("personalEmail"));
         if (request.containsKey("personalPhone")) changes.put("personal_phone", request.get("personalPhone"));
         if (request.containsKey("mailingAddress")) changes.put("mailing_address", request.get("mailingAddress"));
-        if (request.containsKey("emergencyContact")) changes.put("emergency_contact", request.get("emergencyContact"));
+        if (request.containsKey("emergencyContactId")) changes.put("emergency_contact", request.get("emergencyContactId"));
         if (request.containsKey("social")) changes.put("social", request.get("social"));
 
         boolean canViewSsn = authentication.getAuthorities().stream()

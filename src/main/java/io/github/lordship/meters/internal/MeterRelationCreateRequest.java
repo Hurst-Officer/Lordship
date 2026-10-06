@@ -10,10 +10,10 @@ import java.util.UUID;
 
 public record MeterRelationCreateRequest(
         @NotNull
-        UUID parentMeter,
+        UUID parentMeterId,
 
         @NotNull
-        UUID childMeter,
+        UUID childMeterId,
 
         @NotNull
         Boolean hasUnmeteredRemainder,

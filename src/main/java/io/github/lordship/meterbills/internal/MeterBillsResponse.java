@@ -8,8 +8,8 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 public record MeterBillsResponse(
-        UUID uuid,
-        UUID billedMeter,
+        UUID id,
+        UUID billedMeterId,
         BigDecimal billedAmount,
         BigDecimal rateAmount,
         MeterMeasurement rateUnit,

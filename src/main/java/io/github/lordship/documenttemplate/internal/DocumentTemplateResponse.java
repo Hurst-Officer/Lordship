@@ -22,7 +22,7 @@ import java.util.UUID;
  * and a detail row can never disagree about a field.
  */
 public record DocumentTemplateResponse(
-        UUID uuid,
+        UUID id,
         String name,
         AgreementType agreementType,
         InstrumentType instrumentType,
@@ -35,7 +35,7 @@ public record DocumentTemplateResponse(
 ) {
 
     /** With a target it restyles that part of every page; without one a clause or section picks it. */
-    public record StyleResponse(UUID uuid, String name, String css, StyleTarget target, String note) {
+    public record StyleResponse(UUID id, String name, String css, StyleTarget target, String note) {
         public static StyleResponse from(DocumentStyle style) {
             return new StyleResponse(style.uuid(), style.name(), style.css(), style.target(), style.note());
         }
@@ -43,7 +43,7 @@ public record DocumentTemplateResponse(
 
     /** One sub-document within the packet: signed on its own, listed on its own. */
     public record SectionResponse(
-            UUID uuid,
+            UUID id,
             BigDecimal ordinal,
             String name,
             String sectionKey,
@@ -94,7 +94,7 @@ public record DocumentTemplateResponse(
      * what lets it surface on clauses that were seeded rather than authored.
      */
     public record ClauseResponse(
-            UUID uuid,
+            UUID id,
             BigDecimal ordinal,
             String clauseKey,
             String title,
@@ -111,7 +111,7 @@ public record DocumentTemplateResponse(
             boolean numbered,
             UUID requiresNextId,
             UUID styleId,
-            List<UUID> refs
+            List<UUID> refIds
     ) {
         public static ClauseResponse from(TemplateClause clause) {
             return new ClauseResponse(
@@ -165,4 +165,4 @@ public record DocumentTemplateResponse(
                 List.of(),
                 List.of());
     }
-}
+}

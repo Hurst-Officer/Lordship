@@ -9,7 +9,7 @@ import java.util.UUID;
 
 public record VehicleCreateRequest (
         @NotNull
-        UUID tenancyUuid,
+        UUID tenancyId,
 
         @NotBlank
         String plateNumber

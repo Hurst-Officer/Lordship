@@ -104,7 +104,7 @@ public class PropertyControllerIT extends IntegrationTest {
                                 }
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.propertyCode").exists())
                 .andExpect(jsonPath("$.propertyName").value("Test Mobile Park"))
                 .andExpect(jsonPath("$.propertyStreet").value("999 Test Ave"))
@@ -155,13 +155,13 @@ public class PropertyControllerIT extends IntegrationTest {
                 .andReturn();
 
         String propertyUuid = JsonPath.read(
-                createResult.getResponse().getContentAsString(), "$.uuid");
+                createResult.getResponse().getContentAsString(), "$.id");
 
         // Fetch by code
         mockMvc.perform(get("/api/properties/{propertyUuid}", propertyUuid)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(propertyUuid))
+                .andExpect(jsonPath("$.id").value(propertyUuid))
                 .andExpect(jsonPath("$.propertyName").value("Test Mobile Park"));
     }
 
@@ -206,12 +206,12 @@ public class PropertyControllerIT extends IntegrationTest {
                 .andReturn();
 
         String propertyUuid = JsonPath.read(
-                createResult.getResponse().getContentAsString(), "$.uuid");
+                createResult.getResponse().getContentAsString(), "$.id");
 
         mockMvc.perform(get("/api/properties/" + propertyUuid)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(propertyUuid));
+                .andExpect(jsonPath("$.id").value(propertyUuid));
     }
 
     private String createTestProperty() throws Exception {
@@ -233,7 +233,7 @@ public class PropertyControllerIT extends IntegrationTest {
                 .andReturn();
 
         return JsonPath.read(
-                createResult.getResponse().getContentAsString(), "$.uuid");
+                createResult.getResponse().getContentAsString(), "$.id");
     }
 
     @Test
@@ -319,7 +319,7 @@ public class PropertyControllerIT extends IntegrationTest {
                 .andReturn();
 
         String propertyUuid = JsonPath.read(
-                createResult.getResponse().getContentAsString(), "$.uuid");
+                createResult.getResponse().getContentAsString(), "$.id");
 
         // Delete
         mockMvc.perform(delete("/api/properties/{propertyUuid}", propertyUuid)

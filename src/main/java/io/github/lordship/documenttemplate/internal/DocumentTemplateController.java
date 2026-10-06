@@ -281,7 +281,7 @@ public class DocumentTemplateController {
     // document assigned nowhere; chargeTerm reads a real deal.
     public record PreviewRequest(
             Map<String, String> methodValues,
-            UUID chargeTerm) { }
+            UUID chargeTermId) { }
 
     /**
      * The document as it would come out for one configuration -- which clauses
@@ -296,12 +296,13 @@ public class DocumentTemplateController {
      */
     @PreAuthorize("hasAuthority('document_template:view')")
     @PostMapping("/{uuid}/preview")
-    public ResponseEntity<DocumentTemplate.Preview> preview(
+    public ResponseEntity<TemplatePreviewResponse> preview(
             @PathVariable UUID uuid,
             @RequestBody(required = false) PreviewRequest request) {
 
-        if (request != null && request.chargeTerm() != null) {
-            return documentTemplateService.previewForChargeTerm(uuid, request.chargeTerm())
+        if (request != null && request.chargeTermId() != null) {
+            return documentTemplateService.previewForChargeTerm(uuid, request.chargeTermId())
+                    .map(TemplatePreviewResponse::from)
                     .map(ResponseEntity::ok)
                     .orElse(ResponseEntity.notFound().build());
         }
@@ -311,6 +312,7 @@ public class DocumentTemplateController {
                 : request.methodValues();
 
         return documentTemplateService.preview(uuid, methodValues)
+                .map(TemplatePreviewResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

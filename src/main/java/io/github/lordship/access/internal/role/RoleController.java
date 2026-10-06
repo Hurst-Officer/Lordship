@@ -48,8 +48,8 @@ public class RoleController {
 
     @PreAuthorize("hasAuthority('agent_roles:view')")
     @GetMapping("/{uuid}")
-    public ResponseEntity<Role> getRole(@PathVariable UUID uuid) {
-        return roleService.findById(uuid).map(role -> ResponseEntity.ok().body(role))
+    public ResponseEntity<RoleCreationResponse> getRole(@PathVariable UUID uuid) {
+        return roleService.findById(uuid).map(role -> ResponseEntity.ok().body(RoleCreationResponse.from(role)))
                 .orElse(ResponseEntity.notFound().build());
     }
 
@@ -64,13 +64,14 @@ public class RoleController {
 
     @PreAuthorize("hasAuthority('agent_roles:edit')")
     @PatchMapping("/{uuid}")
-    public ResponseEntity<Role> patchRole(@PathVariable UUID uuid, @RequestBody Map<String, Object> request) {
+    public ResponseEntity<RoleCreationResponse> patchRole(@PathVariable UUID uuid, @RequestBody Map<String, Object> request) {
         Map<String, Object> changes = new HashMap<>();
 
         if (request.containsKey("roleName")) changes.put("role_name", request.get("roleName"));
         if (request.containsKey("roleDescription")) changes.put("role_description", request.get("roleDescription"));
 
         return roleService.patchRole(uuid, changes)
+                .map(RoleCreationResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

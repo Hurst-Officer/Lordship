@@ -60,7 +60,7 @@ public class DocumentTemplateControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
     }
 
     private UUID createSection(UUID templateId, String name) throws Exception {
@@ -72,7 +72,7 @@ public class DocumentTemplateControllerIT extends IntegrationTest {
                 .andReturn();
 
         return UUID.fromString(
-                JsonPath.read(result.getResponse().getContentAsString(), "$.sections[0].uuid"));
+                JsonPath.read(result.getResponse().getContentAsString(), "$.sections[0].id"));
     }
 
     private UUID createClause(UUID sectionId) throws Exception {
@@ -83,7 +83,7 @@ public class DocumentTemplateControllerIT extends IntegrationTest {
                 .andReturn();
 
         return UUID.fromString(
-                JsonPath.read(result.getResponse().getContentAsString(), "$.sections[0].clauses[0].uuid"));
+                JsonPath.read(result.getResponse().getContentAsString(), "$.sections[0].clauses[0].id"));
     }
 
     // ---- the seeded packet ---------------------------------------------------

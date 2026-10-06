@@ -8,7 +8,7 @@ import java.util.UUID;
 
 /** A clause typed onto one agreement. */
 public record InstrumentAdditionResponse(
-        UUID uuid,
+        UUID id,
         UUID instrumentId,
         UUID sectionId,
         BigDecimal ordinal,

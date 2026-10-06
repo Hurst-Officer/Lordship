@@ -7,7 +7,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 public record AccountResponse(
-        UUID uuid,
+        UUID id,
         UUID tenancyId,
         String accountStatus,
         BigDecimal balanceCached,

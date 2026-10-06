@@ -5,8 +5,8 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record MeterReadResponse(
-        UUID uuid,
-        UUID targetedMeter,
+        UUID id,
+        UUID targetedMeterId,
         Integer meterAmount,
         OffsetDateTime readAt,
         Boolean isEstimated,

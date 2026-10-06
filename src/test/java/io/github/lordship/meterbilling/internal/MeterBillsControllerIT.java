@@ -66,7 +66,7 @@ public class MeterBillsControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
     }
 
     private UUID createSecondMeter(String token, UUID lotId, boolean isMaster) throws Exception {
@@ -92,7 +92,7 @@ public class MeterBillsControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
     }
 
     private void recordRead(String token, UUID meterUuid, int amount, OffsetDateTime readAt) throws Exception {
@@ -144,7 +144,7 @@ public class MeterBillsControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
     }
 
 
@@ -176,7 +176,7 @@ public class MeterBillsControllerIT extends IntegrationTest {
     void createMeterBill_shouldReturn401_whenNoTokenProvided() throws Exception {
         String body = """
                 {
-                    "billedMeter": "%s", "billedAmount": 500, "rateAmount": 0.0148,
+                    "billedMeterId": "%s", "billedAmount": 500, "rateAmount": 0.0148,
                     "rateUnit": "GAL", "periodStart": "2026-01-01", "periodEnd": "2026-02-01"
                 }
                 """.formatted(UUID.randomUUID());

@@ -53,8 +53,8 @@ public class HomeController {
     @PreAuthorize("hasAuthority('homes:view')")
     @GetMapping
     public ResponseEntity<List<HomeResponse>> listHomes(
-            @RequestParam(value = "property", required = false) String propertyCode,
-            @RequestParam(value = "lot", required = false) UUID lotId,
+            @RequestParam(value = "propertyCode", required = false) String propertyCode,
+            @RequestParam(value = "lotId", required = false) UUID lotId,
             @RequestParam(value = "vin", required = false) String vin) {
 
         if (Stream.of(propertyCode, lotId, vin).filter(Objects::nonNull).count() != 1) {

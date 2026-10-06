@@ -59,7 +59,7 @@ public class TermsTemplateControllerIT extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(org.hamcrest.Matchers.greaterThanOrEqualTo(3)))
                 .andExpect(jsonPath("$[0].agreementType").exists())
-                .andExpect(jsonPath("$[0].property").doesNotExist());
+                .andExpect(jsonPath("$[0].propertyId").doesNotExist());
     }
 
     @Test
@@ -79,7 +79,7 @@ public class TermsTemplateControllerIT extends IntegrationTest {
                         """))
                 // Assert
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.name").value("IT Land Terms"))
                 .andReturn();
 
@@ -182,7 +182,7 @@ public class TermsTemplateControllerIT extends IntegrationTest {
         MvcResult copied = copyToProperty(token, templateId, source.uuid())
                 .andExpect(status().isCreated())
                 .andReturn();
-        UUID propertyLevelId = UUID.fromString(JsonPath.read(copied.getResponse().getContentAsString(), "$.uuid"));
+        UUID propertyLevelId = UUID.fromString(JsonPath.read(copied.getResponse().getContentAsString(), "$.id"));
 
         // Act -- only a global template may be copied in
         copyToProperty(token, propertyLevelId, target.uuid())
@@ -212,7 +212,7 @@ public class TermsTemplateControllerIT extends IntegrationTest {
         MvcResult copied = copyToProperty(token, templateId, property.uuid())
                 .andExpect(status().isCreated())
                 .andReturn();
-        UUID copyId = UUID.fromString(JsonPath.read(copied.getResponse().getContentAsString(), "$.uuid"));
+        UUID copyId = UUID.fromString(JsonPath.read(copied.getResponse().getContentAsString(), "$.id"));
 
         // Act -- set a real rent on the property's copy
         patchTemplate(token, copyId, """
@@ -241,7 +241,7 @@ public class TermsTemplateControllerIT extends IntegrationTest {
 
         // Act
         mockMvc.perform(get("/api/terms-templates")
-                        .param("property", mine.uuid().toString())
+                        .param("propertyId", mine.uuid().toString())
                         .header("Authorization", "Bearer " + token))
                 // Assert
                 .andExpect(status().isOk())
@@ -401,7 +401,7 @@ public class TermsTemplateControllerIT extends IntegrationTest {
                         """, name, agreementType)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
     }
 
     private org.springframework.test.web.servlet.ResultActions copyToProperty(
@@ -424,7 +424,7 @@ public class TermsTemplateControllerIT extends IntegrationTest {
 
     /** Read the response's uuid, then load the real row -- the DTO may not expose every field. */
     private TermsTemplate fetch(MvcResult result) throws Exception {
-        UUID uuid = UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        UUID uuid = UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
         return termsTemplateService.findById(uuid).orElseThrow();
     }
 }

@@ -9,9 +9,9 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record SecurityDepositResponse(
-        UUID uuid,
-        UUID tenancy,
-        UUID instrument,
+        UUID id,
+        UUID tenancyId,
+        UUID instrumentId,
         SecurityDepositSource source,
         BigDecimal amount,
         LocalDate collectedOn,

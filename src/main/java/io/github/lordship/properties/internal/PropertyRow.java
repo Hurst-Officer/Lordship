@@ -23,6 +23,7 @@ public record PropertyRow(
         String remittanceAddress,
         Integer yearBuilt,
         Map<String, Object> customFields,
+        UUID propertyManager,
         OffsetDateTime createdAt,
         OffsetDateTime deletedAt
 ) {
@@ -43,6 +44,7 @@ public record PropertyRow(
                 this.remittanceAddress,
                 this.yearBuilt,
                 this.customFields,
+                this.propertyManager,
                 this.createdAt,
                 this.deletedAt
         );
@@ -67,6 +69,7 @@ public record PropertyRow(
                 null,
                 Map.of(),
                 null,
+                null,
                 null
         );
     }
@@ -90,6 +93,7 @@ public record PropertyRow(
                 remittanceAddress,
                 yearBuilt,
                 Map.of(),
+                null,
                 null,
                 null
         );

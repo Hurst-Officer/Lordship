@@ -49,7 +49,7 @@ public class HomeControllerIT extends IntegrationTest {
                                 """.formatted(lotId)))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(objectMapper.readTree(body).get("uuid").asString());
+        return UUID.fromString(objectMapper.readTree(body).get("id").asString());
     }
 
     // ── the auth boundary ────────────────────────────────────────────────────────
@@ -75,7 +75,7 @@ public class HomeControllerIT extends IntegrationTest {
         // Act & Assert: 403, not 401 -- the token is fine, the authority is missing.
         // This is the half of the rule an unauthenticated call can never exercise.
         mockMvc.perform(get("/api/homes")
-                        .param("lot", lotId.toString())
+                        .param("lotId", lotId.toString())
                         .header("Authorization", "Bearer " + agent.token()))
                 .andExpect(status().isForbidden());
     }
@@ -92,7 +92,7 @@ public class HomeControllerIT extends IntegrationTest {
 
         // Act & Assert
         mockMvc.perform(get("/api/homes")
-                        .param("lot", lotId.toString())
+                        .param("lotId", lotId.toString())
                         .header("Authorization", "Bearer " + agent.token()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1));
@@ -134,7 +134,7 @@ public class HomeControllerIT extends IntegrationTest {
                 // Assert: DB defaults plus the generated label, and nothing else --
                 // the rest waits for a PATCH.
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.lotId").value(lotId.toString()))
                 .andExpect(jsonPath("$.name").value("Mobile home on lot 4B"))
                 .andExpect(jsonPath("$.dimensionsUnits").value("FT"))
@@ -323,7 +323,7 @@ public class HomeControllerIT extends IntegrationTest {
         createHome(token, testData.insertLot(propertyId, "2").uuid());
 
         mockMvc.perform(get("/api/homes")
-                        .param("property", "HC11")
+                        .param("propertyCode", "HC11")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2));
@@ -347,7 +347,7 @@ public class HomeControllerIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].uuid").value(homeId.toString()));
+                .andExpect(jsonPath("$[0].id").value(homeId.toString()));
     }
 
     @Test
@@ -361,7 +361,7 @@ public class HomeControllerIT extends IntegrationTest {
     @Test
     void listHomes_shouldReturn400_whenTwoFiltersGiven() throws Exception {
         mockMvc.perform(get("/api/homes")
-                        .param("property", "HC13")
+                        .param("propertyCode", "HC13")
                         .param("vin", "anything")
                         .header("Authorization", "Bearer " + rootToken()))
                 .andExpect(status().isBadRequest());
@@ -370,7 +370,7 @@ public class HomeControllerIT extends IntegrationTest {
     @Test
     void listHomes_shouldReturn200_andEmpty_forAnUnknownProperty() throws Exception {
         mockMvc.perform(get("/api/homes")
-                        .param("property", "NOPE")
+                        .param("propertyCode", "NOPE")
                         .header("Authorization", "Bearer " + rootToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
@@ -397,7 +397,7 @@ public class HomeControllerIT extends IntegrationTest {
                 .andExpect(status().isNotFound());
 
         mockMvc.perform(get("/api/homes")
-                        .param("lot", lotId.toString())
+                        .param("lotId", lotId.toString())
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));

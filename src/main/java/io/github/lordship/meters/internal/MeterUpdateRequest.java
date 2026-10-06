@@ -7,7 +7,7 @@ import java.util.UUID;
 
 public record MeterUpdateRequest(
         @NotNull
-        UUID uuid,
+        UUID id,
         UUID meterId,
         String title,
         String description,

@@ -69,12 +69,12 @@ public class TermsTemplateController {
     @PreAuthorize("hasAuthority('terms_template:view')")
     @GetMapping
     public ResponseEntity<List<TermsTemplateResponse>> listByProperty(
-            @RequestParam("property") UUID property,
+            @RequestParam("propertyId") UUID propertyId,
             @RequestParam(value = "agreementType", required = false) AgreementType agreementType) {
 
         List<TermsTemplate> found = (agreementType == null)
-                ? termsTemplateService.findByProperty(property)
-                : termsTemplateService.findForProperty(property, agreementType).stream().toList();
+                ? termsTemplateService.findByProperty(propertyId)
+                : termsTemplateService.findForProperty(propertyId, agreementType).stream().toList();
 
         return ResponseEntity.ok(found.stream().map(TermsTemplateResponse::from).toList());
     }

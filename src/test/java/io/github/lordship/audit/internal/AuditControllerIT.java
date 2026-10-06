@@ -60,10 +60,10 @@ public class AuditControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.workEmail").value("JimmyJohn@lordship.com"))
                 .andExpect(jsonPath("$.nameFull").value("Jimmy John"))
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andReturn();
 
-        String jimmyUuid = JsonPath.read(result1.getResponse().getContentAsString(), "$.uuid");
+        String jimmyUuid = JsonPath.read(result1.getResponse().getContentAsString(), "$.id");
         assertFalse(jimmyUuid.isEmpty());
         String grantRoleForJimmy = String.format("""
                 {
@@ -77,7 +77,7 @@ public class AuditControllerIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + rootAuthToken)
                         .content(grantRoleForJimmy))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.agentId").exists())
                 .andExpect(jsonPath("$.roleId").exists())
                 .andExpect(jsonPath("$.grantedBy").exists());
@@ -95,11 +95,11 @@ public class AuditControllerIT extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.workEmail").value("JimmyJohn@lordship.com"))
                 .andExpect(jsonPath("$.nameFull").value("Jimmy John"))
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.token").exists())
                 .andReturn();
 
-        String jimmyUUID = JsonPath.read(result3.getResponse().getContentAsString(), "$.uuid");
+        String jimmyUUID = JsonPath.read(result3.getResponse().getContentAsString(), "$.id");
         String jimmyToken = JsonPath.read(result3.getResponse().getContentAsString(), "$.token");
         assertFalse(jimmyToken.isEmpty());
 
@@ -113,11 +113,11 @@ public class AuditControllerIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + jimmyToken)
                         .contentType(MediaType.APPLICATION_JSON)
                 .content(jimmyCreatePerson))
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.nameFull").value("Linda Belcher"))
                 .andReturn();
 
-        UUID lindaPersonId = UUID.fromString(JsonPath.read(result4.getResponse().getContentAsString(), "$.uuid"));
+        UUID lindaPersonId = UUID.fromString(JsonPath.read(result4.getResponse().getContentAsString(), "$.id"));
 
         String jimmyPatchesLinda1 =
                 """
@@ -151,7 +151,7 @@ public class AuditControllerIT extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jimmyPatchesLinda1))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(lindaPersonId.toString()))
+                .andExpect(jsonPath("$.id").value(lindaPersonId.toString()))
                 .andExpect(jsonPath("$.birthday").value("1990-05-12"))
                 .andReturn();
 
@@ -160,7 +160,7 @@ public class AuditControllerIT extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jimmyPatchesLinda2))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(lindaPersonId.toString()))
+                .andExpect(jsonPath("$.id").value(lindaPersonId.toString()))
                 .andExpect(jsonPath("$.social").value("***-**-6371"))
                 .andReturn();
 
@@ -169,7 +169,7 @@ public class AuditControllerIT extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jimmyPatchesLinda3))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(lindaPersonId.toString()))
+                .andExpect(jsonPath("$.id").value(lindaPersonId.toString()))
                 .andExpect(jsonPath("$.personalEmail").value("lindaisAwesome@yahoo.com"))
                 .andExpect(jsonPath("$.personalPhone").value("360-211-4510"))
                 .andReturn();
@@ -179,7 +179,7 @@ public class AuditControllerIT extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(jimmyPatchesLinda4))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(lindaPersonId.toString()))
+                .andExpect(jsonPath("$.id").value(lindaPersonId.toString()))
                 .andExpect(jsonPath("$.personalPhone").value(nullValue()))
                 .andReturn();
 

@@ -1,6 +1,5 @@
 package io.github.lordship.securitydeposits.internal;
 
-import io.github.lordship.securitydeposits.HeldDeposit;
 import io.github.lordship.securitydeposits.SecurityDepositService;
 import io.github.lordship.securitydeposits.SecurityDepositSource;
 import jakarta.validation.Valid;
@@ -28,9 +27,9 @@ import java.util.UUID;
 @RequestMapping("/api/security-deposits")
 public class SecurityDepositController {
 
-    // JSON field -> column. tenancy and source are set once at creation.
+    // JSON field -> column. tenancyId and source are set once at creation.
     private static final Map<String, String> PATCHABLE_COLUMNS = Map.ofEntries(
-            Map.entry("instrument", "instrument"),
+            Map.entry("instrumentId", "instrument"),
             Map.entry("amount", "amount"),
             Map.entry("collectedOn", "collected_on"),
             Map.entry("settledOn", "settled_on"),
@@ -47,14 +46,14 @@ public class SecurityDepositController {
     // money is arriving now, through this form, so the date is never unknown.
     // The column stays nullable for the migration path, where it often is.
     public record CreateDepositRequest(
-            @NotNull UUID tenancy,
+            @NotNull UUID tenancyId,
             @NotNull @Positive BigDecimal amount,
             @NotNull SecurityDepositSource source,
             @NotNull LocalDate collectedOn) { }
 
     // No source: this endpoint IS the source.
     public record CreateMigratedDepositRequest(
-            @NotNull UUID tenancy,
+            @NotNull UUID tenancyId,
             @NotNull @Positive BigDecimal amount,
             LocalDate collectedOn) { }
 
@@ -71,10 +70,10 @@ public class SecurityDepositController {
     @PreAuthorize("hasAuthority('security_deposit:view')")
     @GetMapping
     public ResponseEntity<List<SecurityDepositResponse>> listByTenancy(
-            @RequestParam("tenancy") UUID tenancy) {
+            @RequestParam("tenancyId") UUID tenancyId) {
 
         return ResponseEntity.ok(
-                securityDepositService.findByTenancy(tenancy).stream()
+                securityDepositService.findByTenancy(tenancyId).stream()
                         .map(SecurityDepositResponse::from)
                         .toList());
     }
@@ -82,8 +81,9 @@ public class SecurityDepositController {
     /** What the park is still holding. The rent roll figures. */
     @PreAuthorize("hasAuthority('security_deposit:view')")
     @GetMapping("/held")
-    public ResponseEntity<List<HeldDeposit>> listHeld(@RequestParam("property") UUID propertyId) {
-        return ResponseEntity.ok(securityDepositService.findHeldByProperty(propertyId));
+    public ResponseEntity<List<HeldDepositResponse>> listHeld(@RequestParam("propertyId") UUID propertyId) {
+        return ResponseEntity.ok(securityDepositService.findHeldByProperty(propertyId)
+                .stream().map(HeldDepositResponse::from).toList());
     }
 
     /**
@@ -93,8 +93,9 @@ public class SecurityDepositController {
      */
     @PreAuthorize("hasAuthority('security_deposit:view')")
     @GetMapping("/aging")
-    public ResponseEntity<List<HeldDeposit>> listAging(@RequestParam("property") UUID propertyId) {
-        return ResponseEntity.ok(securityDepositService.findAgingByProperty(propertyId));
+    public ResponseEntity<List<HeldDepositResponse>> listAging(@RequestParam("propertyId") UUID propertyId) {
+        return ResponseEntity.ok(securityDepositService.findAgingByProperty(propertyId)
+                .stream().map(HeldDepositResponse::from).toList());
     }
 
     @PreAuthorize("hasAuthority('security_deposit:create')")
@@ -103,7 +104,7 @@ public class SecurityDepositController {
             @Valid @RequestBody CreateDepositRequest request) {
 
         return securityDepositService
-                .create(request.tenancy(), request.amount(), request.collectedOn(), request.source())
+                .create(request.tenancyId(), request.amount(), request.collectedOn(), request.source())
                 .map(SecurityDepositResponse::from)
                 .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
                 .orElse(ResponseEntity.notFound().build());
@@ -116,7 +117,7 @@ public class SecurityDepositController {
     public ResponseEntity<SecurityDepositResponse> createMigratedDeposit(
             @Valid @RequestBody CreateMigratedDepositRequest request) {
 
-        return securityDepositService.createMigrated(request.tenancy(), request.amount(), request.collectedOn())
+        return securityDepositService.createMigrated(request.tenancyId(), request.amount(), request.collectedOn())
                 .map(SecurityDepositResponse::from)
                 .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
                 .orElse(ResponseEntity.notFound().build());

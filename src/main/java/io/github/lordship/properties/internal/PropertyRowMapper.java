@@ -36,6 +36,7 @@ public class PropertyRowMapper implements RowMapper<PropertyRow> {
                 rs.getString("remittance_address"),
                 (Integer) rs.getObject("year_built"),
                 readCustomFields(rs.getString("custom_fields")),
+                (UUID) rs.getObject("property_manager"),
                 rs.getObject("created_at", OffsetDateTime.class),
                 rs.getObject("deleted_at", OffsetDateTime.class)
         );

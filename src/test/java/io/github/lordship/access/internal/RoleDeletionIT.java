@@ -77,7 +77,7 @@ public class RoleDeletionIT extends IntegrationTest {
 
         UUID agentId = UUID.fromString(objectMapper
                 .readTree(registered.getResponse().getContentAsString())
-                .get("uuid").asString());
+                .get("id").asString());
 
         String roleName = "Role Delete Role " + suffix;
 
@@ -95,7 +95,7 @@ public class RoleDeletionIT extends IntegrationTest {
 
         UUID roleId = UUID.fromString(objectMapper
                 .readTree(role.getResponse().getContentAsString())
-                .get("uuid").asString());
+                .get("id").asString());
 
         mockMvc.perform(post("/api/role-permissions/append")
                         .header("Authorization", "Bearer " + rootToken)

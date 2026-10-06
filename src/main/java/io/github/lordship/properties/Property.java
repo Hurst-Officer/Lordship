@@ -20,6 +20,7 @@ public record Property(
         String remittanceAddress,
         Integer yearBuilt,
         Map<String, Object> customFields,
+        UUID propertyManager,
         OffsetDateTime createdAt,
         OffsetDateTime deletedAt
 ) {}

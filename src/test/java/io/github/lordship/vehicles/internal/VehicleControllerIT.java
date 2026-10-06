@@ -49,7 +49,7 @@ public class VehicleControllerIT extends IntegrationTest {
 
     private Map<String, Object> buildVehicleRequest(UUID tenancyUuid) {
         return Map.of(
-                "tenancyUuid",   tenancyUuid.toString(),
+                "tenancyId",   tenancyUuid.toString(),
                 "plateNumber",   Integer.toString(random.nextInt(999999))
         );
     }
@@ -134,7 +134,7 @@ public class VehicleControllerIT extends IntegrationTest {
                                 buildVehicleRequest(tenancyUuid))))
         // Assert
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.vehicle.uuid").exists())
+                .andExpect(jsonPath("$.vehicle.id").exists())
                 .andExpect(jsonPath("$.vehicle.plateNumber").exists())
                 .andExpect(jsonPath("$.plateConflictFlagged").value(false));
     }
@@ -156,14 +156,14 @@ public class VehicleControllerIT extends IntegrationTest {
                 .getContentAsString();
 
         String vehicleUuid = objectMapper.readTree(registerBody)
-                .get("vehicle").get("uuid").asString();
+                .get("vehicle").get("id").asString();
 
         // Act
         mockMvc.perform(get("/api/vehicles/" + vehicleUuid)
                         .header("Authorization", "Bearer " + token))
         // Assert
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(vehicleUuid));
+                .andExpect(jsonPath("$.id").value(vehicleUuid));
     }
 
     @Test
@@ -222,7 +222,7 @@ public class VehicleControllerIT extends IntegrationTest {
                 .getContentAsString();
 
         String vehicleUuid = objectMapper.readTree(registerBody)
-                .get("vehicle").get("uuid").asString();
+                .get("vehicle").get("id").asString();
 
         mockMvc.perform(patch("/api/vehicles/" + vehicleUuid)
                         .header("Authorization", "Bearer " + token)
@@ -248,7 +248,7 @@ public class VehicleControllerIT extends IntegrationTest {
                 .getContentAsString();
 
         String vehicleUuid = objectMapper.readTree(registerBody)
-                .get("vehicle").get("uuid").asString();
+                .get("vehicle").get("id").asString();
 
         // Delete
         mockMvc.perform(delete("/api/vehicles/" + vehicleUuid)
@@ -275,12 +275,12 @@ public class VehicleControllerIT extends IntegrationTest {
 
         // Use a fixed plate for both so the conflict is detectable
         Map<String, Object> tenancy1 = Map.of(
-                "tenancyUuid",  tenancyUuid1.toString(),
+                "tenancyId",  tenancyUuid1.toString(),
                 "plateNumber",  "999999"
         );
 
         Map<String, Object> tenancy2 = Map.of(
-                "tenancyUuid",  tenancyUuid2.toString(),
+                "tenancyId",  tenancyUuid2.toString(),
                 "plateNumber",  "999999"
         );
 

@@ -86,7 +86,7 @@ public class MeterControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
     }
 
     private UUID createChildMeter(String token, UUID lotId) throws Exception {
@@ -101,7 +101,7 @@ public class MeterControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
     }
 
 
@@ -258,7 +258,7 @@ public class MeterControllerIT extends IntegrationTest {
         UUID childUuid = createTestMeter(token, lotId2);
 
         String body = String.format("""
-            { "parentMeter": "%s", "childMeter": "%s", "hasUnmeteredRemainder": false, "effectiveFrom": "%s" }
+            { "parentMeterId": "%s", "childMeterId": "%s", "hasUnmeteredRemainder": false, "effectiveFrom": "%s" }
             """, parentUuid, childUuid, LocalDate.now());
 
         mockMvc.perform(post("/meters/relationships")
@@ -278,7 +278,7 @@ public class MeterControllerIT extends IntegrationTest {
         UUID child = createChildMeter(token, lotId2);
 
         String body = String.format("""
-            { "parentMeter": "%s", "childMeter": "%s", "hasUnmeteredRemainder": false, "effectiveFrom": "%s" }
+            { "parentMeterId": "%s", "childMeterId": "%s", "hasUnmeteredRemainder": false, "effectiveFrom": "%s" }
             """, notMaster, child, LocalDate.now());
 
         mockMvc.perform(post("/meters/relationships")
@@ -298,7 +298,7 @@ public class MeterControllerIT extends IntegrationTest {
         UUID childUuid = createTestMeter(token, lotId2);
 
         String linkBody = String.format("""
-            { "parentMeter": "%s", "childMeter": "%s", "hasUnmeteredRemainder": false, "effectiveFrom": "%s" }
+            { "parentMeterId": "%s", "childMeterId": "%s", "hasUnmeteredRemainder": false, "effectiveFrom": "%s" }
             """, parentUuid, childUuid, LocalDate.now());
         mockMvc.perform(post("/meters/relationships")
                         .header("Authorization", "Bearer " + token)

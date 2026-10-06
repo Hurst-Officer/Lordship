@@ -1,6 +1,5 @@
 package io.github.lordship.meterbills.internal;
 
-import io.github.lordship.meterbills.ChargeCalculation;
 import io.github.lordship.meterbills.MeterBills;
 import io.github.lordship.meterbills.MeterBillsService;
 import jakarta.persistence.EntityNotFoundException;
@@ -84,12 +83,13 @@ public class MeterBillsController {
     // Uses meter relation and reads to determine a charge
     @PreAuthorize("hasAuthority('meterbills:view')")
     @GetMapping("/{lotMeterId}/charge")
-    public ResponseEntity<ChargeCalculation> calculateCharge(
+    public ResponseEntity<ChargeCalculationResponse> calculateCharge(
             @PathVariable UUID lotMeterId,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodStart,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd) {
         try {
-            return ResponseEntity.ok(meterBillsService.calculateCharge(lotMeterId, periodStart, periodEnd));
+            return ResponseEntity.ok(ChargeCalculationResponse.from(
+                    meterBillsService.calculateCharge(lotMeterId, periodStart, periodEnd)));
         } catch (EntityNotFoundException e) {
             return ResponseEntity.notFound().build();
         } catch (IllegalStateException e) {
