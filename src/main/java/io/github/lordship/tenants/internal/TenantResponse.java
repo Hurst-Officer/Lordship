@@ -6,7 +6,7 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 public record TenantResponse(
-        UUID uuid,
+        UUID id,
         UUID tenancyId,
         UUID personId,
         LocalDate startDate,

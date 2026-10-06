@@ -130,7 +130,7 @@ public class InterestedPartyIT extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(body(tenancyId, person("Bank of Springfield"), "2026-10-01")))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.tenancyId").value(tenancyId.toString()))
                 .andExpect(jsonPath("$.startDate").value("2026-10-01"))
                 .andExpect(jsonPath("$.endDate").doesNotExist());

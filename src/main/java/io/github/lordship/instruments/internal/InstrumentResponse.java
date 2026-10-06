@@ -15,18 +15,17 @@ import java.util.UUID;
  * One document, as a screen needs it.
  *
  * <p>{@code lastCoveredDay} is computed rather than stored: a lease that runs
- * 60 months from November 1 2026 ends October 31 2031, and the table holds the
- * start and the count. Sending it saves every caller from doing that arithmetic,
- * and doing it wrong gives the tenant a free day.
+ * 60 months from November 1 2026 ends October 31 2031
+ * Sending the date saves every caller from redoing that arithmetic
  */
 public record InstrumentResponse(
-        UUID uuid,
+        UUID id,
         UUID tenancyId,
         InstrumentType type,
         AgreementType agreementType,
         InstrumentStatus status,
         String serial,
-        UUID amends,
+        UUID amendsId,
 
         LocalDate termStart,
         Integer termMonths,

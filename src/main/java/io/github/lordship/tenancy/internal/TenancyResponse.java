@@ -6,7 +6,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record TenancyResponse(
-        UUID uuid,
+        UUID id,
         UUID lotId,
         LocalDate startDate,
         LocalDate endDate,

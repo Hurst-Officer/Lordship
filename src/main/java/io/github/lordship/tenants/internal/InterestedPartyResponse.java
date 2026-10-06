@@ -7,7 +7,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record InterestedPartyResponse (
-        UUID uuid,
+        UUID id,
         UUID tenancyId,
         UUID personId,
         String notificationReason,

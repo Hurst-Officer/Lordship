@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.UUID;
 
 public record LotResponse(
-        UUID uuid,
+        UUID id,
         UUID propertyId,
         String lotNumber,
         String lotAddress,

@@ -8,7 +8,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record TransactionResponse(
-        UUID uuid,
+        UUID id,
         UUID accountId,
         String type,
         BigDecimal amount,

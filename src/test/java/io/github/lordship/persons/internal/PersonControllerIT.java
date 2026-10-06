@@ -63,7 +63,7 @@ public class PersonControllerIT extends IntegrationTest {
                 .content(requestBody))
         // Assert
             .andExpect(status().isCreated())
-            .andExpect(jsonPath("$.uuid").exists())
+            .andExpect(jsonPath("$.id").exists())
             .andExpect(jsonPath("$.nameFull").value("Linda Belcher"));
     }
 
@@ -98,7 +98,7 @@ public class PersonControllerIT extends IntegrationTest {
             .andExpect(status().isCreated())
             .andReturn();
 
-        String personUuid = JsonPath.read(createResult.getResponse().getContentAsString(), "$.uuid");
+        String personUuid = JsonPath.read(createResult.getResponse().getContentAsString(), "$.id");
 
         // set ssn
         mockMvc.perform(patch("/api/persons/{uuid}", personUuid)
@@ -124,7 +124,7 @@ public class PersonControllerIT extends IntegrationTest {
                 .andReturn();
 
         // get Tony's id and grant him property manager permissions
-        String newAgentUuid = JsonPath.read(registerResult.getResponse().getContentAsString(), "$.uuid");
+        String newAgentUuid = JsonPath.read(registerResult.getResponse().getContentAsString(), "$.id");
         mockMvc.perform(post("/api/granted-roles/grant")
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -163,7 +163,7 @@ public class PersonControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        String personUuid = JsonPath.read(mvcResult.getResponse().getContentAsString(), "$.uuid");
+        String personUuid = JsonPath.read(mvcResult.getResponse().getContentAsString(), "$.id");
 
         mockMvc.perform(patch("/api/persons/{uuid}", personUuid)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -198,7 +198,7 @@ public class PersonControllerIT extends IntegrationTest {
                 .header("Authorization", "Bearer " + rootToken))
         // Assert
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.uuid").value(rootPersonUuid.toString()));
+            .andExpect(jsonPath("$.id").value(rootPersonUuid.toString()));
     }
 
     @Test
@@ -216,7 +216,7 @@ public class PersonControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        String personUuid = JsonPath.read(mvcResult.getResponse().getContentAsString(), "$.uuid");
+        String personUuid = JsonPath.read(mvcResult.getResponse().getContentAsString(), "$.id");
 
         // Act
         mockMvc.perform(delete("/api/persons/{uuid}", personUuid)

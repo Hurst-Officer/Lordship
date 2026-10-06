@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
 import static io.github.lordship.shared.SensitiveDataMasker.defaultMask;
 
 public record AuditLogResponse(
-        UUID uuid,
+        UUID id,
         UUID correlationId,
         UUID userId,
         UserType userType,

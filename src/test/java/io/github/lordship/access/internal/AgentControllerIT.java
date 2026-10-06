@@ -87,7 +87,7 @@ public class AgentControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.workEmail").value(testAgentEmail))
                 .andExpect(jsonPath("$.nameFull").value(testAgentName))
-                .andExpect(jsonPath("$.uuid").exists());
+                .andExpect(jsonPath("$.id").exists());
 
         // --- Step 4: ensure the new user can log in
         AgentLoginRequest newAgentLoginRequest = new AgentLoginRequest(testAgentEmail, testAgentPass);
@@ -100,7 +100,7 @@ public class AgentControllerIT extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.workEmail").value(testAgentEmail))
                 .andExpect(jsonPath("$.nameFull").value(testAgentName))
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.token").exists())
                 .andReturn();
 
@@ -166,6 +166,6 @@ public class AgentControllerIT extends IntegrationTest {
                     .header("Authorization", "Bearer " + rootUserToken))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.roleName").value(testRoleName))
-                .andExpect(jsonPath("$.uuid").exists());
+                .andExpect(jsonPath("$.id").exists());
     }
 }

@@ -184,7 +184,7 @@ public class InstrumentDraftIT extends IntegrationTest {
         // Assert
         chargeTermsOf(lease)
                 .andExpect(jsonPath("$", hasSize(2)))
-                .andExpect(jsonPath("$[*].sourceUuid", everyItem(is(lease.toString()))))
+                .andExpect(jsonPath("$[*].sourceId", everyItem(is(lease.toString()))))
                 .andExpect(jsonPath("$[*].source", everyItem(is("LEASE"))))
                 .andExpect(jsonPath("$[*].status", everyItem(is("PROPOSED"))));
     }
@@ -204,7 +204,7 @@ public class InstrumentDraftIT extends IntegrationTest {
     void writeSchedule_shouldReplaceTheSteps_andKeepTheFeesAlreadySet() throws Exception {
         // Arrange -- one step, the pet fee set to 60, then the schedule is rebuilt
         UUID lease = leaseDraftWithDates();
-        UUID firstTerm = uuidAt(writeOneStep(lease, "2026-11-01", "650.00").andReturn(), "$[0].uuid");
+        UUID firstTerm = uuidAt(writeOneStep(lease, "2026-11-01", "650.00").andReturn(), "$[0].id");
         patchTerm(firstTerm, """
                 { "petFee": 60.00 }
                 """);
@@ -247,7 +247,7 @@ public class InstrumentDraftIT extends IntegrationTest {
     void patchChargeTerm_shouldCopyAFeeChangeToEveryStep_butNotTheRent() throws Exception {
         // Arrange
         UUID lease = leaseDraftWithDates();
-        UUID firstTerm = uuidAt(writeTwoSteps(lease).andReturn(), "$[0].uuid");
+        UUID firstTerm = uuidAt(writeTwoSteps(lease).andReturn(), "$[0].id");
 
         // Act
         patchTerm(firstTerm, """
@@ -353,7 +353,7 @@ public class InstrumentDraftIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        mockMvc.perform(post("/api/terms-templates/{uuid}/copy", uuidAt(global, "$.uuid"))
+        mockMvc.perform(post("/api/terms-templates/{uuid}/copy", uuidAt(global, "$.id"))
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -380,7 +380,7 @@ public class InstrumentDraftIT extends IntegrationTest {
     }
 
     private UUID idOf(ResultActions created) throws Exception {
-        return uuidAt(created.andExpect(status().isCreated()).andReturn(), "$.uuid");
+        return uuidAt(created.andExpect(status().isCreated()).andReturn(), "$.id");
     }
 
     private static UUID uuidAt(MvcResult result, String path) throws Exception {

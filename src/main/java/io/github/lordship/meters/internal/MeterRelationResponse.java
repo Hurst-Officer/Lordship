@@ -6,9 +6,9 @@ import java.time.LocalDate;
 import java.util.UUID;
 
 public record MeterRelationResponse(
-        UUID uuid,
-        UUID parentMeter,
-        UUID childMeter,
+        UUID id,
+        UUID parentMeterId,
+        UUID childMeterId,
         Boolean hasUnmeteredRemainder,
         LocalDate effectiveFrom,
         LocalDate effectiveTo

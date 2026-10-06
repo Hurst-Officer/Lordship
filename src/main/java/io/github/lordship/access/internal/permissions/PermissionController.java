@@ -15,7 +15,7 @@ import java.util.UUID;
 public class PermissionController {
 
     public record PermissionResponse(
-            UUID uuid,
+            UUID id,
             String permissionName
     ) { }
 

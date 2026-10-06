@@ -39,7 +39,7 @@ public final class TestAuthSupport {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.workEmail").value(rootEmail))
                 .andExpect(jsonPath("$.nameFull").value("Root Admin"))
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.token").exists())
                 .andReturn();
 
@@ -55,7 +55,7 @@ public final class TestAuthSupport {
         MvcResult mvcResult = mockMvc.perform(post("/api/agents/auth")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(agentLoginRequest)))
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.token").exists())
                 .andReturn();
 
@@ -90,7 +90,7 @@ public final class TestAuthSupport {
 
         UUID agentId = UUID.fromString(objectMapper
                 .readTree(registered.getResponse().getContentAsString())
-                .get("uuid").asString());
+                .get("id").asString());
 
         UUID roleId = null;
 
@@ -111,7 +111,7 @@ public final class TestAuthSupport {
 
             roleId = UUID.fromString(objectMapper
                     .readTree(role.getResponse().getContentAsString())
-                    .get("uuid").asString());
+                    .get("id").asString());
 
             for (String permissionName : permissionNames) {
                 mockMvc.perform(post("/api/role-permissions/append")

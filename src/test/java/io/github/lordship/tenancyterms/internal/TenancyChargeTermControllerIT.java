@@ -80,11 +80,11 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
         MvcResult result = createTerm("LAND", "2026-09-01", "MIGRATION")
                 // Assert
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.status").value("PROPOSED"))
                 .andExpect(jsonPath("$.agreementType").value("LAND"))
-                .andExpect(jsonPath("$.termsTemplate").exists())
-                .andExpect(jsonPath("$.sourceUuid").doesNotExist())
+                .andExpect(jsonPath("$.termsTemplateId").exists())
+                .andExpect(jsonPath("$.sourceId").doesNotExist())
                 .andReturn();
 
         // The values came from the template, not from Java nulls
@@ -120,7 +120,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.source").value("CORRECTION"))
                 .andExpect(jsonPath("$.correctionReason").value("found an unscanned lease"))
-                .andExpect(jsonPath("$.sourceUuid").doesNotExist());
+                .andExpect(jsonPath("$.sourceId").doesNotExist());
     }
 
     @Test
@@ -131,7 +131,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                         {
-                            "tenancy" : "%s",
+                            "tenancyId" : "%s",
                             "agreementType" : "LAND",
                             "validAt" : "2026-09-01",
                             "source" : "MIGRATION"
@@ -361,7 +361,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
 
         // Act / Assert -- newest first
         mockMvc.perform(get("/api/tenancy-charge-terms")
-                        .param("tenancy", tenancy.toString())
+                        .param("tenancyId", tenancy.toString())
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
@@ -375,7 +375,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
 
         // Act / Assert
         mockMvc.perform(get("/api/tenancy-charge-terms/in-force")
-                        .param("tenancy", tenancy.toString())
+                        .param("tenancyId", tenancy.toString())
                         .param("on", "2026-09-01")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isNotFound());
@@ -402,7 +402,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
     @Test
     void endpoints_shouldReturn401_withoutAToken() throws Exception {
         // Act / Assert
-        mockMvc.perform(get("/api/tenancy-charge-terms").param("tenancy", tenancy.toString()))
+        mockMvc.perform(get("/api/tenancy-charge-terms").param("tenancyId", tenancy.toString()))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -420,7 +420,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
                         {
-                            "tenancy" : "%s",
+                            "tenancyId" : "%s",
                             "agreementType" : "%s",
                             "validAt" : "%s",
                             "source" : "%s",
@@ -433,7 +433,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
         MvcResult result = createTerm("LAND", "2026-09-01", "MIGRATION")
                 .andExpect(status().isCreated())
                 .andReturn();
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
     }
 
     private ResultActions patchTerm(UUID uuid, String body) throws Exception {
@@ -462,7 +462,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
                 .andReturn();
 
         UUID templateId = UUID.fromString(
-                JsonPath.read(global.getResponse().getContentAsString(), "$.uuid"));
+                JsonPath.read(global.getResponse().getContentAsString(), "$.id"));
 
         mockMvc.perform(post("/api/terms-templates/{uuid}/copy", templateId)
                         .header("Authorization", "Bearer " + token)
@@ -504,7 +504,7 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
 
     /** Read the response's uuid, then load the real record -- the DTO hides fields on purpose. */
     private TenancyChargeTerm fetch(MvcResult result) throws Exception {
-        UUID uuid = UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.uuid"));
+        UUID uuid = UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
         return tenancyChargeTermService.findById(uuid).orElseThrow();
     }
 }

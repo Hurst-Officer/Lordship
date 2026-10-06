@@ -16,7 +16,7 @@ import java.util.UUID;
  * response shapes behind one name.
  */
 public record PropertyDocumentCustomizationResponse(
-        UUID uuid,
+        UUID id,
         CustomizationAction action,
         UUID sectionId,
         UUID clauseId,

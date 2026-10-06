@@ -5,7 +5,7 @@ import io.github.lordship.access.AgentWithPerson;
 
 import java.util.UUID;
 
-public record AgentRegistrationResponse(UUID uuid,
+public record AgentRegistrationResponse(UUID id,
                                         String workEmail,
                                         String nameFull
 ) {

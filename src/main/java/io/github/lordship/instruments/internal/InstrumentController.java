@@ -53,7 +53,7 @@ public class InstrumentController {
             Map.entry("termStart", "term_start"),
             Map.entry("termMonths", "term_months"),
             Map.entry("onExpiry", "on_expiry"),
-            Map.entry("amends", "amends"),
+            Map.entry("amendsId", "amends"),
             Map.entry("note", "note"));
 
     private static final Map<String, String> CLAUSE_COLUMNS = Map.ofEntries(
@@ -97,7 +97,7 @@ public class InstrumentController {
     @PreAuthorize("hasAuthority('instrument:view')")
     @GetMapping
     public ResponseEntity<List<InstrumentResponse>> listByTenancy(
-            @RequestParam("tenancy") UUID tenancyId,
+            @RequestParam("tenancyId") UUID tenancyId,
             @RequestParam(value = "open", required = false) Boolean openOnly) {
 
         List<InstrumentResponse> found = (Boolean.TRUE.equals(openOnly)

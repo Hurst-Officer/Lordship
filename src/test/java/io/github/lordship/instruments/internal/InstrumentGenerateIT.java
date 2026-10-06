@@ -263,7 +263,7 @@ public class InstrumentGenerateIT extends IntegrationTest {
                                 """.formatted(tenancy)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return uuidAt(result, "$.uuid");
+        return uuidAt(result, "$.id");
     }
 
     private UUID createDocumentTemplate() throws Exception {
@@ -275,7 +275,7 @@ public class InstrumentGenerateIT extends IntegrationTest {
                                 """))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return uuidAt(result, "$.uuid");
+        return uuidAt(result, "$.id");
     }
 
     private UUID createSection() throws Exception {
@@ -290,7 +290,7 @@ public class InstrumentGenerateIT extends IntegrationTest {
 
         String body = result.getResponse().getContentAsString();
         int index = JsonPath.<List<Object>>read(body, "$.sections").size() - 1;
-        return UUID.fromString(JsonPath.read(body, "$.sections[" + index + "].uuid"));
+        return UUID.fromString(JsonPath.read(body, "$.sections[" + index + "].id"));
     }
 
     private void clause(String key, String body) throws Exception {
@@ -302,7 +302,7 @@ public class InstrumentGenerateIT extends IntegrationTest {
 
         String response = result.getResponse().getContentAsString();
         List<String> ids = JsonPath.read(response,
-                "$.sections[?(@.uuid == '" + section + "')].clauses[*].uuid");
+                "$.sections[?(@.id == '" + section + "')].clauses[*].id");
         UUID clauseId = UUID.fromString(ids.get(ids.size() - 1));
 
         mockMvc.perform(patch("/api/document-templates/clauses/{uuid}", clauseId)
@@ -334,7 +334,7 @@ public class InstrumentGenerateIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        mockMvc.perform(post("/api/terms-templates/{uuid}/copy", uuidAt(global, "$.uuid"))
+        mockMvc.perform(post("/api/terms-templates/{uuid}/copy", uuidAt(global, "$.id"))
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

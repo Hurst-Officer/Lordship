@@ -241,7 +241,7 @@ public class TokenResolverTest {
         return new Property(PROPERTY, "HV", "Harbor View", "100 Marina Drive",
                 "Vine Villa", "WA", "94370", LocalDate.of(2019, 5, 1),
                 "MHP-2", "P-1000", "Harbor View LLC", "PO Box 12, Vine Villa WA 94370",
-                1978, Map.of(), OffsetDateTime.now(ZoneOffset.UTC), null);
+                1978, Map.of(), null, OffsetDateTime.now(ZoneOffset.UTC), null);
     }
 
     private static TenancyChargeTerm term(LocalDate validAt, String rate,
@@ -375,7 +375,7 @@ public class TokenResolverTest {
         return new Property(p.uuid(), p.propertyCode(), p.propertyName(), p.propertyStreet(),
                 p.propertyCity(), p.propertyState(), p.propertyZip(), p.purchaseDate(),
                 p.propertyZoning(), p.propertyParcel(), null, null, p.yearBuilt(),
-                p.customFields(), p.createdAt(), p.deletedAt());
+                p.customFields(), p.propertyManager(), p.createdAt(), p.deletedAt());
     }
 
     // ---- lot.rent_history_* --------------------------------------------------

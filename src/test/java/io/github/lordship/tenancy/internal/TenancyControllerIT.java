@@ -76,7 +76,7 @@ public class TenancyControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        return UUID.fromString(JsonPath.read(createResult.getResponse().getContentAsString(), "$.uuid"));
+        return UUID.fromString(JsonPath.read(createResult.getResponse().getContentAsString(), "$.id"));
     }
 
     // Straight to the column: LotRow's compact constructor refuses to build a
@@ -105,7 +105,7 @@ public class TenancyControllerIT extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"lotId\": \"" + lotId + "\"}"))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.lotId").value(lotId.toString()))
                 .andExpect(jsonPath("$.endDate").doesNotExist());
     }
@@ -262,7 +262,7 @@ public class TenancyControllerIT extends IntegrationTest {
         mockMvc.perform(get("/api/tenancy/{uuid}", tenancyId)
                         .header("Authorization", "Bearer " + token()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(tenancyId.toString()))
+                .andExpect(jsonPath("$.id").value(tenancyId.toString()))
                 .andExpect(jsonPath("$.lotId").value(lotId.toString()));
     }
 

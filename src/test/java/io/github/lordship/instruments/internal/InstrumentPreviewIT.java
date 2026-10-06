@@ -273,7 +273,7 @@ public class InstrumentPreviewIT extends IntegrationTest {
                                 """.formatted(name)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return uuidAt(result, "$.uuid");
+        return uuidAt(result, "$.id");
     }
 
     private UUID createSection(UUID templateId, String name) throws Exception {
@@ -288,7 +288,7 @@ public class InstrumentPreviewIT extends IntegrationTest {
 
         String body = result.getResponse().getContentAsString();
         int index = JsonPath.<java.util.List<Object>>read(body, "$.sections").size() - 1;
-        return UUID.fromString(JsonPath.read(body, "$.sections[" + index + "].uuid"));
+        return UUID.fromString(JsonPath.read(body, "$.sections[" + index + "].id"));
     }
 
     private void clause(String key, String body) throws Exception {
@@ -325,7 +325,7 @@ public class InstrumentPreviewIT extends IntegrationTest {
 
         String body = result.getResponse().getContentAsString();
         java.util.List<String> ids = JsonPath.read(body,
-                "$.sections[?(@.uuid == '" + sectionId + "')].clauses[*].uuid");
+                "$.sections[?(@.id == '" + sectionId + "')].clauses[*].id");
         return UUID.fromString(ids.get(ids.size() - 1));
     }
 
@@ -391,7 +391,7 @@ public class InstrumentPreviewIT extends IntegrationTest {
                                 """.formatted(tenancy)))
                 .andExpect(status().isCreated())
                 .andReturn();
-        return uuidAt(result, "$.uuid");
+        return uuidAt(result, "$.id");
     }
 
     private void typeClauseOnto(UUID instrument, String body) throws Exception {
@@ -404,7 +404,7 @@ public class InstrumentPreviewIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        mockMvc.perform(patch("/api/instruments/clauses/{uuid}", uuidAt(result, "$.uuid"))
+        mockMvc.perform(patch("/api/instruments/clauses/{uuid}", uuidAt(result, "$.id"))
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -423,7 +423,7 @@ public class InstrumentPreviewIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn();
 
-        mockMvc.perform(post("/api/terms-templates/{uuid}/copy", uuidAt(global, "$.uuid"))
+        mockMvc.perform(post("/api/terms-templates/{uuid}/copy", uuidAt(global, "$.id"))
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""

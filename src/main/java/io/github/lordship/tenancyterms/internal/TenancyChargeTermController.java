@@ -61,7 +61,7 @@ public class TenancyChargeTermController {
     // its document: POST /api/instruments/{uuid}/charge-terms/schedule.
     // correctionReason is required for CORRECTION and not allowed otherwise.
     public record CreateChargeTermRequest (
-            @NotNull UUID tenancy,
+            @NotNull UUID tenancyId,
             @NotNull AgreementType agreementType,
             @NotNull LocalDate validAt,
             @NotNull TenancyTermSource source,
@@ -74,9 +74,9 @@ public class TenancyChargeTermController {
     @PreAuthorize("hasAuthority('tenancy_term:view')")
     @GetMapping
     public ResponseEntity<List<TenancyChargeTermResponse>> listByTenancy(
-            @RequestParam("tenancy") UUID tenancy) {
+            @RequestParam("tenancyId") UUID tenancyId) {
         return ResponseEntity.ok(
-                tenancyChargeTermService.findByTenancy(tenancy).stream()
+                tenancyChargeTermService.findByTenancy(tenancyId).stream()
                         .map(TenancyChargeTermResponse::from)
                         .toList());
     }
@@ -85,10 +85,10 @@ public class TenancyChargeTermController {
     @PreAuthorize("hasAuthority('tenancy_term:view')")
     @GetMapping("/in-force")
     public ResponseEntity<TenancyChargeTermResponse> getInForceOn(
-            @RequestParam("tenancy") UUID tenancy,
+            @RequestParam("tenancyId") UUID tenancyId,
             @RequestParam("on") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate on) {
 
-        return tenancyChargeTermService.findInForceOn(tenancy, on)
+        return tenancyChargeTermService.findInForceOn(tenancyId, on)
                 .map(TenancyChargeTermResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
@@ -110,7 +110,7 @@ public class TenancyChargeTermController {
             @Valid @RequestBody CreateChargeTermRequest request) {
 
         return tenancyChargeTermService.createFromTemplate(
-                        request.tenancy(),
+                        request.tenancyId(),
                         request.agreementType(),
                         request.validAt(),
                         request.source(),

@@ -8,7 +8,7 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record StickBuiltResponse(
-        UUID uuid,
+        UUID id,
         String name,
         UUID lotId,
         Integer yearBuilt,

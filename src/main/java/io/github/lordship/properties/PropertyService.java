@@ -9,7 +9,6 @@ import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
 import java.util.*;
-import java.time.LocalDate;
 import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -52,26 +51,6 @@ public class PropertyService {
 
     @Transactional
     public Optional<Property> patchProperty(UUID uuid, Map<String, Object> changes) {
-
-        if (changes.containsKey("purchaseDate")) {
-            Object pd = changes.get("purchaseDate");
-            if (pd instanceof String s && !s.isBlank()) {
-                changes.put("purchase_date", LocalDate.parse(s));
-            } else {
-                changes.put("purchase_date", null);
-            }
-            changes.remove("purchaseDate");
-        }
-
-        if (changes.containsKey("propertyManager")) {
-            Object pm = changes.get("propertyManager");
-            if (pm instanceof String s && !s.isBlank()) {
-                changes.put("property_manager", UUID.fromString(s));
-            } else {
-                changes.put("property_manager", null);
-            }
-            changes.remove("propertyManager");
-        }
 
         PropertyRow before = propertyRepository.findById(uuid).orElse(null);
         Optional<PropertyRow> result = propertyRepository.patch(uuid, changes);

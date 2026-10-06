@@ -49,7 +49,7 @@ public class MeterBillsService {
     public MeterBills create(MeterBillsCreateRequest request) {
         MeterBillsRow row = meterBillsRepository.save(
                 MeterBillsRow.forInsert(
-                        request.billedMeter(),
+                        request.billedMeterId(),
                         request.billedAmount(),
                         request.rateAmount(),
                         request.rateUnit(),

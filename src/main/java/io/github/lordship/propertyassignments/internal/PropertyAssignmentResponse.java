@@ -6,7 +6,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 public record PropertyAssignmentResponse(
-        UUID uuid,
+        UUID id,
         UUID agentId,
         UUID propertyId,
         UUID assignedBy,

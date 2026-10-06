@@ -88,7 +88,7 @@ public class LotController {
     @PreAuthorize("hasAuthority('lots:view')")
     @GetMapping
     public ResponseEntity<List<LotResponse>> listByProperty(
-            @RequestParam("property") String propertyCode,
+            @RequestParam("propertyCode") String propertyCode,
             @RequestParam(value = "agreementType", required = false) AgreementType agreementType) {
 
         List<Lot> found = (agreementType == null)

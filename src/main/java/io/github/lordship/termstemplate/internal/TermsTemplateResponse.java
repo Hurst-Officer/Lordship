@@ -12,8 +12,8 @@ import java.util.UUID;
 
 
 public record TermsTemplateResponse(
-        UUID uuid,
-        UUID property, // NOTE: A null property means this is a global template.
+        UUID id,
+        UUID propertyId, // NOTE: A null propertyId means this is a global template.
         String name,
         AgreementType agreementType,
 

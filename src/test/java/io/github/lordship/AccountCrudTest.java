@@ -120,7 +120,7 @@ public class AccountCrudTest extends IntegrationTest {
         mockMvc.perform(get("/accounts/" + accountId)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(accountId.toString()))
+                .andExpect(jsonPath("$.id").value(accountId.toString()))
                 .andExpect(jsonPath("$.tenancyId").value(tenancyId.toString()))
                 .andExpect(jsonPath("$.accountStatus").value("ACTIVE"))
                 .andExpect(jsonPath("$.balanceCached").value(0))
@@ -137,7 +137,7 @@ public class AccountCrudTest extends IntegrationTest {
         mockMvc.perform(get("/accounts/" + accountId)
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.uuid").value(accountId))
+                .andExpect(jsonPath("$.id").value(accountId))
                 .andExpect(jsonPath("$.accountStatus").value("ACTIVE"));
     }
 

@@ -8,13 +8,13 @@ import java.time.OffsetDateTime;
 import java.util.UUID;
 
 public record PersonResponse(
-        UUID uuid,
+        UUID id,
         String nameFull,
         LocalDate birthday,
         String personalPhone,
         String personalEmail,
         String mailingAddress,
-        UUID emergencyContact,
+        UUID emergencyContactId,
         String social,
         OffsetDateTime createdAt
 ) {

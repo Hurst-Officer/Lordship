@@ -1,6 +1,5 @@
 package io.github.lordship.documenttemplate.internal;
 
-import io.github.lordship.documenttemplate.DocumentAudit;
 import io.github.lordship.documenttemplate.DocumentAuditService;
 import io.github.lordship.documenttemplate.PropertyDocumentAssignmentService;
 import io.github.lordship.shared.AgreementType;
@@ -63,7 +62,7 @@ public class PropertyDocumentAssignmentController {
     @PreAuthorize("hasAuthority('property_document:view')")
     @GetMapping
     public ResponseEntity<List<PropertyDocumentAssignmentResponse>> listByProperty(
-            @RequestParam("property") UUID propertyId) {
+            @RequestParam("propertyId") UUID propertyId) {
 
         return ResponseEntity.ok(
                 assignmentService.findByProperty(propertyId).stream()
@@ -79,7 +78,7 @@ public class PropertyDocumentAssignmentController {
     @PreAuthorize("hasAuthority('property_document:view')")
     @GetMapping("/resolve")
     public ResponseEntity<PropertyDocumentAssignmentResponse> resolve(
-            @RequestParam("property") UUID propertyId,
+            @RequestParam("propertyId") UUID propertyId,
             @RequestParam("agreementType") AgreementType agreementType,
             @RequestParam("instrumentType") InstrumentType instrumentType) {
 
@@ -101,8 +100,8 @@ public class PropertyDocumentAssignmentController {
      */
     @PreAuthorize("hasAuthority('property_document:view')")
     @GetMapping("/audit")
-    public ResponseEntity<DocumentAudit> audit(@RequestParam("property") UUID propertyId) {
-        return ResponseEntity.ok(documentAuditService.auditProperty(propertyId));
+    public ResponseEntity<DocumentAuditResponse> audit(@RequestParam("propertyId") UUID propertyId) {
+        return ResponseEntity.ok(DocumentAuditResponse.from(documentAuditService.auditProperty(propertyId)));
     }
 
     @PreAuthorize("hasAuthority('property_document:view')")

@@ -4,7 +4,7 @@ import java.util.List;
 import java.util.UUID;
 
 public record RoleResponse (
-        UUID uuid,
+        UUID id,
         String roleName,
         String roleDescription,
         List<String> permissions

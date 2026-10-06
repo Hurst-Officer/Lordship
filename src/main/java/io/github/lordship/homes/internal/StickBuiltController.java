@@ -51,8 +51,8 @@ public class StickBuiltController {
     @PreAuthorize("hasAuthority('homes:view')")
     @GetMapping
     public ResponseEntity<List<StickBuiltResponse>> listStickBuilts(
-            @RequestParam(value = "property", required = false) String propertyCode,
-            @RequestParam(value = "lot", required = false) UUID lotId) {
+            @RequestParam(value = "propertyCode", required = false) String propertyCode,
+            @RequestParam(value = "lotId", required = false) UUID lotId) {
 
         if ((propertyCode == null) == (lotId == null)) {
             throw new IllegalArgumentException("Give exactly one of property or lot");

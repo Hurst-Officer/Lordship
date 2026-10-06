@@ -9,7 +9,7 @@ import java.util.UUID;
 
 public record MeterBillsCreateRequest(
         @NotNull
-        UUID billedMeter,
+        UUID billedMeterId,
 
         @NotNull
         BigDecimal billedAmount,

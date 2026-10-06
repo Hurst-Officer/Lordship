@@ -49,7 +49,7 @@ public class SecuredPartyControllerIT extends IntegrationTest {
                                 """.formatted(lotId)))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(objectMapper.readTree(body).get("uuid").asString());
+        return UUID.fromString(objectMapper.readTree(body).get("id").asString());
     }
 
     private UUID person(String name) {
@@ -73,7 +73,7 @@ public class SecuredPartyControllerIT extends IntegrationTest {
                         .content(createBody(mobileHomeId, personId, startDate)))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        return UUID.fromString(objectMapper.readTree(body).get("uuid").asString());
+        return UUID.fromString(objectMapper.readTree(body).get("id").asString());
     }
 
     // ── the auth boundary ────────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ public class SecuredPartyControllerIT extends IntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody(mobileHomeId, person("First National Bank"), "2026-10-01")))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.uuid").exists())
+                .andExpect(jsonPath("$.id").exists())
                 .andExpect(jsonPath("$.mobileHomeId").value(mobileHomeId.toString()))
                 .andExpect(jsonPath("$.startDate").value("2026-10-01"))
                 .andExpect(jsonPath("$.endDate").doesNotExist())
