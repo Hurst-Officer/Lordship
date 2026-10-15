@@ -1,5 +1,6 @@
 package io.github.lordship.tenancyterms.internal;
 
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.tenancyterms.ChargeTermConfiguration;
 import io.github.lordship.tenancyterms.RentHistoryYear;
 import io.github.lordship.tenancyterms.TenancyTermStatus;
@@ -27,7 +28,7 @@ public class TenancyChargeTermRepository {
             "payment_due_day", "grace_period_days",
             "rule_violation_fee_method", "rule_violation_fee_amount",
             "nsf_fee_method", "nsf_fee_amount",
-            "late_fee_method", "late_fee_amount",
+            "late_fee_method", "late_fee_amount", "late_fee_tiers",
             "water_method", "water_flat_amount",
             "power_method", "power_flat_amount",
             "sewer_method", "sewer_flat_amount",
@@ -149,7 +150,7 @@ public class TenancyChargeTermRepository {
                     payment_due_day, grace_period_days,
                     rule_violation_fee_method, rule_violation_fee_amount,
                     nsf_fee_method, nsf_fee_amount,
-                    late_fee_method, late_fee_amount,
+                    late_fee_method, late_fee_amount, late_fee_tiers,
                     water_method, water_flat_amount,
                     power_method, power_flat_amount,
                     sewer_method, sewer_flat_amount,
@@ -163,7 +164,7 @@ public class TenancyChargeTermRepository {
                     :paymentDueDay, :gracePeriodDays,
                     :ruleViolationFeeMethod, :ruleViolationFeeAmount,
                     :nsfFeeMethod, :nsfFeeAmount,
-                    :lateFeeMethod, :lateFeeAmount,
+                    :lateFeeMethod, :lateFeeAmount, CAST(:lateFeeTiers AS jsonb),
                     :waterMethod, :waterFlatAmount,
                     :powerMethod, :powerFlatAmount,
                     :sewerMethod, :sewerFlatAmount,
@@ -190,6 +191,7 @@ public class TenancyChargeTermRepository {
                 .param("nsfFeeAmount", row.nsfFeeAmount())
                 .param("lateFeeMethod", nameOf(row.lateFeeMethod()))
                 .param("lateFeeAmount", row.lateFeeAmount())
+                .param("lateFeeTiers", LateFeeTier.toJson(row.lateFeeTiers()))
                 .param("waterMethod", nameOf(row.waterMethod()))
                 .param("waterFlatAmount", row.waterFlatAmount())
                 .param("powerMethod", nameOf(row.powerMethod()))
@@ -260,7 +262,14 @@ public class TenancyChargeTermRepository {
 
         StringBuilder sql = new StringBuilder("UPDATE tenancy_charge_term SET ");
 
-        changes.forEach((col, val) -> sql.append(col).append(" = :").append(col).append(", "));
+        for (String col : changes.keySet()) {
+            if (col.equals("late_fee_tiers")) {
+                // The service hands over a List<LateFeeTier>. It is stored as JSONB.
+                sql.append(col).append(" = CAST(:").append(col).append(" AS jsonb), ");
+            } else {
+                sql.append(col).append(" = :").append(col).append(", ");
+            }
+        }
 
         // trim trailing comma and space
         sql.setLength(sql.length() - 2);
@@ -268,6 +277,10 @@ public class TenancyChargeTermRepository {
 
         Map<String, Object> params = new HashMap<>(changes);
         params.put("uuid", uuid);
+        if (params.get("late_fee_tiers") instanceof List<?> tiers) {
+            params.put("late_fee_tiers", LateFeeTier.toJson(
+                    tiers.stream().map(LateFeeTier.class::cast).toList()));
+        }
 
         return jdbc.sql(sql.toString())
                 .params(params)

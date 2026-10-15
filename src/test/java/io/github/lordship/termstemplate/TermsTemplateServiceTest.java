@@ -376,6 +376,7 @@ public class TermsTemplateServiceTest {
         assertTrue(accepts(before, "late_fee_method", "late_fee_amount", FeeMethod.NONE));
         assertTrue(accepts(before, "late_fee_method", "late_fee_amount", FeeMethod.FLAT));
         assertTrue(accepts(before, "late_fee_method", "late_fee_amount", FeeMethod.PERCENT_OF_RENT));
+        assertTrue(accepts(before, "late_fee_method", "late_fee_amount", FeeMethod.TIERED));
         assertFalse(accepts(before, "late_fee_method", "late_fee_amount", FeeMethod.BANK_OR_FLAT),
                 "a late fee cannot be whatever the bank charged");
     }
@@ -393,6 +394,8 @@ public class TermsTemplateServiceTest {
         assertTrue(accepts(before, "nsf_fee_method", "nsf_fee_amount", FeeMethod.BANK_OR_FLAT));
         assertFalse(accepts(before, "nsf_fee_method", "nsf_fee_amount", FeeMethod.PERCENT_OF_RENT),
                 "an NSF fee is not a percentage of rent");
+        assertFalse(accepts(before, "nsf_fee_method", "nsf_fee_amount", FeeMethod.TIERED),
+                "an NSF fee does not depend on the day the payment arrives");
     }
 
     @Test
@@ -406,6 +409,7 @@ public class TermsTemplateServiceTest {
         assertTrue(accepts(before, "rule_violation_fee_method", "rule_violation_fee_amount", FeeMethod.FLAT));
         assertFalse(accepts(before, "rule_violation_fee_method", "rule_violation_fee_amount", FeeMethod.PERCENT_OF_RENT));
         assertFalse(accepts(before, "rule_violation_fee_method", "rule_violation_fee_amount", FeeMethod.BANK_OR_FLAT));
+        assertFalse(accepts(before, "rule_violation_fee_method", "rule_violation_fee_amount", FeeMethod.TIERED));
     }
 
     // The drift guard: add a constant to FeeMethod and this fails until some column
@@ -430,6 +434,95 @@ public class TermsTemplateServiceTest {
         }
     }
 
+    // ── Late fee tiers ───────────────────────────────────────────────────────
+
+    @Test
+    void patchTermsTemplate_shouldStoreTheChart_andZeroTheFlatAmount() {
+        // Arrange -- before has a FLAT late fee of 65, due on the 1st with 7 grace days
+        TermsTemplateRow before = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(termsTemplateRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("late_fee_method", "TIERED");
+        changes.put("late_fee_tiers", List.of(
+                Map.of("fromDay", 9, "amount", 20),
+                Map.of("fromDay", 25, "amount", 60)));
+
+        // Act
+        termsTemplateService.patchTermsTemplate(before.uuid(), changes);
+
+        // Assert
+        verify(termsTemplateRepository).patch(eq(before.uuid()), argThat(map ->
+                BigDecimal.ZERO.equals(map.get("late_fee_amount"))
+                        && List.of(
+                                new LateFeeTier(9, new BigDecimal("20.00")),
+                                new LateFeeTier(25, new BigDecimal("60.00")))
+                        .equals(map.get("late_fee_tiers"))));
+    }
+
+    @Test
+    void patchTermsTemplate_shouldRefuseTieredWithNoChart() {
+        // Arrange -- unlike a charge term, a template cannot hold a half-done chart
+        TermsTemplateRow before = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("late_fee_method", "TIERED");
+
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class,
+                () -> termsTemplateService.patchTermsTemplate(before.uuid(), changes));
+
+        // Assert
+        assertEquals("late_fee_tier.chart_not_valid", refused.problem().code());
+        assertEquals("late_fee_tier.chart_required", refused.details().getFirst().code());
+        verify(termsTemplateRepository, never()).patch(any(), any());
+    }
+
+    @Test
+    void patchTermsTemplate_shouldRefuseALongerGracePeriod_thatSwallowsTheFirstTier() {
+        // Arrange -- a tiered template whose first tier starts on the 9th
+        TermsTemplateRow before = withLateFee(
+                template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND),
+                FeeMethod.TIERED, BigDecimal.ZERO,
+                List.of(new LateFeeTier(9, new BigDecimal("20.00"))));
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("grace_period_days", 10);
+
+        // Act -- due on the 1st plus 10 grace days makes the 11th the last free day
+        InvalidRequest refused = assertThrows(InvalidRequest.class,
+                () -> termsTemplateService.patchTermsTemplate(before.uuid(), changes));
+
+        // Assert
+        assertEquals("late_fee_tier.inside_grace", refused.details().getFirst().code());
+        verify(termsTemplateRepository, never()).patch(any(), any());
+    }
+
+    @Test
+    void patchTermsTemplate_shouldEmptyTheChart_whenTheMethodStopsBeingTiered() {
+        // Arrange
+        TermsTemplateRow before = withLateFee(
+                template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND),
+                FeeMethod.TIERED, BigDecimal.ZERO,
+                List.of(new LateFeeTier(9, new BigDecimal("20.00"))));
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(termsTemplateRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("late_fee_method", "FLAT");
+        changes.put("late_fee_amount", new BigDecimal("65.00"));
+
+        // Act
+        termsTemplateService.patchTermsTemplate(before.uuid(), changes);
+
+        // Assert
+        verify(termsTemplateRepository).patch(eq(before.uuid()), argThat(
+                map -> List.of().equals(map.get("late_fee_tiers"))));
+    }
+
     // ── Vocabulary helpers ───────────────────────────────────────────────────
 
     private void stubFor(TermsTemplateRow before) {
@@ -445,6 +538,10 @@ public class TermsTemplateServiceTest {
         changes.put(methodColumn, method.name());
         if (method != FeeMethod.NONE) {
             changes.put(amountColumn, new BigDecimal("10.00"));
+        }
+        if (method == FeeMethod.TIERED) {
+            // A template has no draft status, so TIERED needs its chart in the same patch
+            changes.put("late_fee_tiers", List.of(Map.of("fromDay", 9, "amount", 20)));
         }
         try {
             termsTemplateService.patchTermsTemplate(before.uuid(), changes);
@@ -527,9 +624,9 @@ public class TermsTemplateServiceTest {
                 new BigDecimal("45.00"), 2, 4,
                 new BigDecimal("45.00"), 2,
                 1, 7,
-                FeeMethod.FLAT, new BigDecimal("65.00"),
-                FeeMethod.FLAT, new BigDecimal("35.00"),
-                FeeMethod.FLAT, new BigDecimal("65.00"),
+                FeeMethod.FLAT, new BigDecimal("65.00"),             // rule violation
+                FeeMethod.FLAT, new BigDecimal("35.00"),             // nsf
+                FeeMethod.FLAT, new BigDecimal("65.00"), List.of(),  // late fee and its tiers
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
@@ -547,7 +644,7 @@ public class TermsTemplateServiceTest {
                 row.paymentDueDay(), row.gracePeriodDays(),
                 row.ruleViolationFeeMethod(), row.ruleViolationFeeAmount(),
                 row.nsfFeeMethod(), row.nsfFeeAmount(),
-                row.lateFeeMethod(), row.lateFeeAmount(),
+                row.lateFeeMethod(), row.lateFeeAmount(), row.lateFeeTiers(),
                 row.waterMethod(), row.waterFlatAmount(),
                 row.powerMethod(), row.powerFlatAmount(),
                 row.sewerMethod(), row.sewerFlatAmount(),
@@ -565,7 +662,26 @@ public class TermsTemplateServiceTest {
                 row.paymentDueDay(), row.gracePeriodDays(),
                 row.ruleViolationFeeMethod(), row.ruleViolationFeeAmount(),
                 row.nsfFeeMethod(), row.nsfFeeAmount(),
-                row.lateFeeMethod(), row.lateFeeAmount(),
+                row.lateFeeMethod(), row.lateFeeAmount(), row.lateFeeTiers(),
+                row.waterMethod(), row.waterFlatAmount(),
+                row.powerMethod(), row.powerFlatAmount(),
+                row.sewerMethod(), row.sewerFlatAmount(),
+                row.trashMethod(), row.trashFlatAmount(),
+                row.securityDepositMethod(), row.securityDepositAmount(),
+                row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
+    }
+
+    private static TermsTemplateRow withLateFee(
+            TermsTemplateRow row, FeeMethod method, BigDecimal amount, List<LateFeeTier> tiers) {
+        return new TermsTemplateRow(
+                row.uuid(), row.property(), row.copiedFrom(), row.name(), row.agreementType(),
+                row.targetRate(), row.askingRate(),
+                row.escalationPercent(), row.escalationMonths(),
+                row.carFee(), row.allowedCars(), row.carsMax(), row.petFee(), row.allowedPets(),
+                row.paymentDueDay(), row.gracePeriodDays(),
+                row.ruleViolationFeeMethod(), row.ruleViolationFeeAmount(),
+                row.nsfFeeMethod(), row.nsfFeeAmount(),
+                method, amount, tiers,
                 row.waterMethod(), row.waterFlatAmount(),
                 row.powerMethod(), row.powerFlatAmount(),
                 row.sewerMethod(), row.sewerFlatAmount(),
@@ -584,7 +700,7 @@ public class TermsTemplateServiceTest {
                 row.paymentDueDay(), row.gracePeriodDays(),
                 row.ruleViolationFeeMethod(), row.ruleViolationFeeAmount(),
                 row.nsfFeeMethod(), row.nsfFeeAmount(),
-                row.lateFeeMethod(), row.lateFeeAmount(),
+                row.lateFeeMethod(), row.lateFeeAmount(), row.lateFeeTiers(),
                 row.waterMethod(), row.waterFlatAmount(),
                 row.powerMethod(), row.powerFlatAmount(),
                 row.sewerMethod(), row.sewerFlatAmount(),

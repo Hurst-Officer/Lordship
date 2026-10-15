@@ -4,6 +4,8 @@ import io.github.lordship.globalsettings.GlobalSettings;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.properties.Property;
 import io.github.lordship.shared.DocumentToken;
+import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancyterms.RentHistoryYear;
@@ -76,6 +78,7 @@ public final class TokenResolver {
         putLandlord(out, facts);
         putTenancy(out, facts);
         putRentSchedule(out, facts);
+        putLateFeeTiers(out, facts.term());
 
         return out.build();
     }
@@ -342,6 +345,56 @@ public final class TokenResolver {
         }
 
         out.putList(RENT_SCHEDULE, rows);
+    }
+
+    // ---- the late fee chart --------------------------------------------------
+
+    /**
+     * The late fee chart as rows a clause repeats over, for a TIERED late fee.
+     *
+     * <p>The first row is the free period: from the 1st through the day before
+     * the first tier, at $0.00. No fee applies before the first tier, so this
+     * leaves no days off the chart. Each tier then runs until the day before
+     * the next one starts. The last tier runs to the end of the month.
+     *
+     * <p>Every other method gets an empty list. An empty list prints nothing
+     * and is not reported as missing.
+     */
+    private static void putLateFeeTiers(TokenValues.Builder out, TenancyChargeTerm term) {
+        List<Map<String, String>> rows = new ArrayList<>();
+
+        if (term.lateFeeMethod() == FeeMethod.TIERED && !term.lateFeeTiers().isEmpty()) {
+            List<LateFeeTier> tiers = term.lateFeeTiers();
+
+            rows.add(tierRow(1, tiers.getFirst().fromDay() - 1, BigDecimal.ZERO));
+
+            for (int i = 0; i < tiers.size(); i++) {
+                LateFeeTier tier = tiers.get(i);
+                // null means "to the end of the month"
+                Integer lastDay = (i + 1 < tiers.size()) ? tiers.get(i + 1).fromDay() - 1 : null;
+                rows.add(tierRow(tier.fromDay(), lastDay, tier.amount()));
+            }
+        }
+
+        out.putList(DocumentToken.LATE_FEE_TIERS.token(), rows);
+    }
+
+    /** One row of the chart. A null lastDay means the row runs to the end of the month. */
+    private static Map<String, String> tierRow(int fromDay, Integer lastDay, BigDecimal amount) {
+        String period;
+        if (lastDay == null) {
+            period = TokenFormatter.ordinal(fromDay) + " to end of month";
+        } else if (lastDay == fromDay) {
+            period = TokenFormatter.ordinal(fromDay);
+        } else {
+            period = TokenFormatter.ordinal(fromDay) + " to " + TokenFormatter.ordinal(lastDay);
+        }
+
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put(DocumentToken.LATE_FEE_TIER_PERIOD.token(), period);
+        row.put(DocumentToken.LATE_FEE_TIER_FROM_DAY.token(), TokenFormatter.ordinal(fromDay));
+        row.put(DocumentToken.LATE_FEE_TIER_AMOUNT.token(), TokenFormatter.money(amount));
+        return row;
     }
 
     // Written as strings rather than DocumentToken constants because those

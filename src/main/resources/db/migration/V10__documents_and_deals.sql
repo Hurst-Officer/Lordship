@@ -423,8 +423,11 @@ CREATE TABLE tenancy_charge_term (
                                      nsf_fee_amount    NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_nsf_fee_amount_must_not_be_negative CHECK (nsf_fee_amount >= 0),
 
                                      late_fee_method   TEXT NOT NULL
-                                         CONSTRAINT charge_term_late_fee_method_must_be_known CHECK (late_fee_method IN ('NONE','FLAT', 'PERCENT_OF_RENT')),
+                                         CONSTRAINT charge_term_late_fee_method_must_be_known CHECK (late_fee_method IN ('NONE','FLAT', 'PERCENT_OF_RENT', 'TIERED')),
                                      late_fee_amount   NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_late_fee_amount_must_not_be_negative CHECK (late_fee_amount >= 0), -- can be a percent OR a flat rate
+                                     late_fee_tiers    JSONB NOT NULL
+                                         CONSTRAINT charge_term_late_fee_tiers_must_be_an_array CHECK (jsonb_typeof(late_fee_tiers) = 'array'),
+    -- note: same shape as terms_template.late_fee_tiers. Tier contents are checked when the term leaves PROPOSED.
 
                                      water_method      TEXT NOT NULL
                                          CONSTRAINT charge_term_water_method_must_be_known CHECK (water_method IN ('NONE','INCLUDED','FLAT','RUBS','SUBMETERED')),
@@ -482,6 +485,23 @@ CREATE TABLE tenancy_charge_term (
                                                  THEN late_fee_amount > 0
                                              ELSE late_fee_amount = 0
                                              END
+                                         ),
+
+                                     CONSTRAINT term_late_fee_tiers_match_method CHECK (
+                                         status = 'PROPOSED' OR
+                                         CASE
+                                             WHEN late_fee_method = 'TIERED'
+                                                 THEN late_fee_tiers <> '[]'::jsonb
+                                             ELSE late_fee_tiers = '[]'::jsonb
+                                             END
+                                         ),
+
+                                     CONSTRAINT term_late_fee_tiers_well_formed CHECK (
+                                         status = 'PROPOSED' OR
+                                         NOT jsonb_path_exists(late_fee_tiers,
+                                             '$[*] ? (!(@.from_day.type() == "number" && @.from_day == @.from_day.floor()
+                                                        && @.from_day >= 2 && @.from_day <= 31
+                                                        && @.amount.type() == "number" && @.amount > 0))')
                                          ),
 
                                      CONSTRAINT term_rule_violation_amount_matches_method CHECK (

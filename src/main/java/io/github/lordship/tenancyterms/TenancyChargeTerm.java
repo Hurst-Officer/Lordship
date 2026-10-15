@@ -2,12 +2,14 @@ package io.github.lordship.tenancyterms;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 
@@ -34,8 +36,9 @@ public record TenancyChargeTerm(
         FeeMethod nsfFeeMethod, // NONE, FLAT, BANK_OR_FLAT
         BigDecimal nsfFeeAmount,
 
-        FeeMethod lateFeeMethod, // NONE, FLAT, PERCENT_OF_RENT
+        FeeMethod lateFeeMethod, // NONE, FLAT, PERCENT_OF_RENT, TIERED
         BigDecimal lateFeeAmount, // a percent OR a flat rate, per the method
+        List<LateFeeTier> lateFeeTiers, // the chart for TIERED; empty for every other method
 
         UtilityMethod waterMethod,
         BigDecimal waterFlatAmount,

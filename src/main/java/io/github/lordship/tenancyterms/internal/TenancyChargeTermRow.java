@@ -2,6 +2,7 @@ package io.github.lordship.tenancyterms.internal;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
@@ -12,6 +13,7 @@ import io.github.lordship.tenancyterms.TenancyTermStatus;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 // Component order matches the column order in V10__documents_and_deals.sql.
@@ -40,8 +42,9 @@ public record TenancyChargeTermRow(
         FeeMethod nsfFeeMethod, // NONE, FLAT, BANK_OR_FLAT
         BigDecimal nsfFeeAmount,
 
-        FeeMethod lateFeeMethod, // NONE, FLAT, PERCENT_OF_RENT
+        FeeMethod lateFeeMethod, // NONE, FLAT, PERCENT_OF_RENT, TIERED
         BigDecimal lateFeeAmount, // a percent OR a flat rate, per the method
+        List<LateFeeTier> lateFeeTiers, // the chart for TIERED; empty for every other method
 
         UtilityMethod waterMethod,
         BigDecimal waterFlatAmount,
@@ -81,7 +84,7 @@ public record TenancyChargeTermRow(
                 paymentDueDay, gracePeriodDays,
                 ruleViolationFeeMethod, ruleViolationFeeAmount,
                 nsfFeeMethod, nsfFeeAmount,
-                lateFeeMethod, lateFeeAmount,
+                lateFeeMethod, lateFeeAmount, lateFeeTiers,
                 waterMethod, waterFlatAmount,
                 powerMethod, powerFlatAmount,
                 sewerMethod, sewerFlatAmount,
@@ -126,6 +129,7 @@ public record TenancyChargeTermRow(
                 template.nsfFeeAmount(),
                 template.lateFeeMethod(),
                 template.lateFeeAmount(),
+                template.lateFeeTiers(),
                 template.waterMethod(),
                 template.waterFlatAmount(),
                 template.powerMethod(),
@@ -177,6 +181,7 @@ public record TenancyChargeTermRow(
                 from.nsfFeeAmount(),
                 from.lateFeeMethod(),
                 from.lateFeeAmount(),
+                from.lateFeeTiers(),
                 from.waterMethod(),
                 from.waterFlatAmount(),
                 from.powerMethod(),
@@ -207,7 +212,7 @@ public record TenancyChargeTermRow(
                 paymentDueDay, gracePeriodDays,
                 ruleViolationFeeMethod, ruleViolationFeeAmount,
                 nsfFeeMethod, nsfFeeAmount,
-                lateFeeMethod, lateFeeAmount,
+                lateFeeMethod, lateFeeAmount, lateFeeTiers,
                 waterMethod, waterFlatAmount,
                 powerMethod, powerFlatAmount,
                 sewerMethod, sewerFlatAmount,

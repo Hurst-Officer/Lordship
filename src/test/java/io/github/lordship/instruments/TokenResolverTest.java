@@ -6,6 +6,7 @@ import io.github.lordship.properties.Property;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.InstrumentType;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancy.Tenancy;
@@ -104,6 +105,75 @@ public class TokenResolverTest {
         assertEquals("one and one half percent", values.scalar("term.late_fee_percent_in_words"));
         assertNull(values.scalar("term.late_fee_amount"),
                 "a percentage deal has no dollar figure to print");
+    }
+
+    // ---- the late fee chart --------------------------------------------------
+
+    @Test
+    void resolve_shouldPrintTheOldLeaseChart_rowForRow() {
+        // Arrange -- the chart from the old leases
+        TokenValues values = TokenResolver.resolve(facts(List.of(tieredTerm(List.of(
+                new LateFeeTier(9, new BigDecimal("20.00")),
+                new LateFeeTier(13, new BigDecimal("28.00")),
+                new LateFeeTier(16, new BigDecimal("34.00")),
+                new LateFeeTier(21, new BigDecimal("44.00")),
+                new LateFeeTier(25, new BigDecimal("60.00")))))));
+
+        // Act
+        List<String> printed = values.list("term.late_fee_tiers").stream()
+                .map(row -> row.get("late_fee_tier.period") + " | " + row.get("late_fee_tier.amount"))
+                .toList();
+
+        // Assert -- the same six rows as the paper chart, free row first
+        assertEquals(List.of(
+                "1st to 8th | $0.00",
+                "9th to 12th | $20.00",
+                "13th to 15th | $28.00",
+                "16th to 20th | $34.00",
+                "21st to 24th | $44.00",
+                "25th to end of month | $60.00"), printed);
+    }
+
+    @Test
+    void resolve_shouldPrintASingleDayTier_asOneDay() {
+        // Arrange -- a tier that covers only the 9th
+        TokenValues values = TokenResolver.resolve(facts(List.of(tieredTerm(List.of(
+                new LateFeeTier(9, new BigDecimal("20.00")),
+                new LateFeeTier(10, new BigDecimal("28.00")))))));
+
+        // Assert
+        assertEquals("9th", values.list("term.late_fee_tiers").get(1).get("late_fee_tier.period"));
+        assertEquals("9th", values.list("term.late_fee_tiers").get(1).get("late_fee_tier.from_day"));
+    }
+
+    @Test
+    void resolve_shouldGiveAnEmptyChart_whenTheLateFeeIsNotTiered() {
+        // Arrange
+        TokenValues values = TokenResolver.resolve(
+                facts(List.of(term(START, "4200", FeeMethod.FLAT, "65.00"))));
+
+        // Assert -- empty, not missing: an empty list prints nothing and is not reported
+        assertEquals(List.of(), values.list("term.late_fee_tiers"));
+    }
+
+    @Test
+    void render_shouldPrintTheChartInsideTheTieredClause() {
+        // Arrange -- the table part of the LATE_CHARGES_TIERED clause in V15
+        String body = "| Payment received | Late fee |\n"
+                + "{{#each term.late_fee_tiers}}| {{late_fee_tier.period}} | {{late_fee_tier.amount}} |\n{{/each}}";
+        TokenValues values = TokenResolver.resolve(facts(List.of(tieredTerm(List.of(
+                new LateFeeTier(9, new BigDecimal("20.00")),
+                new LateFeeTier(25, new BigDecimal("60.00")))))));
+
+        // Act
+        BodyRenderer.Rendered rendered = BodyRenderer.render(body, values);
+
+        // Assert
+        assertTrue(rendered.isComplete(), rendered.unresolved().toString());
+        assertEquals("| Payment received | Late fee |\n"
+                + "| 1st to 8th | $0.00 |\n"
+                + "| 9th to 24th | $20.00 |\n"
+                + "| 25th to end of month | $60.00 |\n", rendered.text());
     }
 
     @Test
@@ -254,11 +324,27 @@ public class TokenResolverTest {
         return chargeTerm(START, "4200.00", FeeMethod.FLAT, "65.00", method, amount);
     }
 
-    /** The one place the 40-component constructor is written out. */
+    /** No late fee chart. Delegates so the big constructor stays in one place. */
     private static TenancyChargeTerm chargeTerm(LocalDate validAt,
                                                 String rate,
                                                 FeeMethod lateFeeMethod,
                                                 String lateFeeAmount,
+                                                SecurityDepositMethod depositMethod,
+                                                String depositAmount) {
+        return chargeTerm(validAt, rate, lateFeeMethod, lateFeeAmount, List.of(), depositMethod, depositAmount);
+    }
+
+    /** A TIERED late fee with this chart. Due on the 1st with 5 grace days. */
+    private static TenancyChargeTerm tieredTerm(List<LateFeeTier> tiers) {
+        return chargeTerm(START, "4200.00", FeeMethod.TIERED, "0", tiers, SecurityDepositMethod.NONE, "0");
+    }
+
+    /** The one place the 41-component constructor is written out. */
+    private static TenancyChargeTerm chargeTerm(LocalDate validAt,
+                                                String rate,
+                                                FeeMethod lateFeeMethod,
+                                                String lateFeeAmount,
+                                                List<LateFeeTier> lateFeeTiers,
                                                 SecurityDepositMethod depositMethod,
                                                 String depositAmount) {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
@@ -270,7 +356,7 @@ public class TokenResolverTest {
                 1, 5,
                 FeeMethod.NONE, BigDecimal.ZERO,                       // rule violation
                 FeeMethod.FLAT, new BigDecimal("35.00"),               // nsf
-                lateFeeMethod, new BigDecimal(lateFeeAmount),
+                lateFeeMethod, new BigDecimal(lateFeeAmount), lateFeeTiers, // late fee and its tiers
                 UtilityMethod.FLAT, new BigDecimal("30.00"),           // water
                 UtilityMethod.NONE, BigDecimal.ZERO,                   // power
                 UtilityMethod.RUBS, BigDecimal.ZERO,                   // sewer

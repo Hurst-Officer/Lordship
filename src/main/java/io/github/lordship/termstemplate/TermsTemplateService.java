@@ -5,7 +5,10 @@ import io.github.lordship.audit.AuditContext;
 import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.DomainProblem;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.termstemplate.internal.TermsTemplateRepository;
 import io.github.lordship.termstemplate.internal.TermsTemplateRow;
@@ -26,7 +29,8 @@ import java.util.function.Function;
 public class TermsTemplateService {
 
     private static final Set<String> LATE_FEE_METHODS = Set.of(
-            FeeMethod.NONE.name(), FeeMethod.FLAT.name(), FeeMethod.PERCENT_OF_RENT.name());
+            FeeMethod.NONE.name(), FeeMethod.FLAT.name(), FeeMethod.PERCENT_OF_RENT.name(),
+            FeeMethod.TIERED.name());
 
     private static final Set<String> NSF_FEE_METHODS = Set.of(
             FeeMethod.NONE.name(), FeeMethod.FLAT.name(), FeeMethod.BANK_OR_FLAT.name());
@@ -161,8 +165,13 @@ public class TermsTemplateService {
         }
         TermsTemplateRow before = beforeOpt.get();
 
+        if (changes.containsKey("late_fee_tiers")) {
+            changes.put("late_fee_tiers", LateFeeTier.fromRequest(changes.get("late_fee_tiers")));
+        }
+
         validateDepositCeiling(before, changes);
         reconcileMethodAmountPairs(before, changes);
+        reconcileLateFeeTiers(before, changes);
 
         Optional<TermsTemplateRow> afterOpt =
                 termsTemplateRepository.patch(uuid, changes);
@@ -281,6 +290,69 @@ public class TermsTemplateService {
         }
     }
 
+    /**
+     * Keeps late_fee_tiers in step with late_fee_method, and checks the chart.
+     *
+     * <p>Any method other than TIERED empties the tiers. Under TIERED the
+     * chart must be complete right away, because a template has no draft
+     * status: the CHECK constraints on terms_template always apply.
+     *
+     * <p>The chart is checked again when the due day or grace period changes,
+     * because the first tier must start after the grace period ends.
+     *
+     * <p>Runs after {@link #reconcileMethodAmountPairs}, which has already
+     * checked the method and upper-cased it.
+     */
+    private static void reconcileLateFeeTiers(TermsTemplateRow before, Map<String, Object> changes) {
+        boolean touched = changes.containsKey("late_fee_method")
+                || changes.containsKey("late_fee_tiers")
+                || changes.containsKey("payment_due_day")
+                || changes.containsKey("grace_period_days");
+        if (!touched) {
+            return;
+        }
+
+        String method = changes.containsKey("late_fee_method")
+                ? (String) changes.get("late_fee_method")
+                : nameOf(before.lateFeeMethod());
+
+        if (!FeeMethod.TIERED.name().equals(method)) {
+            if (changes.containsKey("late_fee_method") || changes.containsKey("late_fee_tiers")) {
+                changes.put("late_fee_tiers", List.of());
+            }
+            return;
+        }
+
+        @SuppressWarnings("unchecked")
+        List<LateFeeTier> tiers = changes.containsKey("late_fee_tiers")
+                ? (List<LateFeeTier>) changes.get("late_fee_tiers")
+                : before.lateFeeTiers();
+        int paymentDueDay = toInt(changes.get("payment_due_day"), before.paymentDueDay());
+        int gracePeriodDays = toInt(changes.get("grace_period_days"), before.gracePeriodDays());
+
+        List<DomainProblem.Problem> problems =
+                LateFeeTier.problems(FeeMethod.TIERED, tiers, paymentDueDay, gracePeriodDays);
+        if (!problems.isEmpty()) {
+            throw InvalidRequest.withDetails("late_fee_tier.chart_not_valid", problems);
+        }
+    }
+
+    // The patched value when it is a whole number, otherwise the current one.
+    // A value that is not a number is left for the database to refuse.
+    private static int toInt(Object raw, int current) {
+        if (raw instanceof Number number) {
+            return number.intValue();
+        }
+        if (raw instanceof String text) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException e) {
+                return current;
+            }
+        }
+        return current;
+    }
+
     private static Map<String, Object> withoutHousekeeping(Map<String, Object> map) {
         Map<String, Object> copy = new LinkedHashMap<>(map);
         copy.keySet().removeAll(HOUSEKEEPING_KEYS);
@@ -305,4 +377,4 @@ public class TermsTemplateService {
     private static String nameOf(Enum<?> value) {
         return value == null ? null : value.name();
     }
-}
+}

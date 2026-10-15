@@ -604,6 +604,159 @@ public class TenancyChargeTermServiceTest {
         verifyNoInteractions(auditService);
     }
 
+    // ---- late fee tiers ------------------------------------------------------
+
+    @Test
+    void patchChargeTerm_shouldReadTheTiersFromTheRequestBody() {
+        // Arrange -- Jackson hands the body over as a list of maps
+        UUID uuid = UUID.randomUUID();
+        TenancyChargeTermRow before = rowWithTiers(uuid, List.of());
+        when(tenancyChargeTermRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(tenancyChargeTermRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
+
+        Map<String, Object> changes = changes("late_fee_tiers",
+                List.of(Map.of("fromDay", 9, "amount", 20), Map.of("fromDay", 13, "amount", "28.5")));
+
+        // Act
+        tenancyChargeTermService.patchChargeTerm(uuid, changes);
+
+        // Assert -- the repository gets typed tiers, with cents filled in
+        verify(tenancyChargeTermRepository).patch(eq(uuid), argThat(map -> List.of(
+                new LateFeeTier(9, new BigDecimal("20.00")),
+                new LateFeeTier(13, new BigDecimal("28.50")))
+                .equals(map.get("late_fee_tiers"))));
+    }
+
+    @Test
+    void patchChargeTerm_shouldAllowTieredWithNoChartYet() {
+        // Arrange -- like FLAT with no amount: the chart is typed in next
+        UUID uuid = UUID.randomUUID();
+        TenancyChargeTermRow before = rowWithLateFee(uuid, FeeMethod.FLAT, new BigDecimal("65.00"));
+        when(tenancyChargeTermRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(tenancyChargeTermRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
+
+        // Act
+        tenancyChargeTermService.patchChargeTerm(uuid, changes("late_fee_method", "tiered"));
+
+        // Assert -- the flat amount is zeroed, and the tiers are left for the office worker
+        verify(tenancyChargeTermRepository).patch(eq(uuid), argThat(map ->
+                "TIERED".equals(map.get("late_fee_method"))
+                        && BigDecimal.ZERO.equals(map.get("late_fee_amount"))
+                        && !map.containsKey("late_fee_tiers")));
+    }
+
+    @Test
+    void patchChargeTerm_shouldEmptyTheTiers_whenTheMethodStopsBeingTiered() {
+        // Arrange
+        UUID uuid = UUID.randomUUID();
+        TenancyChargeTermRow before = rowWithTiers(uuid, oldLeaseChart());
+        when(tenancyChargeTermRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(tenancyChargeTermRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
+
+        // Act
+        tenancyChargeTermService.patchChargeTerm(uuid, changes("late_fee_method", "FLAT"));
+
+        // Assert
+        verify(tenancyChargeTermRepository).patch(eq(uuid), argThat(
+                map -> List.of().equals(map.get("late_fee_tiers"))));
+    }
+
+    @Test
+    void patchChargeTerm_shouldIgnoreTiers_whenTheMethodIsNotTiered() {
+        // Arrange -- tiers sent for a FLAT fee would break the CHECK at submit
+        UUID uuid = UUID.randomUUID();
+        TenancyChargeTermRow before = rowWithLateFee(uuid, FeeMethod.FLAT, new BigDecimal("65.00"));
+        when(tenancyChargeTermRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(tenancyChargeTermRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
+
+        // Act
+        tenancyChargeTermService.patchChargeTerm(uuid, changes("late_fee_tiers",
+                List.of(Map.of("fromDay", 9, "amount", 20))));
+
+        // Assert
+        verify(tenancyChargeTermRepository).patch(eq(uuid), argThat(
+                map -> List.of().equals(map.get("late_fee_tiers"))));
+    }
+
+    @Test
+    void patchChargeTerm_shouldRejectATierWithNoAmount() {
+        // Arrange
+        UUID uuid = UUID.randomUUID();
+        when(tenancyChargeTermRepository.findById(uuid))
+                .thenReturn(Optional.of(rowWithTiers(uuid, List.of())));
+
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class, () -> tenancyChargeTermService
+                .patchChargeTerm(uuid, changes("late_fee_tiers", List.of(Map.of("fromDay", 9)))));
+
+        // Assert
+        assertEquals("late_fee_tier.incomplete", refused.problem().code());
+        assertEquals(LateFeeTier.FIELD, refused.problem().field());
+        verify(tenancyChargeTermRepository, never()).patch(any(), any());
+    }
+
+    @Test
+    void submit_shouldMoveTheOldLeaseChartToPending() {
+        // Arrange
+        UUID uuid = UUID.randomUUID();
+        when(tenancyChargeTermRepository.findById(uuid))
+                .thenReturn(Optional.of(rowWithTiers(uuid, oldLeaseChart())));
+        when(tenancyChargeTermRepository.updateStatus(uuid, TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING))
+                .thenReturn(Optional.of(row(uuid, TenancyTermStatus.PENDING)));
+
+        // Act / Assert
+        assertTrue(tenancyChargeTermService.submit(uuid).isPresent());
+    }
+
+    @Test
+    void submit_shouldRefuseTieredWithNoChart() {
+        // Arrange
+        UUID uuid = UUID.randomUUID();
+        when(tenancyChargeTermRepository.findById(uuid))
+                .thenReturn(Optional.of(rowWithTiers(uuid, List.of())));
+
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class,
+                () -> tenancyChargeTermService.submit(uuid));
+
+        // Assert
+        assertEquals(List.of("late_fee_tier.chart_required"), tierCodes(refused));
+        verify(tenancyChargeTermRepository, never()).updateStatus(any(), any(), any());
+    }
+
+    @Test
+    void submit_shouldRefuseAFirstTierInsideTheGracePeriod() {
+        // Arrange -- due on the 1st plus 5 grace days, so the 6th is still free
+        UUID uuid = UUID.randomUUID();
+        when(tenancyChargeTermRepository.findById(uuid)).thenReturn(Optional.of(rowWithTiers(uuid, List.of(
+                new LateFeeTier(6, new BigDecimal("20.00")),
+                new LateFeeTier(13, new BigDecimal("28.00"))))));
+
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class,
+                () -> tenancyChargeTermService.submit(uuid));
+
+        // Assert
+        assertEquals(List.of("late_fee_tier.inside_grace"), tierCodes(refused));
+    }
+
+    @Test
+    void submit_shouldRefuseTiersOutOfOrder_andReportEachBadTier() {
+        // Arrange -- tier 2 goes backwards, tier 3 has no fee
+        UUID uuid = UUID.randomUUID();
+        when(tenancyChargeTermRepository.findById(uuid)).thenReturn(Optional.of(rowWithTiers(uuid, List.of(
+                new LateFeeTier(13, new BigDecimal("28.00")),
+                new LateFeeTier(9, new BigDecimal("20.00")),
+                new LateFeeTier(25, BigDecimal.ZERO)))));
+
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class,
+                () -> tenancyChargeTermService.submit(uuid));
+
+        // Assert
+        assertEquals(List.of("late_fee_tier.out_of_order", "late_fee_tier.amount_required"), tierCodes(refused));
+    }
+
     // ---- activate ------------------------------------------------------------
 
     @Test
@@ -972,9 +1125,9 @@ public class TenancyChargeTermServiceTest {
                 new BigDecimal("45.00"), 2, 4,
                 new BigDecimal("45.00"), 2,
                 1, 5,
-                FeeMethod.NONE, BigDecimal.ZERO,
-                FeeMethod.NONE, BigDecimal.ZERO,
-                FeeMethod.NONE, BigDecimal.ZERO,
+                FeeMethod.NONE, BigDecimal.ZERO,           // rule violation
+                FeeMethod.NONE, BigDecimal.ZERO,           // nsf
+                FeeMethod.NONE, BigDecimal.ZERO, List.of(), // late fee and its tiers
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
@@ -1034,6 +1187,34 @@ public class TenancyChargeTermServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO);
     }
 
+    /** A PROPOSED term with a TIERED late fee. Due on the 1st with 5 grace days, so the 6th is still free. */
+    private static TenancyChargeTermRow rowWithTiers(UUID uuid, List<LateFeeTier> tiers) {
+        return row(uuid, VALID_AT, TenancyTermStatus.PROPOSED, TenancyTermSource.LEASE, null,
+                new BigDecimal("650.00"), 2, 4,
+                FeeMethod.TIERED, BigDecimal.ZERO, tiers,
+                FeeMethod.FLAT, new BigDecimal("35.00"),
+                UtilityMethod.NONE, BigDecimal.ZERO,
+                SecurityDepositMethod.NONE, BigDecimal.ZERO);
+    }
+
+    /** The chart from the old leases: 9th $20, 13th $28, 16th $34, 21st $44, 25th $60. */
+    private static List<LateFeeTier> oldLeaseChart() {
+        return List.of(
+                new LateFeeTier(9, new BigDecimal("20.00")),
+                new LateFeeTier(13, new BigDecimal("28.00")),
+                new LateFeeTier(16, new BigDecimal("34.00")),
+                new LateFeeTier(21, new BigDecimal("44.00")),
+                new LateFeeTier(25, new BigDecimal("60.00")));
+    }
+
+    /** The problem codes reported on late_fee_tiers. */
+    private static List<String> tierCodes(InvalidRequest refused) {
+        return refused.details().stream()
+                .filter(problem -> LateFeeTier.FIELD.equals(problem.field()))
+                .map(DomainProblem.Problem::code)
+                .toList();
+    }
+
     private static TenancyChargeTermRow rowWithNsfFee(UUID uuid, FeeMethod method, BigDecimal amount) {
         return row(uuid, VALID_AT, TenancyTermStatus.PROPOSED, TenancyTermSource.LEASE, null,
                 new BigDecimal("650.00"), 2, 4,
@@ -1073,8 +1254,33 @@ public class TenancyChargeTermServiceTest {
                 SecurityDepositMethod.NONE, BigDecimal.ZERO);
     }
 
+    /** No late fee tiers. Delegates so the big constructor stays in one place. */
+    private static TenancyChargeTermRow row(
+            UUID uuid,
+            LocalDate validAt,
+            TenancyTermStatus status,
+            TenancyTermSource source,
+            UUID sourceUuid,
+            BigDecimal rate,
+            int allowedCars,
+            int carsMax,
+            FeeMethod lateFeeMethod,
+            BigDecimal lateFeeAmount,
+            FeeMethod nsfFeeMethod,
+            BigDecimal nsfFeeAmount,
+            UtilityMethod waterMethod,
+            BigDecimal waterFlatAmount,
+            SecurityDepositMethod securityDepositMethod,
+            BigDecimal securityDepositAmount) {
+
+        return row(uuid, validAt, status, source, sourceUuid, rate, allowedCars, carsMax,
+                lateFeeMethod, lateFeeAmount, List.of(), nsfFeeMethod, nsfFeeAmount,
+                waterMethod, waterFlatAmount,
+                securityDepositMethod, securityDepositAmount);
+    }
+
     /**
-     * The one place the 38-component constructor is written out. Rule violation,
+     * The one place the 39-component constructor is written out. Rule violation,
      * power, sewer and trash stay NONE/zero -- the tests that exercise those
      * columns go through the patch map, not the row.
      */
@@ -1089,6 +1295,7 @@ public class TenancyChargeTermServiceTest {
             int carsMax,
             FeeMethod lateFeeMethod,
             BigDecimal lateFeeAmount,
+            List<LateFeeTier> lateFeeTiers,
             FeeMethod nsfFeeMethod,
             BigDecimal nsfFeeAmount,
             UtilityMethod waterMethod,
@@ -1114,7 +1321,7 @@ public class TenancyChargeTermServiceTest {
                 5,
                 FeeMethod.NONE, BigDecimal.ZERO,          // rule violation
                 nsfFeeMethod, nsfFeeAmount,
-                lateFeeMethod, lateFeeAmount,
+                lateFeeMethod, lateFeeAmount, lateFeeTiers,
                 waterMethod, waterFlatAmount,
                 UtilityMethod.NONE, BigDecimal.ZERO,      // power
                 UtilityMethod.NONE, BigDecimal.ZERO,      // sewer

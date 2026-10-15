@@ -2,6 +2,7 @@ package io.github.lordship.tenancyterms.internal;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancyterms.TenancyTermSource;
@@ -45,6 +46,7 @@ public class TenancyChargeTermRowMapper implements RowMapper<TenancyChargeTermRo
 
                 enumOf(FeeMethod.class, rs.getString("late_fee_method")),
                 rs.getBigDecimal("late_fee_amount"),
+                LateFeeTier.fromJson(rs.getString("late_fee_tiers")),
 
                 enumOf(UtilityMethod.class, rs.getString("water_method")),
                 rs.getBigDecimal("water_flat_amount"),

@@ -2,12 +2,14 @@ package io.github.lordship.termstemplate.internal;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 
@@ -41,6 +43,7 @@ public record TermsTemplateResponse(
 
         FeeMethod lateFeeMethod,
         BigDecimal lateFeeAmount,
+        List<LateFeeTier> lateFeeTiers,
 
         UtilityMethod waterMethod,
         BigDecimal waterFlatAmount,
@@ -71,7 +74,7 @@ public record TermsTemplateResponse(
                 terms.paymentDueDay(), terms.gracePeriodDays(),
                 terms.ruleViolationFeeMethod(), terms.ruleViolationFeeAmount(),
                 terms.nsfFeeMethod(),  terms.nsfFeeAmount(),
-                terms.lateFeeMethod(), terms.lateFeeAmount(),
+                terms.lateFeeMethod(), terms.lateFeeAmount(), terms.lateFeeTiers(),
                 terms.waterMethod(), terms.waterFlatAmount(),
                 terms.powerMethod(), terms.powerFlatAmount(),
                 terms.sewerMethod(), terms.sewerFlatAmount(),

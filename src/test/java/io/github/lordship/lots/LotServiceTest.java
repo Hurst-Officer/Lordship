@@ -587,9 +587,9 @@ public class LotServiceTest {
                 new BigDecimal("45.00"), 2, 4,
                 new BigDecimal("45.00"), 2,
                 1, 5,
-                FeeMethod.NONE, BigDecimal.ZERO,
-                FeeMethod.NONE, BigDecimal.ZERO,
-                FeeMethod.NONE, BigDecimal.ZERO,
+                FeeMethod.NONE, BigDecimal.ZERO,            // rule violation
+                FeeMethod.NONE, BigDecimal.ZERO,            // nsf
+                FeeMethod.NONE, BigDecimal.ZERO, List.of(), // late fee and its tiers
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,

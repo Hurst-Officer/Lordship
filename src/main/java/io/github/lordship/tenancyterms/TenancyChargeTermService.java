@@ -11,6 +11,7 @@ import io.github.lordship.shared.DomainProblem;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancy.Tenancy;
@@ -35,7 +36,8 @@ public class TenancyChargeTermService {
     private static final BigDecimal MAX_DEPOSIT_MONTHS = new BigDecimal("5");
 
     private static final Set<String> LATE_FEE_METHODS = Set.of(
-            FeeMethod.NONE.name(), FeeMethod.FLAT.name(), FeeMethod.PERCENT_OF_RENT.name());
+            FeeMethod.NONE.name(), FeeMethod.FLAT.name(), FeeMethod.PERCENT_OF_RENT.name(),
+            FeeMethod.TIERED.name());
 
     private static final Set<String> NSF_FEE_METHODS = Set.of(
             FeeMethod.NONE.name(), FeeMethod.FLAT.name(), FeeMethod.BANK_OR_FLAT.name());
@@ -359,6 +361,7 @@ public class TenancyChargeTermService {
     /** Applies one patch to one term and writes the change to the audit log. */
     private Optional<TenancyChargeTermRow> patchOne(TenancyChargeTermRow before, Map<String, Object> changes) {
         reconcileMethodAmountPairs(before, changes);
+        reconcileLateFeeTiers(before, changes);
 
         Optional<TenancyChargeTermRow> afterOpt = tenancyChargeTermRepository.patch(before.uuid(), changes);
         if (afterOpt.isEmpty()) {
@@ -686,6 +689,11 @@ public class TenancyChargeTermService {
             }
         }
 
+        // late_fee_tiers: what term_late_fee_tiers_* check, plus the order of
+        // the tiers and the grace period, which the database cannot check
+        problems.addAll(LateFeeTier.problems(row.lateFeeMethod(), row.lateFeeTiers(),
+                row.paymentDueDay(), row.gracePeriodDays()));
+
         if (!problems.isEmpty()) {
             throw InvalidRequest.withDetails("term.not_ready_to_submit", problems);
         }
@@ -738,11 +746,39 @@ public class TenancyChargeTermService {
         }
     }
 
+    /**
+     * Keeps late_fee_tiers in step with late_fee_method. The tiers only mean
+     * something under TIERED, so every other method empties them.
+     *
+     * <p>Runs after {@link #reconcileMethodAmountPairs}, which has already
+     * checked the method and upper-cased it. That same method zeroes
+     * late_fee_amount under TIERED.
+     *
+     * <p>The chart itself is not checked here. A half-finished chart is fine
+     * on a PROPOSED term, and {@link #submit(UUID)} checks it.
+     */
+    private static void reconcileLateFeeTiers(TenancyChargeTermRow before, Map<String, Object> changes) {
+        boolean methodTouched = changes.containsKey("late_fee_method");
+        boolean tiersTouched = changes.containsKey("late_fee_tiers");
+        if (!methodTouched && !tiersTouched) {
+            return;
+        }
+
+        String method = methodTouched
+                ? (String) changes.get("late_fee_method")
+                : nameOf(before.lateFeeMethod());
+
+        if (!FeeMethod.TIERED.name().equals(method)) {
+            changes.put("late_fee_tiers", List.of());
+        }
+    }
+
     private static Map<String, Object> coerce(Map<String, Object> changes) {
 
         Map<String, Object> coerced = new LinkedHashMap<>(changes);
         coerced.replaceAll((column, value) -> switch (column) {
             case "valid_at" -> toDate(column, value);
+            case "late_fee_tiers" -> LateFeeTier.fromRequest(value);
             default -> value;
         });
         return coerced;
@@ -781,4 +817,4 @@ public class TenancyChargeTermService {
     private static String nameOf(Enum<?> value) {
         return value == null ? null : value.name();
     }
-}
+}

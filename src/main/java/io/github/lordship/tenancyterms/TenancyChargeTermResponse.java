@@ -2,12 +2,14 @@ package io.github.lordship.tenancyterms;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 // What the API returns for a charge term. Public so the instruments package can
@@ -40,6 +42,7 @@ public record TenancyChargeTermResponse(
 
         FeeMethod lateFeeMethod,
         BigDecimal lateFeeAmount,
+        List<LateFeeTier> lateFeeTiers,
 
         UtilityMethod waterMethod,
         BigDecimal waterFlatAmount,
@@ -81,7 +84,7 @@ public record TenancyChargeTermResponse(
                 term.paymentDueDay(), term.gracePeriodDays(),
                 term.ruleViolationFeeMethod(), term.ruleViolationFeeAmount(),
                 term.nsfFeeMethod(), term.nsfFeeAmount(),
-                term.lateFeeMethod(), term.lateFeeAmount(),
+                term.lateFeeMethod(), term.lateFeeAmount(), term.lateFeeTiers(),
                 term.waterMethod(), term.waterFlatAmount(),
                 term.powerMethod(), term.powerFlatAmount(),
                 term.sewerMethod(), term.sewerFlatAmount(),
