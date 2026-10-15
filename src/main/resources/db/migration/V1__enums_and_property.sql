@@ -96,8 +96,20 @@ CREATE TABLE terms_template ( -- note when the property is NULL this is a global
                                 nsf_fee_amount    NUMERIC(12,2) NOT NULL DEFAULT 25.0 CONSTRAINT terms_template_nsf_fee_amount_must_not_be_negative CHECK (nsf_fee_amount >= 0),
 
                                 late_fee_method   TEXT          NOT NULL DEFAULT 'FLAT'
-                                    CONSTRAINT terms_template_late_fee_method_must_be_known CHECK (late_fee_method IN ('NONE','FLAT', 'PERCENT_OF_RENT')),
+                                    CONSTRAINT terms_template_late_fee_method_must_be_known CHECK (late_fee_method IN ('NONE','FLAT', 'PERCENT_OF_RENT', 'TIERED')),
                                 late_fee_amount   NUMERIC(12,2) NOT NULL DEFAULT 65.0 CONSTRAINT terms_template_late_fee_amount_must_not_be_negative CHECK (late_fee_amount >= 0), -- can be a percent OR a flat rate
+                                late_fee_tiers    JSONB         NOT NULL DEFAULT '[]'::jsonb
+                                    CONSTRAINT terms_template_late_fee_tiers_must_be_well_formed CHECK (
+                                        jsonb_typeof(late_fee_tiers) = 'array'
+                                        AND NOT jsonb_path_exists(late_fee_tiers,
+                                            '$[*] ? (!(@.from_day.type() == "number" && @.from_day == @.from_day.floor()
+                                                       && @.from_day >= 2 && @.from_day <= 31
+                                                       && @.amount.type() == "number" && @.amount > 0))')
+                                        ),
+    -- note: TIERED example: [{"from_day": 9, "amount": 20.00}, {"from_day": 13, "amount": 28.00}]
+    -- from_day is a day of the month. Each tier runs until the next one starts. The last tier runs to month end.
+    -- The fee is the one tier the payment date lands in. Tiers do not add up.
+    -- Java checks the order of the tiers and that the first tier starts after the grace period.
 
                                 water_method      TEXT          NOT NULL DEFAULT 'NONE'
                                     CONSTRAINT terms_template_water_method_must_be_known CHECK (water_method IN ('NONE','INCLUDED','FLAT','RUBS','SUBMETERED')),
@@ -125,6 +137,10 @@ CREATE TABLE terms_template ( -- note when the property is NULL this is a global
                                 CONSTRAINT terms_template_late_fee_amount_must_match_method CHECK (
                                     CASE WHEN late_fee_method IN ('FLAT', 'PERCENT_OF_RENT')  THEN late_fee_amount > 0
                                          ELSE late_fee_amount = 0 END
+                                    ),
+                                CONSTRAINT terms_template_late_fee_tiers_must_match_method CHECK (
+                                    CASE WHEN late_fee_method = 'TIERED' THEN late_fee_tiers <> '[]'::jsonb
+                                         ELSE late_fee_tiers = '[]'::jsonb END
                                     ),
                                 CONSTRAINT terms_template_water_amount_must_match_method CHECK (
                                     CASE WHEN water_method = 'FLAT' THEN water_flat_amount > 0

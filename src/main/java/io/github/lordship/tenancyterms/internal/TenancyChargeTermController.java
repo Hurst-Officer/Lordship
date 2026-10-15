@@ -39,6 +39,7 @@ public class TenancyChargeTermController {
             Map.entry("nsfFeeAmount", "nsf_fee_amount"),
             Map.entry("lateFeeMethod", "late_fee_method"),
             Map.entry("lateFeeAmount", "late_fee_amount"),
+            Map.entry("lateFeeTiers", "late_fee_tiers"),
             Map.entry("waterMethod", "water_method"),
             Map.entry("waterFlatAmount", "water_flat_amount"),
             Map.entry("powerMethod", "power_method"),

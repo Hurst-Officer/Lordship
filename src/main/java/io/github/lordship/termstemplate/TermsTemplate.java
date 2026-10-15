@@ -2,11 +2,13 @@ package io.github.lordship.termstemplate;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 // One property's standard deal for one agreement type: the terms a new tenancy is created from.
@@ -40,6 +42,7 @@ public record TermsTemplate(
 
         FeeMethod lateFeeMethod,
         BigDecimal lateFeeAmount,
+        List<LateFeeTier> lateFeeTiers, // the chart for TIERED; empty for every other method
 
         UtilityMethod waterMethod,
         BigDecimal waterFlatAmount,

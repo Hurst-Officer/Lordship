@@ -76,8 +76,8 @@ public enum DocumentToken {
 
     // Method tokens carry Format.ENUM: these are the fields a clause may branch on.
     LATE_FEE_METHOD("term.late_fee_method", Source.CHARGE_TERM, Format.ENUM,
-            "NONE / FLAT / PERCENT_OF_RENT -- selects which late fee clause prints",
-            Set.of("NONE", "FLAT", "PERCENT_OF_RENT")),
+            "NONE / FLAT / PERCENT_OF_RENT / TIERED -- selects which late fee clause prints",
+            Set.of("NONE", "FLAT", "PERCENT_OF_RENT", "TIERED")),
     LATE_FEE_AMOUNT("term.late_fee_amount", Source.CHARGE_TERM, Format.MONEY,
             "Late fee, when the method is FLAT",
             "term.late_fee_method", Set.of("FLAT")),
@@ -90,6 +90,25 @@ public enum DocumentToken {
     LATE_FEE_PERCENT_IN_WORDS("term.late_fee_percent_in_words", Source.CHARGE_TERM, Format.PERCENT_WORDS,
             "Late fee percentage spelled out, e.g. one and one half percent",
             "term.late_fee_method", Set.of("PERCENT_OF_RENT")),
+
+    // ---- term.late_fee_tiers : the old leases' late fee chart -----------------
+    // The fee depends on the day payment arrives. LATE_FEE_TIERS is the list a
+    // clause repeats over, and the late_fee_tier.* tokens are its columns. The
+    // first row is the free period (1st through the day before the first tier,
+    // $0.00), so the chart reads like the paper one. The list is empty unless the late fee
+    // method is TIERED.
+
+    LATE_FEE_TIERS("term.late_fee_tiers", Source.CHARGE_TERM, Format.REPEAT,
+            "The late fee chart, when the method is TIERED -- repeat a clause over this to print the table"),
+    LATE_FEE_TIER_PERIOD("late_fee_tier.period", Source.COMPUTED, Format.TEXT,
+            "The days one row covers, as 9th to 12th; the last row runs to end of month",
+            "term.late_fee_tiers"),
+    LATE_FEE_TIER_FROM_DAY("late_fee_tier.from_day", Source.CHARGE_TERM, Format.ORDINAL,
+            "First day of the month this row covers, as 9th",
+            "term.late_fee_tiers"),
+    LATE_FEE_TIER_AMOUNT("late_fee_tier.amount", Source.CHARGE_TERM, Format.MONEY,
+            "Late fee for a payment received during this row's days",
+            "term.late_fee_tiers"),
 
     NSF_FEE_METHOD("term.nsf_fee_method", Source.CHARGE_TERM, Format.ENUM,
             "NONE / FLAT / BANK_OR_FLAT -- selects which returned-payment clause prints",
@@ -481,7 +500,7 @@ public enum DocumentToken {
     /**
      * The values a clause condition on this token may name. Deliberately the
      * per-COLUMN subset rather than the whole Java enum -- late fee takes
-     * NONE / FLAT / PERCENT_OF_RENT while NSF takes NONE / FLAT / BANK_OR_FLAT,
+     * NONE / FLAT / PERCENT_OF_RENT / TIERED while NSF takes NONE / FLAT / BANK_OR_FLAT,
      * both of them FeeMethod. Empty for anything that is not an ENUM token.
      */
     public Set<String> allowedValues() {

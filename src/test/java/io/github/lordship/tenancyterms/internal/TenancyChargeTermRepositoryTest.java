@@ -105,6 +105,7 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
         assertEquals(0, read.nsfFeeAmount().compareTo(new BigDecimal("202.00")));
         assertEquals(FeeMethod.PERCENT_OF_RENT, read.lateFeeMethod());
         assertEquals(0, read.lateFeeAmount().compareTo(new BigDecimal("203.00")));
+        assertEquals(List.of(new LateFeeTier(12, new BigDecimal("204.00"))), read.lateFeeTiers());
 
         assertEquals(UtilityMethod.FLAT, read.waterMethod());
         assertEquals(0, read.waterFlatAmount().compareTo(new BigDecimal("301.00")));
@@ -238,6 +239,43 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
         // Act / Assert
         assertThrows(DataIntegrityViolationException.class, () -> tenancyChargeTermRepository.updateStatus(
                 saved.uuid(), TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING));
+    }
+
+    @Test
+    void updateStatus_shouldRaiseTheTiersConstraint_onLeavingProposed() {
+        // Arrange -- TIERED with no chart: legal to save, illegal to submit
+        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(draft(LocalDate.of(2026, 9, 1)));
+        tenancyChargeTermRepository.patch(saved.uuid(), Map.of(
+                "late_fee_method", "TIERED",
+                "late_fee_amount", BigDecimal.ZERO));
+
+        // Act / Assert
+        assertThrows(DataIntegrityViolationException.class, () -> tenancyChargeTermRepository.updateStatus(
+                saved.uuid(), TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING));
+    }
+
+    @Test
+    void updateStatus_shouldSubmitATieredTerm_whoseChartIsComplete() {
+        // Arrange -- proves the JSON Java writes passes the CHECK constraints
+        TenancyChargeTermRow saved = tenancyChargeTermRepository.save(draft(LocalDate.of(2026, 9, 1)));
+        List<LateFeeTier> chart = List.of(
+                new LateFeeTier(9, new BigDecimal("20.00")),
+                new LateFeeTier(13, new BigDecimal("28.00")),
+                new LateFeeTier(16, new BigDecimal("34.00")),
+                new LateFeeTier(21, new BigDecimal("44.00")),
+                new LateFeeTier(25, new BigDecimal("60.00")));
+        tenancyChargeTermRepository.patch(saved.uuid(), Map.of(
+                "late_fee_method", "TIERED",
+                "late_fee_amount", BigDecimal.ZERO,
+                "late_fee_tiers", chart));
+
+        // Act
+        TenancyChargeTermRow pending = tenancyChargeTermRepository.updateStatus(
+                saved.uuid(), TenancyTermStatus.PROPOSED, TenancyTermStatus.PENDING).orElseThrow();
+
+        // Assert
+        assertEquals(FeeMethod.TIERED, pending.lateFeeMethod());
+        assertEquals(chart, pending.lateFeeTiers());
     }
 
     @Test
@@ -567,6 +605,7 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
                 FeeMethod.FLAT, new BigDecimal("201.00"),
                 FeeMethod.BANK_OR_FLAT, new BigDecimal("202.00"),
                 FeeMethod.PERCENT_OF_RENT, new BigDecimal("203.00"),
+                List.of(new LateFeeTier(12, new BigDecimal("204.00"))),
                 UtilityMethod.FLAT, new BigDecimal("301.00"),
                 UtilityMethod.RUBS, new BigDecimal("302.00"),
                 UtilityMethod.SUBMETERED, new BigDecimal("303.00"),

@@ -5,6 +5,7 @@ import io.github.lordship.TestDataSupport;
 import io.github.lordship.properties.internal.PropertyRow;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SystemPrincipal;
 import io.github.lordship.shared.UtilityMethod;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         assertThat(saved.paymentDueDay()).isEqualTo(1);
         assertThat(saved.gracePeriodDays()).isEqualTo(7);
         assertThat(saved.lateFeeMethod()).isEqualTo(FeeMethod.FLAT);
+        assertThat(saved.lateFeeTiers()).isEmpty();
         assertThat(saved.nsfFeeMethod()).isEqualTo(FeeMethod.FLAT);
         assertThat(saved.waterMethod()).isEqualTo(UtilityMethod.NONE);
         assertThat(saved.trashMethod()).isEqualTo(UtilityMethod.NONE);
@@ -335,6 +337,58 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         assertThatThrownBy(() -> termsTemplateRepository.patch(saved.uuid(), Map.of(
                 "late_fee_method", "NONE",
                 "late_fee_amount", new BigDecimal("65.00"))))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void patch_shouldStoreATieredChart_andCopyItToAProperty() {
+        // Arrange
+        TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
+                null, "RT Tiered", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+        List<LateFeeTier> chart = List.of(
+                new LateFeeTier(9, new BigDecimal("20.00")),
+                new LateFeeTier(13, new BigDecimal("28.00")),
+                new LateFeeTier(25, new BigDecimal("60.00")));
+
+        // Act -- the repository turns the list into JSONB
+        TermsTemplateRow patched = termsTemplateRepository.patch(saved.uuid(), Map.of(
+                "late_fee_method", "TIERED",
+                "late_fee_amount", BigDecimal.ZERO,
+                "late_fee_tiers", chart)).orElseThrow();
+        PropertyRow property = testData.insertProperty("RX");
+        TermsTemplateRow copy = termsTemplateRepository.saveCopy(
+                patched.copyTo(property.uuid(), SystemPrincipal.AGENT_UUID));
+
+        // Assert -- what went in comes back out, on the template and on its copy
+        assertThat(patched.lateFeeMethod()).isEqualTo(FeeMethod.TIERED);
+        assertThat(patched.lateFeeTiers()).isEqualTo(chart);
+        assertThat(copy.lateFeeTiers()).isEqualTo(chart);
+    }
+
+    @Test
+    void patch_shouldBeRejected_whenTieredHasNoChart() {
+        // Arrange
+        TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
+                null, "RT Empty Chart", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+
+        // Act / Assert -- terms_template_late_fee_tiers_must_match_method
+        assertThatThrownBy(() -> termsTemplateRepository.patch(saved.uuid(), Map.of(
+                "late_fee_method", "TIERED",
+                "late_fee_amount", BigDecimal.ZERO)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void patch_shouldBeRejected_whenATierStartsOnDayOne() {
+        // Arrange
+        TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
+                null, "RT Day One", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+
+        // Act / Assert -- terms_template_late_fee_tiers_must_be_well_formed
+        assertThatThrownBy(() -> termsTemplateRepository.patch(saved.uuid(), Map.of(
+                "late_fee_method", "TIERED",
+                "late_fee_amount", BigDecimal.ZERO,
+                "late_fee_tiers", List.of(new LateFeeTier(1, new BigDecimal("20.00"))))))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 

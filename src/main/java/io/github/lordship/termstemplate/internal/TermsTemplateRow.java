@@ -2,12 +2,14 @@ package io.github.lordship.termstemplate.internal;
 
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.FeeMethod;
+import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.shared.UtilityMethod;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 // Component order matches the column order in V1__enums_and_property.sql.
@@ -42,6 +44,7 @@ public record TermsTemplateRow(
 
         FeeMethod lateFeeMethod,
         BigDecimal lateFeeAmount,
+        List<LateFeeTier> lateFeeTiers, // the chart for TIERED; empty for every other method
 
         UtilityMethod waterMethod,
         BigDecimal waterFlatAmount,
@@ -72,7 +75,7 @@ public record TermsTemplateRow(
                 paymentDueDay, gracePeriodDays,
                 ruleViolationFeeMethod, ruleViolationFeeAmount,
                 nsfFeeMethod, nsfFeeAmount,
-                lateFeeMethod, lateFeeAmount,
+                lateFeeMethod, lateFeeAmount, lateFeeTiers,
                 waterMethod, waterFlatAmount,
                 powerMethod, powerFlatAmount,
                 sewerMethod, sewerFlatAmount,
@@ -94,7 +97,7 @@ public record TermsTemplateRow(
                 null, null,                    // paymentDueDay, gracePeriodDays
                 null, null,                    // ruleViolationFee method, amount
                 null, null,                    // nsfFee method, amount
-                null, null,                    // lateFee method, amount
+                null, null, null,              // lateFee method, amount, tiers
                 null, null,                    // water method, amount
                 null, null,                    // power method, amount
                 null, null,                    // sewer method, amount
@@ -117,7 +120,7 @@ public record TermsTemplateRow(
                 paymentDueDay, gracePeriodDays,
                 ruleViolationFeeMethod, ruleViolationFeeAmount,
                 nsfFeeMethod, nsfFeeAmount,
-                lateFeeMethod, lateFeeAmount,
+                lateFeeMethod, lateFeeAmount, lateFeeTiers,
                 waterMethod, waterFlatAmount,
                 powerMethod, powerFlatAmount,
                 sewerMethod, sewerFlatAmount,
