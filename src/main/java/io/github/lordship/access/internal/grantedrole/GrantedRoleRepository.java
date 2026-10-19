@@ -48,6 +48,22 @@ public class GrantedRoleRepository {
                 .list();
     }
 
+    // skips revoked grants and deleted roles, the same as the permission lookup
+    public List<String> findActiveRoleNamesForAgent(UUID agentId) {
+        return jdbc.sql("""
+                SELECT r.role_name
+                FROM granted_role gr
+                JOIN agent_role r ON r.uuid = gr.role_id
+                WHERE gr.agent_id = :agentId
+                AND gr.deleted_at IS NULL
+                AND r.deleted_at IS NULL
+                ORDER BY r.role_name
+                """)
+                .param("agentId", agentId)
+                .query(String.class)
+                .list();
+    }
+
     public List<GrantedRoleRow> findByRoleId(UUID roleId) {
         return jdbc.sql("""
                 SELECT * FROM granted_role

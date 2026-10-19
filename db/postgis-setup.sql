@@ -12,7 +12,8 @@
 -- leaves it standing. Otherwise every flyway reset needs a superuser again.
 
 -- Set this to the role the application connects as (DB_USERNAME).
-\set app_user 'eman2022'
+-- \set app_user 'eman2022'
+\set app_user 'postgres'
 
 \c lordship
 CREATE SCHEMA IF NOT EXISTS postgis;
@@ -21,6 +22,8 @@ ALTER DATABASE lordship SET search_path = public, postgis;
 ALTER ROLE :app_user IN DATABASE lordship SET search_path = public, postgis;
 GRANT USAGE ON SCHEMA postgis TO :app_user;
 
+GRANT USAGE ON SCHEMA postgis TO PUBLIC;
+
 \c lordship_test
 CREATE SCHEMA IF NOT EXISTS postgis;
 CREATE EXTENSION IF NOT EXISTS postgis SCHEMA postgis;
@@ -28,6 +31,7 @@ ALTER DATABASE lordship_test SET search_path = public, postgis;
 ALTER ROLE :app_user IN DATABASE lordship_test SET search_path = public, postgis;
 GRANT USAGE ON SCHEMA postgis TO :app_user;
 
+GRANT USAGE ON SCHEMA postgis TO PUBLIC;
 -- If postgis was already installed into public, move it first:
 --   ALTER EXTENSION postgis SET SCHEMA postgis;
 -- and if that complains, on a dev database it is simpler to drop and recreate:

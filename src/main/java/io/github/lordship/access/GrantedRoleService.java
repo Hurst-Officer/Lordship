@@ -131,6 +131,11 @@ public class GrantedRoleService {
                 .toList();
     }
 
+    // names of the roles the agent holds right now, for the login and /self responses
+    public List<String> findRoleNamesForAgent(UUID agentId) {
+        return grantedRoleRepository.findActiveRoleNamesForAgent(agentId);
+    }
+
     // the reverse lookup: everyone currently holding a given role
     public List<GrantedRole> findAgentsWithRole(UUID roleId) {
         return grantedRoleRepository.findByRoleId(roleId)
@@ -138,4 +143,4 @@ public class GrantedRoleService {
                 .map(GrantedRoleRow::toGrantedRole)
                 .toList();
     }
-}
+}

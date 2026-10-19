@@ -187,6 +187,7 @@ WHERE r.role_name = 'Office Staff'
                             'agents:view',
                             'agents:view_own',
                             'agents:edit_own',
+                            'agent_roles:view',
                             'permissions:view',
                             'role_permissions:view',
                             'persons_ssn:view',
@@ -249,8 +250,10 @@ SELECT uuidv7(), r.uuid, p.uuid
 FROM agent_role r, permission p
 WHERE r.role_name = 'Property Manager'
   AND p.permission_name IN (
+                            'agents:view',
                             'agents:view_own',
                             'agents:edit_own',
+                            'agent_roles:view',
                             'persons:view',
                             'persons:edit',
                             'persons:create',
