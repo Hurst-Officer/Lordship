@@ -1,6 +1,6 @@
 package io.github.lordship.access;
 
 
-public record AgentAuthResult(AgentWithPerson agentWithPerson, String token) {
+public record AgentAuthResult(AgentIdentity identity, String token) {
 
-}
+}

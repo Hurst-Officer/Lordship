@@ -1,13 +1,17 @@
 package io.github.lordship.access.internal.agents;
 
 import io.github.lordship.access.*;
+import io.github.lordship.identity.AgentPrincipal;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -38,8 +42,9 @@ public class AgentController {
     /**
      * Sign-in. What the frontend can get back:
      * <ul>
-     *   <li>200 -- the token. It is good until {@code jwt.expiration-ms}; nothing here
-     *       touches an agent who is already signed in.</li>
+     *   <li>200 -- the token, plus the agent's {@code roles} and {@code permissions}
+     *       (sorted names). The token is good until {@code jwt.expiration-ms}; nothing
+     *       here touches an agent who is already signed in.</li>
      *   <li>401, {@code code: auth.bad_credentials} -- the same body for an unknown email
      *       and a wrong password, on purpose. Show {@code message}; don't try to say which.</li>
      *   <li>429, {@code code: auth.too_many_attempts} plus a {@code Retry-After} header in
@@ -62,9 +67,31 @@ public class AgentController {
                                         httpRequest.getHeader("User-Agent"),
                                         httpRequest.getRemoteAddr()
                 )
-                .map(result -> AgentLoginResponse.from(result.agentWithPerson(), result.token()))
+                .map(result -> AgentLoginResponse.from(result.identity(), result.token()))
                 .map(ResponseEntity::ok)
                 .orElseThrow(LoginRefused::badCredentials);
+    }
+
+    /**
+     * Who am I? Same body as the login response, without the token.
+     * Any valid token works; no permission is needed. No token gets a 401.
+     * Glade calls this after a 403 to redraw the screen without a new login.
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/self")
+    public ResponseEntity<AgentSelfResponse> getSelf(Authentication authentication) {
+        AgentPrincipal principal = (AgentPrincipal) authentication.getPrincipal();
+
+        // the same authorities the 403 check just used for this request
+        List<String> permissions = authentication.getAuthorities()
+                .stream()
+                .map(GrantedAuthority::getAuthority)
+                .toList();
+
+        return agentService.findSelf(principal.agentUuid(), permissions)
+                .map(AgentSelfResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 
 

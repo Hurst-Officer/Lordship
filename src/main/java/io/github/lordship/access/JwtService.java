@@ -9,7 +9,6 @@ import org.springframework.stereotype.Service;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -26,7 +25,9 @@ public class JwtService {
         this.expirationMs = expirationMs;
     }
 
-    public String generateToken(AgentWithPerson agentWithPerson, Set<Permission> permissions) {
+    // Permissions are left out on purpose. Grants change during the day, and a token
+    // would carry a stale copy. The server looks them up on every request instead.
+    public String generateToken(AgentWithPerson agentWithPerson) {
         return Jwts.builder()
                 .subject(agentWithPerson.agent().uuid().toString())
                 .claim("user_type", "AGENT")

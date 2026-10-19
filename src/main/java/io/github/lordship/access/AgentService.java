@@ -154,12 +154,38 @@ public class AgentService {
             return personService.findByID(ar.personId())
                     .map(person -> {
                         AgentWithPerson agentWithPerson = new AgentWithPerson(ar.toAgent(), person);
-                        Set<Permission> permissions = permissionService.findPermissionsForAgent(ar.uuid());
-                        String token = jwtService.generateToken(agentWithPerson, permissions);
-                        return new AgentAuthResult(agentWithPerson, token);
+                        AgentIdentity identity = new AgentIdentity(
+                                agentWithPerson,
+                                grantedRoleService.findRoleNamesForAgent(ar.uuid()),
+                                permissionNamesForAgent(ar.uuid()));
+                        String token = jwtService.generateToken(agentWithPerson);
+                        return new AgentAuthResult(identity, token);
                     });
         }
         return Optional.empty();
+    }
+
+    /**
+     * For GET /api/agents/self. The caller passes in the permissions from the request's
+     * Authentication. That is the same set the 403 check uses, so the screen and the
+     * server always agree.
+     */
+    public Optional<AgentIdentity> findSelf(UUID agentId, List<String> permissions) {
+        return agentRepository.findById(agentId)
+                .flatMap(row -> personService.findByID(row.personId())
+                        .map(person -> new AgentIdentity(
+                                new AgentWithPerson(row.toAgent(), person),
+                                grantedRoleService.findRoleNamesForAgent(agentId),
+                                permissions)));
+    }
+
+    // The same query AgentAuthorizationLoader runs to fill the 403 cache.
+    // It skips revoked grants, revoked role permissions, deleted roles and denials.
+    private List<String> permissionNamesForAgent(UUID agentId) {
+        return permissionService.findPermissionsForAgent(agentId)
+                .stream()
+                .map(Permission::permissionName)
+                .toList();
     }
 
     @Transactional
