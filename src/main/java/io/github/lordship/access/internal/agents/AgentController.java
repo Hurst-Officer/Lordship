@@ -109,5 +109,17 @@ public class AgentController {
                 : ResponseEntity.notFound().build();
     }
 
-
+    /**
+     * Remove an agent (soft delete). 204, or 404 for an unknown or already removed agent.
+     * Their tokens stop working right away (401).
+     * 409 with {@code code: agent.cannot_remove_self} or {@code code: agent.last_admin}.
+     */
+    @PreAuthorize("hasAuthority('agents:delete')")
+    @DeleteMapping("/{uuid}")
+    public ResponseEntity<Void> removeAgent(@PathVariable UUID uuid, Authentication authentication) {
+        AgentPrincipal principal = (AgentPrincipal) authentication.getPrincipal();
+        return agentService.removeAgent(uuid, principal.agentUuid())
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
 }

@@ -41,9 +41,22 @@ CREATE TABLE agent_role (
 CREATE UNIQUE INDEX uq_agent_role_name_active
     ON agent_role(role_name) WHERE deleted_at IS NULL;
 
+CREATE TABLE permission_group ( -- a section of the role editor; seeded in V13
+                                  uuid       UUID PRIMARY KEY DEFAULT uuidv7(),
+                                  group_key  VARCHAR(40) NOT NULL UNIQUE,
+                                  sort_order INT NOT NULL UNIQUE,
+                                  CONSTRAINT permission_group_group_key_must_be_snake_case CHECK (group_key ~ '^[a-z][a-z0-9_]*$'),
+                                  CONSTRAINT permission_group_sort_order_must_be_positive CHECK (sort_order > 0)
+);
+
 CREATE TABLE permission ( -- note permissions are seeded and NOT editable (hence no created_at or deleted_at timestamps
                             uuid            UUID PRIMARY KEY DEFAULT uuidv7(),
-                            permission_name VARCHAR(60) NOT NULL UNIQUE
+                            permission_name VARCHAR(60) NOT NULL UNIQUE,
+                            group_id        UUID NOT NULL,
+                            sort_order      INT NOT NULL, -- position inside the group
+                            FOREIGN KEY (group_id) REFERENCES permission_group(uuid),
+                            UNIQUE (group_id, sort_order),
+                            CONSTRAINT permission_sort_order_must_be_positive CHECK (sort_order > 0)
 );
 
 CREATE TABLE role_permission (  -- where a permission is granted to a role

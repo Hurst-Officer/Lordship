@@ -49,6 +49,18 @@ public class AgentRepository {
                 .update() > 0;
     }
 
+    // soft delete, and log the agent out in the same statement
+    public boolean softDelete(UUID agentId) {
+        return jdbc.sql("""
+            UPDATE agent
+            SET deleted_at = now(),
+                tokens_valid_from = date_trunc('second', clock_timestamp())
+            WHERE uuid = :agentId AND deleted_at IS NULL
+            """)
+                .param("agentId", agentId)
+                .update() > 0;
+    }
+
     public Optional<AgentRow> findById(UUID uuid) {
         return jdbc.sql("SELECT * FROM agent WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)
