@@ -9,157 +9,252 @@ VALUES (NULL, '00000000-0000-7000-8000-000000000002', 'Standard Manufactured Hom
 
 -- ── Permissions ───────────────────────────────────────────────────────────────
 
-INSERT INTO permission (uuid, permission_name) VALUES
+-- Every permission code. The grouping section below gives each one a group.
+CREATE TEMP TABLE permission_seed (
+    seed_order      SERIAL,
+    permission_name VARCHAR(60) NOT NULL
+) ON COMMIT DROP;
+
+INSERT INTO permission_seed (permission_name) VALUES
                                                    -- Agents
-                                                   (uuidv7(), 'agents:view'),
-                                                   (uuidv7(), 'agents:edit'),
-                                                   (uuidv7(), 'agents:reset_passwords'),
-                                                   (uuidv7(), 'agents:view_own'), -- aspirational
-                                                   (uuidv7(), 'agents:edit_own'), -- aspirational
-                                                   (uuidv7(), 'agents:create'),
-                                                   (uuidv7(), 'agents:delete'),
+                                                   ('agents:view'),
+                                                   ('agents:edit'),
+                                                   ('agents:reset_passwords'),
+                                                   ('agents:view_own'), -- aspirational
+                                                   ('agents:edit_own'), -- aspirational
+                                                   ('agents:create'),
+                                                   ('agents:delete'),
 
                                                    -- Permissions
-                                                   (uuidv7(), 'permissions:view'),
-                                                   (uuidv7(), 'permissions:assign_to_role'),
-                                                   (uuidv7(), 'permissions:deny'),
+                                                   ('permissions:view'),
+                                                   ('permissions:assign_to_role'),
+                                                   ('permissions:deny'),
 
-                                                   (uuidv7(), 'role_permissions:delete'),
-                                                   (uuidv7(), 'role_permissions:view'),
-                                                   (uuidv7(), 'role_permissions:edit'),
+                                                   ('role_permissions:delete'),
+                                                   ('role_permissions:view'),
+                                                   ('role_permissions:edit'),
 
                                                    -- Roles
-                                                   (uuidv7(), 'agent_roles:view'),
-                                                   (uuidv7(), 'agent_roles:edit'),
-                                                   (uuidv7(), 'agent_roles:create'),
-                                                   (uuidv7(), 'agent_roles:delete'),
+                                                   ('agent_roles:view'),
+                                                   ('agent_roles:edit'),
+                                                   ('agent_roles:create'),
+                                                   ('agent_roles:delete'),
 
                                                    -- Pets
-                                                   (uuidv7(), 'pets:view'),
-                                                   (uuidv7(), 'pets:edit'),
-                                                   (uuidv7(), 'pets:create'),
-                                                   (uuidv7(), 'pets:delete'),
+                                                   ('pets:view'),
+                                                   ('pets:edit'),
+                                                   ('pets:create'),
+                                                   ('pets:delete'),
 
                                                    -- Properties
-                                                   (uuidv7(), 'properties:view'),
-                                                   (uuidv7(), 'properties:edit'),
-                                                   (uuidv7(), 'properties:create'),
-                                                   (uuidv7(), 'properties:delete'),
+                                                   ('properties:view'),
+                                                   ('properties:edit'),
+                                                   ('properties:create'),
+                                                   ('properties:delete'),
 
                                                    -- Property assignments
-                                                   (uuidv7(), 'assignments:assign-all'),
-                                                   (uuidv7(), 'assignments:view'),
-                                                   (uuidv7(), 'assignments:assign'),
-                                                   (uuidv7(), 'assignments:remove'),
+                                                   ('assignments:assign-all'),
+                                                   ('assignments:view'),
+                                                   ('assignments:assign'),
+                                                   ('assignments:remove'),
 
                                                    -- Persons
-                                                   (uuidv7(), 'persons_ssn:view'),
-                                                   (uuidv7(), 'persons_ssn:edit'),
-                                                   (uuidv7(), 'persons:view'),
-                                                   (uuidv7(), 'persons:edit'),
-                                                   (uuidv7(), 'persons:view_own'),
-                                                   (uuidv7(), 'persons:edit_own'), -- aspirational
-                                                   (uuidv7(), 'persons:create'),
-                                                   (uuidv7(), 'persons:delete'),
+                                                   ('persons_ssn:view'),
+                                                   ('persons_ssn:edit'),
+                                                   ('persons:view'),
+                                                   ('persons:edit'),
+                                                   ('persons:view_own'),
+                                                   ('persons:edit_own'), -- aspirational
+                                                   ('persons:create'),
+                                                   ('persons:delete'),
 
                                                    -- Audit
-                                                   (uuidv7(), 'audit:view'),
-                                                   (uuidv7(), 'audit:view_own'), -- aspirational
+                                                   ('audit:view'),
+                                                   ('audit:view_own'), -- aspirational
 
                                                    -- Tenancy
-                                                   (uuidv7(), 'tenancy:view'),
-                                                   (uuidv7(), 'tenancy:edit'),
-                                                   (uuidv7(), 'tenancy:create'),
-                                                   (uuidv7(), 'tenancy:delete'),
+                                                   ('tenancy:view'),
+                                                   ('tenancy:edit'),
+                                                   ('tenancy:create'),
+                                                   ('tenancy:delete'),
 
                                                    -- Tenants
-                                                   (uuidv7(), 'tenants:create'),
-                                                   (uuidv7(), 'tenants:view'),
-                                                   (uuidv7(), 'tenants:edit'),
-                                                   (uuidv7(), 'tenants:delete'),
+                                                   ('tenants:create'),
+                                                   ('tenants:view'),
+                                                   ('tenants:edit'),
+                                                   ('tenants:delete'),
+
+                                                   -- Notices
+                                                   ('notices:create'),
+                                                   ('notices:view'),
+                                                   ('notices:edit'),
+                                                   ('notices:delete'),
 
                                                    -- Lots
-                                                   (uuidv7(), 'lots:view'),
-                                                   (uuidv7(), 'lots:edit'),
-                                                   (uuidv7(), 'lots:set_rates'),
-                                                   (uuidv7(), 'lots:create'),
-                                                   (uuidv7(), 'lots:delete'),
+                                                   ('lots:view'),
+                                                   ('lots:edit'),
+                                                   ('lots:set_rates'),
+                                                   ('lots:create'),
+                                                   ('lots:delete'),
 
                                                    -- Accounts
-                                                   (uuidv7(), 'accounts:view'),
-                                                   (uuidv7(), 'accounts:edit'),
+                                                   ('accounts:view'),
+                                                   ('accounts:edit'),
 
                                                    -- Transactions
-                                                   (uuidv7(), 'transactions:view'),
-                                                   (uuidv7(), 'transactions:edit'),
+                                                   ('transactions:view'),
+                                                   ('transactions:edit'),
 
                                                    -- Vehicles
-                                                   (uuidv7(), 'vehicles:view'),
-                                                   (uuidv7(), 'vehicles:edit'),
-                                                   (uuidv7(), 'vehicles:create'),
-                                                   (uuidv7(), 'vehicles:delete'),
+                                                   ('vehicles:view'),
+                                                   ('vehicles:edit'),
+                                                   ('vehicles:create'),
+                                                   ('vehicles:delete'),
 
                                                    -- Meters
-                                                   (uuidv7(), 'meters:view'),
-                                                   (uuidv7(), 'meters:edit'),
-                                                   (uuidv7(), 'meters:create'),
-                                                   (uuidv7(), 'meters:delete'),
+                                                   ('meters:view'),
+                                                   ('meters:edit'),
+                                                   ('meters:create'),
+                                                   ('meters:delete'),
 
                                                    -- Meter Billing
-                                                   (uuidv7(), 'meterbills:view'),
-                                                   (uuidv7(), 'meterbills:edit'),
-                                                   (uuidv7(), 'meterbills:create'),
-                                                   (uuidv7(), 'meterbills:delete'),
+                                                   ('meterbills:view'),
+                                                   ('meterbills:edit'),
+                                                   ('meterbills:create'),
+                                                   ('meterbills:delete'),
 
                                                    -- standard term
-                                                   (uuidv7(), 'terms_template:manage_global'),
-                                                   (uuidv7(), 'terms_template:view'),
-                                                   (uuidv7(), 'terms_template:edit'),
-                                                   (uuidv7(), 'terms_template:create'),
-                                                   (uuidv7(), 'terms_template:delete'),
+                                                   ('terms_template:manage_global'),
+                                                   ('terms_template:view'),
+                                                   ('terms_template:edit'),
+                                                   ('terms_template:create'),
+                                                   ('terms_template:delete'),
 
                                                    -- charge term
-                                                   (uuidv7(), 'tenancy_term:create_migrations'),
-                                                   (uuidv7(), 'tenancy_term:view'),
-                                                   (uuidv7(), 'tenancy_term:edit'),
-                                                   (uuidv7(), 'tenancy_term:create'),
-                                                   (uuidv7(), 'tenancy_term:delete'),
-                                                   (uuidv7(), 'tenancy_term:activate'),
-                                                   (uuidv7(), 'tenancy_term:cancel'),
+                                                   ('tenancy_term:create_migrations'),
+                                                   ('tenancy_term:view'),
+                                                   ('tenancy_term:edit'),
+                                                   ('tenancy_term:create'),
+                                                   ('tenancy_term:delete'),
+                                                   ('tenancy_term:activate'),
+                                                   ('tenancy_term:cancel'),
 
                                                    -- security deposits
-                                                   (uuidv7(), 'security_deposit:create_migrations'),
-                                                   (uuidv7(), 'security_deposit:view'),
-                                                   (uuidv7(), 'security_deposit:create'),
-                                                   (uuidv7(), 'security_deposit:edit'),
-                                                   (uuidv7(), 'security_deposit:delete'),
+                                                   ('security_deposit:create_migrations'),
+                                                   ('security_deposit:view'),
+                                                   ('security_deposit:create'),
+                                                   ('security_deposit:edit'),
+                                                   ('security_deposit:delete'),
 
                                                    -- property document
-                                                   (uuidv7(), 'property_document:view'),
-                                                   (uuidv7(), 'property_document:assign'),
-                                                   (uuidv7(), 'property_document:unassign'),
+                                                   ('property_document:view'),
+                                                   ('property_document:assign'),
+                                                   ('property_document:unassign'),
 
                                                    -- documents
-                                                   (uuidv7(), 'document_template:view'),
-                                                   (uuidv7(), 'document_template:create'),
-                                                   (uuidv7(), 'document_template:edit'),
-                                                   (uuidv7(), 'document_template:delete'),
+                                                   ('document_template:view'),
+                                                   ('document_template:create'),
+                                                   ('document_template:edit'),
+                                                   ('document_template:delete'),
 
                                                    -- global settings
-                                                   (uuidv7(), 'global_settings:view'),
-                                                   (uuidv7(), 'global_settings:edit'),
+                                                   ('global_settings:view'),
+                                                   ('global_settings:edit'),
 
                                                    -- instruments
-                                                   (uuidv7(), 'instrument:view'),
-                                                   (uuidv7(), 'instrument:create'),
-                                                   (uuidv7(), 'instrument:edit'),
+                                                   ('instrument:view'),
+                                                   ('instrument:create'),
+                                                   ('instrument:edit'),
 
                                                    -- homes
-                                                   (uuidv7(), 'homes:view'),
-                                                   (uuidv7(), 'homes:create'),
-                                                   (uuidv7(), 'homes:edit'),
-                                                   (uuidv7(), 'homes:delete')
+                                                   ('homes:view'),
+                                                   ('homes:create'),
+                                                   ('homes:edit'),
+                                                   ('homes:delete')
 ;
+
+-- ── Permission groups ─────────────────────────────────────────────────────────
+
+-- The sections of the role editor, in screen order.
+INSERT INTO permission_group (group_key, sort_order) VALUES
+    ('staff_access', 1),
+    ('people', 2),
+    ('tenancies', 3),
+    ('properties', 4),
+    ('money', 5),
+    ('utilities', 6),
+    ('documents', 7),
+    ('notices', 8),
+    ('system', 9);
+
+-- Which group each area belongs to. To move an area, change its row here.
+CREATE TEMP TABLE permission_area (
+    area       VARCHAR(40) NOT NULL,
+    group_key  VARCHAR(40) NOT NULL,
+    area_order INT NOT NULL
+) ON COMMIT DROP;
+
+INSERT INTO permission_area (area, group_key, area_order) VALUES
+    ('agents', 'staff_access', 1),
+    ('agent_roles', 'staff_access', 2),
+    ('role_permissions', 'staff_access', 3),
+    ('permissions', 'staff_access', 4),
+    ('persons', 'people', 5),
+    ('persons_ssn', 'people', 6),
+    ('tenancy', 'tenancies', 7),
+    ('tenants', 'tenancies', 8),
+    ('tenancy_term', 'tenancies', 9),
+    ('security_deposit', 'tenancies', 10),
+    ('pets', 'tenancies', 11),
+    ('vehicles', 'tenancies', 12),
+    ('properties', 'properties', 13),
+    ('lots', 'properties', 14),
+    ('homes', 'properties', 15),
+    ('assignments', 'properties', 16),
+    ('accounts', 'money', 17),
+    ('transactions', 'money', 18),
+    ('meters', 'utilities', 19),
+    ('meterbills', 'utilities', 20),
+    ('terms_template', 'documents', 21),
+    ('document_template', 'documents', 22),
+    ('property_document', 'documents', 23),
+    ('instrument', 'documents', 24),
+    ('notices', 'notices', 25),
+    ('audit', 'system', 26),
+    ('global_settings', 'system', 27);
+
+-- Inside a group: by area, then view, create, edit, delete, then the rest in seed order.
+INSERT INTO permission (permission_name, group_id, sort_order)
+SELECT s.permission_name,
+       g.uuid,
+       ROW_NUMBER() OVER (
+           PARTITION BY g.uuid
+           ORDER BY a.area_order,
+                    CASE split_part(s.permission_name, ':', 2)
+                        WHEN 'view'   THEN 1
+                        WHEN 'create' THEN 2
+                        WHEN 'edit'   THEN 3
+                        WHEN 'delete' THEN 4
+                        ELSE 5
+                    END,
+                    s.seed_order)
+FROM permission_seed s
+JOIN permission_area a ON a.area = split_part(s.permission_name, ':', 1)
+JOIN permission_group g ON g.group_key = a.group_key;
+
+-- Stop the migration if any permission was left without a group.
+DO $$
+DECLARE
+    missing TEXT;
+BEGIN
+    SELECT string_agg(s.permission_name, ', ') INTO missing
+    FROM permission_seed s
+    WHERE NOT EXISTS (SELECT 1 FROM permission p WHERE p.permission_name = s.permission_name);
+
+    IF missing IS NOT NULL THEN
+        RAISE EXCEPTION 'These permissions have no group. Add their area to permission_area: %', missing;
+    END IF;
+END $$;
 
 -- ── Roles ─────────────────────────────────────────────────────────────────────
 
@@ -215,6 +310,9 @@ WHERE r.role_name = 'Office Staff'
                             'tenants:create',
                             'tenants:view',
                             'tenants:edit',
+                            'notices:create',
+                            'notices:edit',
+                            'notices:view',
                             'terms_template:view',
                             'tenancy_term:view',
                             'tenancy_term:edit',
@@ -274,6 +372,7 @@ WHERE r.role_name = 'Property Manager'
                             'tenants:view',
                             'tenants:create',
                             'tenants:edit',
+                            'notices:view',
                             'tenancy_term:view',
                             'vehicles:view',
                             'meters:view',

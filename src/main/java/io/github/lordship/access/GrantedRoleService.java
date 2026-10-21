@@ -136,6 +136,18 @@ public class GrantedRoleService {
         return grantedRoleRepository.findActiveRoleNamesForAgent(agentId);
     }
 
+    /**
+     * True when this agent is the only live agent holding the role.
+     * Locks the role row first, so two admins removing each other at the same
+     * moment take turns, and the second one sees the first removal.
+     * Call it inside a transaction.
+     */
+    public boolean isLastHolderOfRole(UUID agentId, String roleName) {
+        return grantedRoleRepository.lockActiveRoleId(roleName)
+                .map(roleId -> grantedRoleRepository.isOnlyLiveHolder(agentId, roleId))
+                .orElse(false);
+    }
+
     // the reverse lookup: everyone currently holding a given role
     public List<GrantedRole> findAgentsWithRole(UUID roleId) {
         return grantedRoleRepository.findByRoleId(roleId)

@@ -64,6 +64,34 @@ public class GrantedRoleRepository {
                 .list();
     }
 
+    // SELECT ... FOR UPDATE: holds the role row until the transaction ends
+    public Optional<UUID> lockActiveRoleId(String roleName) {
+        return jdbc.sql("""
+                SELECT uuid FROM agent_role
+                WHERE role_name = :roleName AND deleted_at IS NULL
+                FOR UPDATE
+                """)
+                .param("roleName", roleName)
+                .query(UUID.class)
+                .optional();
+    }
+
+    // true when exactly one live agent holds the role, and it is this agent
+    public boolean isOnlyLiveHolder(UUID agentId, UUID roleId) {
+        return jdbc.sql("""
+                SELECT count(*) = 1 AND coalesce(bool_or(gr.agent_id = :agentId), false)
+                FROM granted_role gr
+                JOIN agent a ON a.uuid = gr.agent_id
+                WHERE gr.role_id = :roleId
+                AND gr.deleted_at IS NULL
+                AND a.deleted_at IS NULL
+                """)
+                .param("agentId", agentId)
+                .param("roleId", roleId)
+                .query(Boolean.class)
+                .single();
+    }
+
     public List<GrantedRoleRow> findByRoleId(UUID roleId) {
         return jdbc.sql("""
                 SELECT * FROM granted_role

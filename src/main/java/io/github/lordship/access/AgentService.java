@@ -10,6 +10,8 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.identity.AgentAuthorizationCache;
 import io.github.lordship.persons.Person;
 import io.github.lordship.persons.PersonService;
+import io.github.lordship.shared.RuleConflict;
+import io.github.lordship.shared.SystemPrincipal;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -35,6 +37,8 @@ public class AgentService {
     private final LoginThrottle loginThrottle;
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
+
+    private static final String ADMIN_ROLE = "Admin";
 
 
     public AgentService(
@@ -119,6 +123,40 @@ public class AgentService {
     }
 
     /**
+     * Soft delete. Also ends every session the agent holds, the same as a password reset.
+     * False (404) for an unknown or already removed agent, and for the SYSTEM agent.
+     * Throws RuleConflict (409) when an agent tries to remove themself,
+     * or to remove the last agent who holds the Admin role.
+     */
+    @Transactional
+    public boolean removeAgent(UUID agentId, UUID removedBy) {
+        if (SystemPrincipal.AGENT_UUID.equals(agentId)) {
+            return false;
+        }
+
+        Optional<AgentRow> before = agentRepository.findById(agentId);
+        if (before.isEmpty()) {
+            return false;
+        }
+
+        if (agentId.equals(removedBy)) {
+            throw RuleConflict.of("agent.cannot_remove_self");
+        }
+
+        if (grantedRoleService.isLastHolderOfRole(agentId, ADMIN_ROLE)) {
+            throw RuleConflict.of("agent.last_admin");
+        }
+
+        if (!agentRepository.softDelete(agentId)) {
+            return false;
+        }
+
+        authorizationCache.invalidate(agentId);
+        auditService.recordDelete("agent", agentId, AuditMapper.toMap(before.get().toAgent()));
+        return true;
+    }
+
+    /**
      * Empty for a wrong password and an unknown email alike. Throws LoginRefused when
      * the throttle turns the attempt away before any of this runs.
      */
@@ -194,7 +232,7 @@ public class AgentService {
                 .map(Agent::uuid)
                 .orElseGet(() -> createRootAgent(email, password));
 
-        grantedRoleService.systemGrantRole(rootAgentId, "Admin");
+        grantedRoleService.systemGrantRole(rootAgentId, ADMIN_ROLE);
     }
 
     private UUID createRootAgent(String email, String password) {

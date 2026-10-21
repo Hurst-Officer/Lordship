@@ -4,6 +4,7 @@ import io.github.lordship.access.internal.permissions.PermissionRepository;
 import io.github.lordship.access.internal.permissions.PermissionRow;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -25,9 +26,8 @@ public class PermissionService {
                 .collect(Collectors.toUnmodifiableSet());
     }
 
-    public Set<Permission> getAllPermissions() {
-        return permissionRepository.getAllPermissions().stream()
-                .map(PermissionRow::toPermission)
-                .collect(Collectors.toUnmodifiableSet());
+    // Sorted by group, then by position inside the group.
+    public List<GroupedPermission> getAllPermissions() {
+        return permissionRepository.getAllPermissions();
     }
 }

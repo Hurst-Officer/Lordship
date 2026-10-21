@@ -1,9 +1,11 @@
 package io.github.lordship.access.internal.permissions;
 
+import io.github.lordship.access.GroupedPermission;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -38,12 +40,17 @@ public class PermissionRepository {
                 .optional();
     }
 
-    public Set<PermissionRow> getAllPermissions() {
-        return new HashSet<>(jdbc.sql("""
-                SELECT * from permission
-                """)   // note: permissions can't be deleted
-                .query(PermissionRow.class)
-                .list());
+    // Every permission, in the order the role editor shows them.
+    // Permissions can't be deleted, so there is no deleted_at to check.
+    public List<GroupedPermission> getAllPermissions() {
+        return jdbc.sql("""
+                SELECT p.uuid, p.permission_name, g.group_key
+                FROM permission p
+                JOIN permission_group g ON g.uuid = p.group_id
+                ORDER BY g.sort_order, p.sort_order
+                """)
+                .query(GroupedPermission.class)
+                .list();
     }
 
     // The agent_role join is the backstop for RoleService.deleteRole: without it a
