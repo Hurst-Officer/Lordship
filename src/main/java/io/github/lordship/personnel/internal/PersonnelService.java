@@ -87,6 +87,7 @@ public class PersonnelService {
         return personnelRepository.findAgent(agentId).map(agent -> new AgentDetailResponse(
                 agent.agentId(),
                 agent.nameFull(),
+                agent.title(),
                 agent.workEmail(),
                 agent.workPhone(),
                 personnelRepository.findRolesForAgents(List.of(agentId))
@@ -110,7 +111,7 @@ public class PersonnelService {
 
         return agents.stream()
                 .map(a -> new AgentSummaryResponse(
-                        a.agentId(), a.nameFull(), roleNames.getOrDefault(a.agentId(), List.of())))
+                        a.agentId(), a.nameFull(), a.title(), roleNames.getOrDefault(a.agentId(), List.of())))
                 .toList();
     }
 
@@ -124,7 +125,7 @@ public class PersonnelService {
 
         return Optional.of(agents.stream()
                 .map(a -> new PropertyAgentResponse(
-                        a.agentId(), a.nameFull(), a.workEmail(), a.workPhone(),
+                        a.agentId(), a.nameFull(), a.title(), a.workEmail(), a.workPhone(),
                         roleNames.getOrDefault(a.agentId(), List.of())))
                 .toList());
     }

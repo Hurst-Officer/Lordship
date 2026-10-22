@@ -10,6 +10,7 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.identity.AgentAuthorizationCache;
 import io.github.lordship.persons.Person;
 import io.github.lordship.persons.PersonService;
+import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.shared.SystemPrincipal;
 import org.slf4j.Logger;
@@ -127,6 +128,39 @@ public class AgentService {
     }
 
     /**
+     * Changes the agent's job title. Spaces at either end are dropped.
+     * False (404) for an unknown or removed agent, and for the SYSTEM agent.
+     * Throws InvalidRequest (400, agent.title_blank on field title) for a blank title.
+     */
+    @Transactional
+    public boolean setTitle(UUID agentId, String title) {
+        String trimmed = title == null ? "" : title.strip();
+        if (trimmed.isEmpty()) {
+            throw InvalidRequest.onField("title", "agent.title_blank");
+        }
+        if (SystemPrincipal.AGENT_UUID.equals(agentId)) {
+            return false;
+        }
+
+        Optional<AgentRow> before = agentRepository.findById(agentId);
+        if (before.isEmpty()) {
+            return false;
+        }
+        // the audit log only records real changes
+        if (trimmed.equals(before.get().title())) {
+            return true;
+        }
+        if (agentRepository.updateTitle(agentId, trimmed) == 0) {
+            return false;
+        }
+
+        auditService.recordUpdate("agent", agentId,
+                Map.of("title", before.get().title()),
+                Map.of("title", trimmed));
+        return true;
+    }
+
+    /**
      * Soft delete. Also ends every session the agent holds, the same as a password reset.
      * False (404) for an unknown or already removed agent, and for the SYSTEM agent.
      * Throws RuleConflict (409) when an agent tries to remove themself,
@@ -196,9 +230,9 @@ public class AgentService {
             loginThrottle.succeeded(ipAddress, workEmail);
             return personService.findByID(ar.personId())
                     .map(person -> {
-                        String refreshToken = sessionService.start(ar.uuid(), ipAddress,
+                        AgentSessionService.Started started = sessionService.start(ar.uuid(), ipAddress,
                                 userAgent.getBrowser().getName(), userAgent.getOperatingSystem().getName());
-                        return issue(ar, person, refreshToken);
+                        return issue(ar, person, started.sessionId(), started.refreshToken());
                     });
         }
         return Optional.empty();
@@ -228,7 +262,7 @@ public class AgentService {
 
         AgentRow ar = agentRow.get();
         return personService.findByID(ar.personId())
-                .map(person -> issue(ar, person, rotated.get().refreshToken()));
+                .map(person -> issue(ar, person, rotated.get().sessionId(), rotated.get().refreshToken()));
     }
 
     /** Log out of this computer only. Unknown tokens are ignored. */
@@ -236,14 +270,51 @@ public class AgentService {
         sessionService.end(refreshToken);
     }
 
+    /** The agent's signed-in computers. Empty for an unknown or removed agent (404). */
+    public Optional<List<AgentSessionRow>> listSessions(UUID agentId) {
+        return agentRepository.findById(agentId)
+                .map(row -> sessionService.listOpen(agentId));
+    }
+
+    /**
+     * An admin signs one of the agent's computers out. That computer reaches the
+     * sign-in screen at its next refresh, within jwt.expiration-ms.
+     * False (404) when the session is not this agent's or has already ended.
+     */
+    @Transactional
+    public boolean signOutComputer(UUID agentId, UUID sessionId) {
+        if (!sessionService.endForAgent(agentId, sessionId)) {
+            return false;
+        }
+        auditService.recordUpdate("agent_session", sessionId,
+                Map.of("signed_in", true),
+                Map.of("signed_in", false));
+        return true;
+    }
+
+    /** Signs out every computer the agent uses. False (404) for an unknown or removed agent. */
+    @Transactional
+    public boolean signOutEverywhere(UUID agentId) {
+        if (agentRepository.findById(agentId).isEmpty()) {
+            return false;
+        }
+        int ended = sessionService.endAll(agentId);
+        if (ended > 0) {
+            auditService.recordUpdate("agent", agentId,
+                    Map.of("signed_in_computers", ended),
+                    Map.of("signed_in_computers", 0));
+        }
+        return true;
+    }
+
     // The access token plus who the agent is and what they may do.
-    private AgentAuthResult issue(AgentRow ar, Person person, String refreshToken) {
+    private AgentAuthResult issue(AgentRow ar, Person person, UUID sessionId, String refreshToken) {
         AgentWithPerson agentWithPerson = new AgentWithPerson(ar.toAgent(), person);
         AgentIdentity identity = new AgentIdentity(
                 agentWithPerson,
                 grantedRoleService.findRoleNamesForAgent(ar.uuid()),
                 permissionNamesForAgent(ar.uuid()));
-        String token = jwtService.generateToken(agentWithPerson);
+        String token = jwtService.generateToken(agentWithPerson, sessionId);
         return new AgentAuthResult(identity, token, refreshToken);
     }
 

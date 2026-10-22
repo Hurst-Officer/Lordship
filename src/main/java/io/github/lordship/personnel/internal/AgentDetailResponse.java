@@ -10,6 +10,7 @@ import java.util.UUID;
 public record AgentDetailResponse(
         UUID agentId,
         String nameFull,
+        String title,
         String workEmail,
         String workPhone,
         List<RoleRef> roles,

@@ -14,6 +14,9 @@ import java.util.UUID;
 @Service
 public class JwtService {
 
+    // JwtAuthFilter puts the token's session id here, for "this computer" checks
+    public static final String SESSION_ID_ATTRIBUTE = "lordship.sessionId";
+
     private final SecretKey key;
     private final long expirationMs;
 
@@ -28,10 +31,16 @@ public class JwtService {
     // Permissions are left out on purpose. Grants change during the day, and a token
     // would carry a stale copy. The server looks them up on every request instead.
     public String generateToken(AgentWithPerson agentWithPerson) {
+        return generateToken(agentWithPerson, null);
+    }
+
+    // sid is the agent_session the token came from, so the server knows which computer sent it.
+    public String generateToken(AgentWithPerson agentWithPerson, UUID sessionId) {
         return Jwts.builder()
                 .subject(agentWithPerson.agent().uuid().toString())
                 .claim("user_type", "AGENT")
                 .claim("person_uuid", agentWithPerson.person().uuid().toString())
+                .claim("sid", sessionId == null ? null : sessionId.toString())
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expirationMs))
                 .signWith(key)
@@ -63,6 +72,12 @@ public class JwtService {
 
     public UUID extractPersonUuid(Claims claims) {
         return UUID.fromString(claims.get("person_uuid", String.class));
+    }
+
+    // Null for a token made without a session, such as one from an older build.
+    public UUID extractSessionId(Claims claims) {
+        String sid = claims.get("sid", String.class);
+        return sid == null ? null : UUID.fromString(sid);
     }
 
     public UUID extractAgentId(String token) {

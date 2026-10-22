@@ -7,6 +7,7 @@ import java.util.UUID;
 public record PropertyAgentResponse(
         UUID agentId,
         String nameFull,
+        String title,
         String workEmail,
         String workPhone,
         List<String> roleNames

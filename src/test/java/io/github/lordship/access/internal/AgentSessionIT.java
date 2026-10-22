@@ -83,6 +83,20 @@ public class AgentSessionIT extends IntegrationTest {
                 .compact();
     }
 
+    // Asks the server which signed-in computer this access token belongs to.
+    private String thisComputerId(String accessToken, TestAgent agent) throws Exception {
+        String body = mockMvc.perform(get("/api/agents/{uuid}/sessions", agent.uuid())
+                        .header("Authorization", "Bearer " + accessToken))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        for (JsonNode session : objectMapper.readTree(body)) {
+            if (session.get("thisComputer").asBoolean()) {
+                return session.get("id").asString();
+            }
+        }
+        throw new AssertionError("No session was marked thisComputer");
+    }
+
     private String refreshTokenFrom(ResultActions result) throws Exception {
         String body = result.andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).get("refreshToken").asString();
@@ -237,5 +251,95 @@ public class AgentSessionIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + accessToken))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(agent.uuid().toString()));
+    }
+
+    // ---- signed-in computers (admin) ----
+
+    @Test
+    void listSessions_showsEachSignedInComputer() throws Exception {
+        String rootToken = rootToken();
+        TestAgent agent = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken);
+        signIn(agent);
+        signIn(agent);
+
+        // one sign-in from the test helper, plus the two above
+        mockMvc.perform(get("/api/agents/{uuid}/sessions", agent.uuid())
+                        .header("Authorization", "Bearer " + rootToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(3))
+                .andExpect(jsonPath("$[0].tokenHash").doesNotExist());
+    }
+
+    @Test
+    void listSessions_marksTheCallersOwnComputer() throws Exception {
+        TestAgent agent = TestAuthSupport.agentWithPermissions(
+                mockMvc, objectMapper, rootToken(), "agents:end_sessions");
+        JsonNode office = signIn(agent);
+
+        String id = thisComputerId(office.get("token").asString(), agent);
+
+        assertNotNull(id);
+    }
+
+    @Test
+    void signOutComputer_endsOnlyThatComputer() throws Exception {
+        String rootToken = rootToken();
+        TestAgent agent = TestAuthSupport.agentWithPermissions(
+                mockMvc, objectMapper, rootToken, "agents:end_sessions");
+        JsonNode office = signIn(agent);
+        JsonNode laptop = signIn(agent);
+        String officeId = thisComputerId(office.get("token").asString(), agent);
+
+        mockMvc.perform(delete("/api/agents/{uuid}/sessions/{sessionId}", agent.uuid(), officeId)
+                        .header("Authorization", "Bearer " + rootToken))
+                .andExpect(status().isNoContent());
+
+        refresh(office.get("refreshToken").asString()).andExpect(status().isUnauthorized());
+        refresh(laptop.get("refreshToken").asString()).andExpect(status().isOk());
+    }
+
+    @Test
+    void signOutComputer_is404_forAnotherAgentsSession() throws Exception {
+        String rootToken = rootToken();
+        TestAgent owner = TestAuthSupport.agentWithPermissions(
+                mockMvc, objectMapper, rootToken, "agents:end_sessions");
+        TestAgent other = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken);
+        String ownersId = thisComputerId(signIn(owner).get("token").asString(), owner);
+
+        mockMvc.perform(delete("/api/agents/{uuid}/sessions/{sessionId}", other.uuid(), ownersId)
+                        .header("Authorization", "Bearer " + rootToken))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void signOutEverywhere_endsEveryComputer() throws Exception {
+        String rootToken = rootToken();
+        TestAgent agent = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken);
+        String office = signIn(agent).get("refreshToken").asString();
+        String laptop = signIn(agent).get("refreshToken").asString();
+
+        mockMvc.perform(delete("/api/agents/{uuid}/sessions", agent.uuid())
+                        .header("Authorization", "Bearer " + rootToken))
+                .andExpect(status().isNoContent());
+
+        refresh(office).andExpect(status().isUnauthorized());
+        refresh(laptop).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/api/agents/{uuid}/sessions", agent.uuid())
+                        .header("Authorization", "Bearer " + rootToken))
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void sessions_need_agentsEndSessions() throws Exception {
+        String rootToken = rootToken();
+        TestAgent viewer = TestAuthSupport.agentWithPermissions(mockMvc, objectMapper, rootToken, "agents:view");
+        TestAgent target = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken);
+
+        mockMvc.perform(get("/api/agents/{uuid}/sessions", target.uuid())
+                        .header("Authorization", "Bearer " + viewer.token()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(delete("/api/agents/{uuid}/sessions", target.uuid())
+                        .header("Authorization", "Bearer " + viewer.token()))
+                .andExpect(status().isForbidden());
     }
 }

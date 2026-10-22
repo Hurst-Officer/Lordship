@@ -51,7 +51,7 @@ public class PersonnelRepository {
 
     public List<AgentRow> findAgentsWithoutRole() {
         return jdbc.sql("""
-                SELECT a.uuid AS agent_id, p.name_full, a.work_email, a.work_phone
+                SELECT a.uuid AS agent_id, p.name_full, a.title, a.work_email, a.work_phone
                 FROM agent a
                 JOIN person p ON p.uuid = a.person_id
                 WHERE a.deleted_at IS NULL
@@ -84,7 +84,7 @@ public class PersonnelRepository {
 
     public List<AgentRow> findRoleMembers(UUID roleId) {
         return jdbc.sql("""
-                SELECT a.uuid AS agent_id, p.name_full, a.work_email, a.work_phone
+                SELECT a.uuid AS agent_id, p.name_full, a.title, a.work_email, a.work_phone
                 FROM granted_role gr
                 JOIN agent a ON a.uuid = gr.agent_id
                 JOIN person p ON p.uuid = a.person_id
@@ -120,7 +120,7 @@ public class PersonnelRepository {
 
     public Optional<AgentRow> findAgent(UUID agentId) {
         return jdbc.sql("""
-                SELECT a.uuid AS agent_id, p.name_full, a.work_email, a.work_phone
+                SELECT a.uuid AS agent_id, p.name_full, a.title, a.work_email, a.work_phone
                 FROM agent a
                 JOIN person p ON p.uuid = a.person_id
                 WHERE a.uuid = :agentId
@@ -177,7 +177,7 @@ public class PersonnelRepository {
                 .replace("_", "\\_");
 
         return jdbc.sql("""
-                SELECT a.uuid AS agent_id, p.name_full, a.work_email, a.work_phone
+                SELECT a.uuid AS agent_id, p.name_full, a.title, a.work_email, a.work_phone
                 FROM agent a
                 JOIN person p ON p.uuid = a.person_id
                 WHERE a.deleted_at IS NULL
@@ -206,7 +206,7 @@ public class PersonnelRepository {
 
     public List<AgentRow> findAgentsAssignedToProperty(UUID propertyId) {
         return jdbc.sql("""
-                SELECT a.uuid AS agent_id, p.name_full, a.work_email, a.work_phone
+                SELECT a.uuid AS agent_id, p.name_full, a.title, a.work_email, a.work_phone
                 FROM agent_property_assignment apa
                 JOIN agent a ON a.uuid = apa.agent_id
                 JOIN person p ON p.uuid = a.person_id
