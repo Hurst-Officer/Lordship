@@ -48,6 +48,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         this.authorizationLoader = authorizationLoader;
     }
 
+    // Sign-in, refresh and logout never read the access token. An expired one sent
+    // along by mistake must not turn a refresh into a 401.
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return LoginBodySizeFilter.isPublicPost(request);
+    }
+
     @Override
     protected void doFilterInternal(
             HttpServletRequest request,

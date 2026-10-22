@@ -59,7 +59,10 @@ public class SecurityConfig {
                         // declaration order. The original handler does not re-run on this pass;
                         // only the error body is written.
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
-                        .requestMatchers(HttpMethod.POST, LoginBodySizeFilter.LOGIN_PATH).permitAll()
+                        .requestMatchers(HttpMethod.POST,
+                                LoginBodySizeFilter.LOGIN_PATH,
+                                LoginBodySizeFilter.REFRESH_PATH,
+                                LoginBodySizeFilter.LOGOUT_PATH).permitAll()
                         .requestMatchers(
                                 "/v3/api-docs",
                                 "/v3/api-docs/**",

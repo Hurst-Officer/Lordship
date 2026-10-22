@@ -9,18 +9,21 @@ public record AgentLoginResponse(
         String nameFull,
         List<String> roles,
         List<String> permissions,
-        String token
+        String token,
+        String refreshToken
 )
 
 {
-    public static AgentLoginResponse from(AgentIdentity identity, String token) {
+    public static AgentLoginResponse from(AgentAuthResult result) {
+        AgentIdentity identity = result.identity();
         return new AgentLoginResponse(
                 identity.agentWithPerson().agent().uuid(),
                 identity.agentWithPerson().agent().workEmail(),
                 identity.agentWithPerson().person().nameFull(),
                 identity.roles(),
                 identity.permissions(),
-                token
+                result.token(),
+                result.refreshToken()
         );
     }
 }

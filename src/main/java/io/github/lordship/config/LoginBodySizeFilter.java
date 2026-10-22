@@ -12,6 +12,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Set;
 
 /**
  * Turns away an oversized sign-in body before Jackson reads it. The throttle lives in
@@ -24,11 +25,19 @@ import java.io.IOException;
 class LoginBodySizeFilter extends OncePerRequestFilter {
 
     static final String LOGIN_PATH = "/api/agents/auth";
+    static final String REFRESH_PATH = "/api/agents/session/refresh";
+    static final String LOGOUT_PATH = "/api/agents/session/logout";
+    static final Set<String> PUBLIC_PATHS = Set.of(LOGIN_PATH, REFRESH_PATH, LOGOUT_PATH);
     static final long MAX_BYTES = 4096;
 
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return !("POST".equals(request.getMethod()) && LOGIN_PATH.equals(request.getRequestURI()));
+        return !isPublicPost(request);
+    }
+
+    // The three sign-in calls that need no access token
+    static boolean isPublicPost(HttpServletRequest request) {
+        return "POST".equals(request.getMethod()) && PUBLIC_PATHS.contains(request.getRequestURI());
     }
 
     @Override
