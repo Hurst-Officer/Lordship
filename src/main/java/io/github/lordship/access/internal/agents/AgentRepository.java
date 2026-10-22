@@ -38,6 +38,16 @@ public class AgentRepository {
                 .update();
     }
 
+    public int updateTitle(UUID agentId, String title) {
+        return jdbc.sql("""
+            UPDATE agent SET title = :title
+            WHERE uuid = :agentId AND deleted_at IS NULL
+            """)
+                .param("title", title)
+                .param("agentId", agentId)
+                .update();
+    }
+
     // logs the agent out
     public boolean revokeTokens(UUID agentId) {
         // note we're using clock_timestamp(), not now(): now() is the transaction's start time.
@@ -76,4 +86,4 @@ public class AgentRepository {
                 .optional();
     }
 
-}
+}

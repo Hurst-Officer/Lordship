@@ -3,6 +3,7 @@ package io.github.lordship.access.internal;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -83,6 +84,33 @@ public class AgentSessionRepository {
     public boolean end(UUID sessionId) {
         return jdbc.sql("UPDATE agent_session SET ended_at = now() WHERE uuid = :sessionId AND ended_at IS NULL")
                 .param("sessionId", sessionId)
+                .update() > 0;
+    }
+
+    // The agent's computers that can still refresh: not ended, not idle too long, not past the hard limit.
+    public List<AgentSessionRow> findOpenForAgent(UUID agentId, int idleDays) {
+        return jdbc.sql("""
+                SELECT * FROM agent_session
+                WHERE agent_id = :agentId
+                  AND ended_at IS NULL
+                  AND expires_at > now()
+                  AND last_used_at > now() - :idleDays * interval '1 day'
+                ORDER BY last_used_at DESC
+                """)
+                .param("agentId", agentId)
+                .param("idleDays", idleDays)
+                .query(AgentSessionRow.class)
+                .list();
+    }
+
+    // Only ends the session when it belongs to this agent.
+    public boolean endForAgent(UUID agentId, UUID sessionId) {
+        return jdbc.sql("""
+                UPDATE agent_session SET ended_at = now()
+                WHERE uuid = :sessionId AND agent_id = :agentId AND ended_at IS NULL
+                """)
+                .param("sessionId", sessionId)
+                .param("agentId", agentId)
                 .update() > 0;
     }
 

@@ -20,6 +20,7 @@ INSERT INTO permission_seed (permission_name) VALUES
                                                    ('agents:view'),
                                                    ('agents:edit'),
                                                    ('agents:reset_passwords'),
+                                                   ('agents:end_sessions'),
                                                    ('agents:view_own'), -- aspirational
                                                    ('agents:edit_own'), -- aspirational
                                                    ('agents:create'),
@@ -280,11 +281,9 @@ FROM agent_role r, permission p
 WHERE r.role_name = 'Office Staff'
   AND p.permission_name IN (
                             'agents:view',
+                            'agents:edit',
                             'agents:view_own',
                             'agents:edit_own',
-                            'agent_roles:view',
-                            'permissions:view',
-                            'role_permissions:view',
                             'persons_ssn:view',
                             'persons:view',
                             'persons:edit',
@@ -351,7 +350,6 @@ WHERE r.role_name = 'Property Manager'
                             'agents:view',
                             'agents:view_own',
                             'agents:edit_own',
-                            'agent_roles:view',
                             'persons:view',
                             'persons:edit',
                             'persons:create',

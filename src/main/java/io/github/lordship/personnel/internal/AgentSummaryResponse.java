@@ -7,5 +7,6 @@ import java.util.UUID;
 public record AgentSummaryResponse(
         UUID agentId,
         String nameFull,
+        String title,
         List<String> roleNames
 ) { }

@@ -10,6 +10,7 @@ final class PersonnelRows {
     record AgentRow(
             UUID agentId,
             String nameFull,
+            String title,
             String workEmail,
             String workPhone
     ) { }

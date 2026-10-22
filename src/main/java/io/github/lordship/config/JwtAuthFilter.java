@@ -147,6 +147,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 new UsernamePasswordAuthenticationToken(authorization.principal(), null, authorities);
 
         SecurityContextHolder.getContext().setAuthentication(authentication);
+
+        try {
+            UUID sessionId = jwtService.extractSessionId(claims);
+            if (sessionId != null) {
+                request.setAttribute(JwtService.SESSION_ID_ATTRIBUTE, sessionId);
+            }
+        } catch (IllegalArgumentException e) {
+            // A malformed sid only costs the "this computer" label. It is signed, so this should not happen.
+        }
+
         filterChain.doFilter(request, response);
     }
 }

@@ -7,11 +7,13 @@ CREATE TABLE agent (
                        person_id      UUID NOT NULL,
                        work_phone     VARCHAR(20),
                        work_email     VARCHAR(120),
+                       title          VARCHAR(80) NOT NULL DEFAULT 'Agent', -- job title shown in Personnel. Not a role
                        agent_password VARCHAR(255),
                        tokens_valid_from TIMESTAMPTZ, -- null until a password change or revoke ends this agent's sessions
                        created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                        deleted_at     TIMESTAMPTZ,
-                       FOREIGN KEY (person_id) REFERENCES person(uuid)
+                       FOREIGN KEY (person_id) REFERENCES person(uuid),
+                       CONSTRAINT agent_title_must_not_be_blank CHECK (btrim(title) <> '')
 );
 
 CREATE INDEX idx_agent_person_id ON agent(person_id) WHERE deleted_at IS NULL;
@@ -173,4 +175,4 @@ ALTER TABLE property_fee_cap
     ADD CONSTRAINT fk_agent_editor FOREIGN KEY (created_by) REFERENCES agent(uuid);
 
 ALTER TABLE terms_template
-    ADD CONSTRAINT fk_agent_edits_terms FOREIGN KEY (created_by) REFERENCES agent(uuid);
+    ADD CONSTRAINT fk_agent_edits_terms FOREIGN KEY (created_by) REFERENCES agent(uuid);

@@ -13,6 +13,7 @@ import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -42,14 +43,17 @@ public class AgentSessionService {
         this.maxDays = maxDays;
     }
 
+    /** A new session and its first refresh token. */
+    public record Started(UUID sessionId, String refreshToken) {}
+
     /** The result of a good refresh: whose session it is, and the token that replaces the old one. */
-    public record Rotated(UUID agentId, OffsetDateTime sessionStartedAt, String refreshToken) {}
+    public record Rotated(UUID sessionId, UUID agentId, OffsetDateTime sessionStartedAt, String refreshToken) {}
 
     /** Starts a session and returns its refresh token. Only the hash is saved. */
-    public String start(UUID agentId, String ipAddress, String browserClient, String browserOs) {
+    public Started start(UUID agentId, String ipAddress, String browserClient, String browserOs) {
         String token = newToken();
-        sessionRepository.start(agentId, hash(token), ipAddress, browserClient, browserOs, maxDays);
-        return token;
+        AgentSessionRow row = sessionRepository.start(agentId, hash(token), ipAddress, browserClient, browserOs, maxDays);
+        return new Started(row.uuid(), token);
     }
 
     /**
@@ -92,7 +96,7 @@ public class AgentSessionService {
             return Optional.empty();
         }
         sessionRepository.markSpent(row.uuid(), oldHash);
-        return Optional.of(new Rotated(row.agentId(), row.createdAt(), next));
+        return Optional.of(new Rotated(row.uuid(), row.agentId(), row.createdAt(), next));
     }
 
     /** Log out of one computer. Does nothing for an unknown token. */
@@ -101,9 +105,19 @@ public class AgentSessionService {
                 .ifPresent(row -> sessionRepository.end(row.uuid()));
     }
 
+    /** The agent's computers that are still signed in, most recently used first. */
+    public List<AgentSessionRow> listOpen(UUID agentId) {
+        return sessionRepository.findOpenForAgent(agentId, idleDays);
+    }
+
+    /** An admin signs one computer out. False when it is not this agent's or already ended. */
+    public boolean endForAgent(UUID agentId, UUID sessionId) {
+        return sessionRepository.endForAgent(agentId, sessionId);
+    }
+
     /** Log out of every computer. Used by password reset and agent removal. */
-    public void endAll(UUID agentId) {
-        sessionRepository.endAllForAgent(agentId);
+    public int endAll(UUID agentId) {
+        return sessionRepository.endAllForAgent(agentId);
     }
 
     // 32 random bytes, URL-safe base64 (43 characters)

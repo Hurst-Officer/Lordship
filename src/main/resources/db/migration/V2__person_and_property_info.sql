@@ -28,6 +28,7 @@ CREATE TABLE property_contact (
                                   uuid          UUID PRIMARY KEY DEFAULT uuidv7(),
                                   property_id   UUID NOT NULL,
                                   person_uuid   UUID NOT NULL,
+                                  title         VARCHAR(80),  -- what they are to this property: "Plumber", "Sheriff", "On-site helper"
                                   contact_phone VARCHAR(120),
                                   contact_email VARCHAR(120),
                                   description   TEXT,

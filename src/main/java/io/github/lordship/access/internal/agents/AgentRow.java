@@ -10,6 +10,7 @@ public record AgentRow (
         UUID personId,
         String workPhone,
         String workEmail,
+        String title,
         String agentPassword,
         OffsetDateTime tokensValidFrom,
         OffsetDateTime createdAt,
@@ -21,18 +22,21 @@ public record AgentRow (
                 this.personId,
                 this.workPhone,
                 this.workEmail,
+                this.title,
                 this.tokensValidFrom,
                 this.createdAt,
                 this.deletedAt
         );
     }
 
+    // title is left to the database default ("Agent")
     public AgentRow(UUID personId, String workPhone, String workEmail, String agentPassword){
         this(
                 null,
                 personId,
                 workPhone,
                 workEmail,
+                null,
                 agentPassword,
                 null,
                 null,

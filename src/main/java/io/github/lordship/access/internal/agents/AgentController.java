@@ -143,6 +143,58 @@ public class AgentController {
     }
 
     /**
+     * The agent's signed-in computers, most recently used first. Ended, idle and expired
+     * sessions are left out. {@code thisComputer} marks the one the caller is using.
+     * 404 for an unknown or removed agent.
+     */
+    @PreAuthorize("hasAuthority('agents:end_sessions')")
+    @GetMapping("/{uuid}/sessions")
+    public ResponseEntity<List<AgentSessionResponse>> listSessions(@PathVariable UUID uuid,
+                                                                   HttpServletRequest httpRequest) {
+        UUID callerSessionId = (UUID) httpRequest.getAttribute(JwtService.SESSION_ID_ATTRIBUTE);
+        return agentService.listSessions(uuid)
+                .map(rows -> rows.stream()
+                        .map(row -> AgentSessionResponse.from(row, callerSessionId))
+                        .toList())
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Sign one computer out. 204, or 404 when the session is not this agent's or already ended.
+     * That computer shows the sign-in screen at its next refresh, within {@code jwt.expiration-ms}.
+     */
+    @PreAuthorize("hasAuthority('agents:end_sessions')")
+    @DeleteMapping("/{uuid}/sessions/{sessionId}")
+    public ResponseEntity<Void> signOutComputer(@PathVariable UUID uuid, @PathVariable UUID sessionId) {
+        return agentService.signOutComputer(uuid, sessionId)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
+
+    /** Sign out every computer the agent uses. 204, or 404 for an unknown or removed agent. */
+    @PreAuthorize("hasAuthority('agents:end_sessions')")
+    @DeleteMapping("/{uuid}/sessions")
+    public ResponseEntity<Void> signOutEverywhere(@PathVariable UUID uuid) {
+        return agentService.signOutEverywhere(uuid)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
+
+    /**
+     * Change the agent's job title, as shown in Personnel. A title is not a role and grants nothing.
+     * 204, or 404 for an unknown or removed agent.
+     * 400 with {@code code: agent.title_blank} and {@code field: title} for a blank title.
+     */
+    @PreAuthorize("hasAuthority('agents:edit')")
+    @PutMapping("/{uuid}/title")
+    public ResponseEntity<Void> setTitle(@PathVariable UUID uuid, @Valid @RequestBody AgentTitleRequest request) {
+        return agentService.setTitle(uuid, request.title())
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
+
+    /**
      * Remove an agent (soft delete). 204, or 404 for an unknown or already removed agent.
      * Their tokens stop working right away (401).
      * 409 with {@code code: agent.cannot_remove_self} or {@code code: agent.last_admin}.
