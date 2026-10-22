@@ -65,6 +65,53 @@ CREATE TABLE lot_outline (
 
 CREATE INDEX idx_lot_outline_per_property ON lot_outline (property_id);
 
+-- One simplified outline per park, for the global map. The global page reads
+-- these instead of every lot. A trigger rebuilds a park's row whenever one of
+-- its lot outlines is added, changed or removed.
+CREATE TABLE property_footprint (
+                                    property_id  UUID PRIMARY KEY REFERENCES property(uuid),
+                                    outline      postgis.geometry(Geometry, 4326) NOT NULL, -- convex hull of the lots, simplified
+                                    lot_count    INT NOT NULL,
+                                    refreshed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Rebuilds one park's footprint. A park with no lot outlines gets no row.
+CREATE FUNCTION refresh_property_footprint(target UUID) RETURNS void AS $$
+BEGIN
+    DELETE FROM property_footprint WHERE property_id = target;
+
+    INSERT INTO property_footprint (property_id, outline, lot_count)
+    SELECT target,
+           postgis.ST_SimplifyPreserveTopology(
+               postgis.ST_ConvexHull(postgis.ST_Collect(postgis.ST_MakeValid(outline))),
+               0.00001),  -- about one metre
+           count(*)
+      FROM lot_outline
+     WHERE property_id = target
+    HAVING count(*) > 0;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE FUNCTION lot_outline_changed() RETURNS trigger AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        PERFORM refresh_property_footprint(NEW.property_id);
+    ELSIF TG_OP = 'DELETE' THEN
+        PERFORM refresh_property_footprint(OLD.property_id);
+    ELSE
+        PERFORM refresh_property_footprint(NEW.property_id);
+        IF OLD.property_id <> NEW.property_id THEN
+            PERFORM refresh_property_footprint(OLD.property_id);
+        END IF;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER lot_outline_refreshes_footprint
+    AFTER INSERT OR UPDATE OR DELETE ON lot_outline
+    FOR EACH ROW EXECUTE FUNCTION lot_outline_changed();
+
 -- Where to print a lot's number: the middle of the biggest circle that fits
 -- inside it, measured in metres. Better than ST_PointOnSurface, which can land
 -- against an edge or up the narrow leg of an L-shaped lot.

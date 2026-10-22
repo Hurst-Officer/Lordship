@@ -21,7 +21,7 @@ public class PropertyRepository {
 
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
             "property_code", "property_name", "property_street", "property_city",
-            "property_state", "property_zip","purchase_date", "property_zoning", "property_parcel",
+            "property_state", "property_zip", "latitude", "longitude", "purchase_date", "property_zoning", "property_parcel",
             "payable_to", "remittance_address", "year_built", "custom_fields", "property_manager"
     );
 
@@ -61,7 +61,7 @@ public class PropertyRepository {
     }
 
     public List<PropertyRow> findAll() {
-        return jdbc.sql("SELECT * FROM property WHERE deleted_at IS NULL")
+        return jdbc.sql("SELECT * FROM property WHERE deleted_at IS NULL ORDER BY lower(property_name), uuid")
                 .query(rowMapper)
                 .list();
     }

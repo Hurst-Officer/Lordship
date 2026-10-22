@@ -10,6 +10,7 @@ import io.github.lordship.meters.internal.MeterRepository;
 import io.github.lordship.meters.internal.MeterRow;
 import io.github.lordship.persons.internal.PersonRepository;
 import io.github.lordship.persons.internal.PersonRow;
+import io.github.lordship.properties.Property;
 import io.github.lordship.properties.internal.PropertyRepository;
 import io.github.lordship.properties.internal.PropertyRow;
 import io.github.lordship.tenancy.internal.TenancyRepository;
@@ -21,6 +22,9 @@ import io.github.lordship.tenants.internal.TenantRow;
 import org.springframework.beans.factory.annotation.Value;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.util.Map;
 import java.util.UUID;
 
 
@@ -121,5 +125,19 @@ public final class TestDataSupport {
 
     public TenantRow insertTenant(UUID tenancyId, UUID personId, LocalDate startDate) {
         return tenantRepository.save(tenancyId, personId, startDate);
+    }
+
+    // ---- records built in memory, for unit tests with no database ----
+
+    // The one place a test writes out the Property constructor. A new property column
+    // only changes this method. Location, custom fields, manager and timestamps are left empty.
+    public static Property property(UUID uuid, String code, String name, String street,
+                                    String city, String state, String zip,
+                                    LocalDate purchaseDate, String zoning, String parcel,
+                                    String payableTo, String remittanceAddress, Integer yearBuilt) {
+        return new Property(uuid, code, name, street, city, state, zip,
+                null, null,
+                purchaseDate, zoning, parcel, payableTo, remittanceAddress, yearBuilt,
+                Map.of(), null, OffsetDateTime.now(ZoneOffset.UTC), null);
     }
 }

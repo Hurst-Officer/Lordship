@@ -42,6 +42,10 @@ CREATE TABLE property (
                           property_state   VARCHAR(2) NOT NULL CONSTRAINT property_state_must_be_two_capital_letters CHECK (property_state ~ '^[A-Z]{2}$'),
                           property_zip     TEXT NOT NULL CONSTRAINT property_zip_must_be_5_digits_or_zip_plus_4 CHECK (property_zip ~ '^[0-9]{5}(-[0-9]{4})?$'),
 
+                          -- where the park sits, for the global map. Set by hand or by the map builder
+                          latitude         DOUBLE PRECISION CONSTRAINT property_latitude_must_be_minus_90_to_90 CHECK (latitude BETWEEN -90 AND 90),
+                          longitude        DOUBLE PRECISION CONSTRAINT property_longitude_must_be_minus_180_to_180 CHECK (longitude BETWEEN -180 AND 180),
+
                           purchase_date    DATE,
                           property_zoning  TEXT,
                           property_parcel  TEXT,
@@ -51,7 +55,8 @@ CREATE TABLE property (
                           custom_fields    JSONB NOT NULL DEFAULT '{}'::jsonb CONSTRAINT property_custom_fields_must_be_an_object CHECK (jsonb_typeof(custom_fields) = 'object'), -- labels the office adds later; people are linked in property_contact
                           property_manager UUID, -- FK to agent added in V3 after agent table exists
                           created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-                          deleted_at       TIMESTAMPTZ
+                          deleted_at       TIMESTAMPTZ,
+                          CONSTRAINT property_location_needs_both_latitude_and_longitude CHECK ((latitude IS NULL) = (longitude IS NULL))
 );
 
 -- A code names one live property. A deleted property gives its code back.
