@@ -44,7 +44,8 @@ public class AgentController {
      * <ul>
      *   <li>200 -- the token, plus the agent's {@code roles} and {@code permissions}
      *       (sorted names). The token is good until {@code jwt.expiration-ms}; nothing
-     *       here touches an agent who is already signed in.</li>
+     *       here touches an agent who is already signed in. Also a {@code refreshToken}
+     *       for {@code /session/refresh}. Keep it somewhere safe, never in plain storage.</li>
      *   <li>401, {@code code: auth.bad_credentials} -- the same body for an unknown email
      *       and a wrong password, on purpose. Show {@code message}; don't try to say which.</li>
      *   <li>429, {@code code: auth.too_many_attempts} plus a {@code Retry-After} header in
@@ -67,9 +68,41 @@ public class AgentController {
                                         httpRequest.getHeader("User-Agent"),
                                         httpRequest.getRemoteAddr()
                 )
-                .map(result -> AgentLoginResponse.from(result.identity(), result.token()))
+                .map(AgentLoginResponse::from)
                 .map(ResponseEntity::ok)
                 .orElseThrow(LoginRefused::badCredentials);
+    }
+
+    /**
+     * Keeps a computer signed in. Trades a refresh token for a new access token and a
+     * new refresh token, with the same body as sign-in. The old refresh token stops
+     * working right away, so save the new one before anything else.
+     * <ul>
+     *   <li>200 -- same body as {@code /auth}.</li>
+     *   <li>401, {@code code: auth.session_expired} -- unknown, already used, logged out,
+     *       idle past {@code lordship.session.idle-days}, older than {@code lordship.session.max-days},
+     *       or ended by a password reset. Show the sign-in screen.</li>
+     * </ul>
+     * Sending an old refresh token a second time ends that whole session. Never retry
+     * a refresh with the token you just sent.
+     */
+    @PostMapping("/session/refresh")
+    public ResponseEntity<AgentLoginResponse> refreshSession(@Valid @RequestBody RefreshTokenRequest request,
+                                                             HttpServletRequest httpRequest) {
+        return agentService.refreshSession(request.refreshToken(), httpRequest.getRemoteAddr())
+                .map(AgentLoginResponse::from)
+                .map(ResponseEntity::ok)
+                .orElseThrow(LoginRefused::sessionExpired);
+    }
+
+    /**
+     * Log out of this computer. Always 204, even for a token that is unknown or already ended.
+     * The access token keeps working until it expires (at most {@code jwt.expiration-ms}).
+     */
+    @PostMapping("/session/logout")
+    public ResponseEntity<Void> logout(@Valid @RequestBody RefreshTokenRequest request) {
+        agentService.endSession(request.refreshToken());
+        return ResponseEntity.noContent().build();
     }
 
     /**

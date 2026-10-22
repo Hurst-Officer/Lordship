@@ -30,6 +30,25 @@ CREATE TABLE agent_login_event (
 
 CREATE INDEX idx_login_event_agent ON agent_login_event(agent_id, occurred_at DESC);
 
+CREATE TABLE agent_session ( -- one signed-in computer. Only a hash of its token is stored
+                               uuid          UUID PRIMARY KEY DEFAULT uuidv7(),
+                               agent_id      UUID NOT NULL,
+                               token_hash    CHAR(64) NOT NULL UNIQUE, -- sha-256 hex of the current session token
+                               previous_hash CHAR(64),                 -- the token it replaced; seeing it again means a copy was taken
+                               ip_address    VARCHAR(45),
+                               browser_client TEXT,
+                               browser_os    TEXT,
+                               created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+                               last_used_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+                               expires_at    TIMESTAMPTZ NOT NULL,     -- the hard limit, however often it is used
+                               ended_at      TIMESTAMPTZ,              -- log out, password reset, removal or expiry
+                               FOREIGN KEY (agent_id) REFERENCES agent(uuid),
+                               CONSTRAINT agent_session_expires_at_must_follow_created_at CHECK (expires_at > created_at)
+);
+
+CREATE INDEX idx_agent_session_agent ON agent_session(agent_id) WHERE ended_at IS NULL;
+CREATE INDEX idx_agent_session_previous_hash ON agent_session(previous_hash) WHERE ended_at IS NULL;
+
 CREATE TABLE agent_role (
                             uuid             UUID PRIMARY KEY DEFAULT uuidv7(),
                             role_name        VARCHAR(60) NOT NULL,

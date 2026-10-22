@@ -35,6 +35,7 @@ public class AgentService {
     private final AuditService auditService;
     private final AgentAuthorizationCache authorizationCache;
     private final LoginThrottle loginThrottle;
+    private final AgentSessionService sessionService;
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
 
@@ -51,7 +52,8 @@ public class AgentService {
             LoginEventRepository loginEventRepository,
             AuditService auditService,
             AgentAuthorizationCache authorizationCache,
-            LoginThrottle loginThrottle
+            LoginThrottle loginThrottle,
+            AgentSessionService sessionService
     ) {
         this.agentRepository = agentRepository;
         this.personService = personService;
@@ -63,6 +65,7 @@ public class AgentService {
         this.auditService = auditService;
         this.authorizationCache = authorizationCache;
         this.loginThrottle = loginThrottle;
+        this.sessionService = sessionService;
     }
 
     @Transactional
@@ -112,6 +115,7 @@ public class AgentService {
 
         // note: this logs the user out (forcing them to log back in)
         agentRepository.revokeTokens(agentId);
+        sessionService.endAll(agentId);
 
         // clear the cached login credentials
         authorizationCache.invalidate(agentId);
@@ -150,6 +154,7 @@ public class AgentService {
         if (!agentRepository.softDelete(agentId)) {
             return false;
         }
+        sessionService.endAll(agentId);
 
         authorizationCache.invalidate(agentId);
         auditService.recordDelete("agent", agentId, AuditMapper.toMap(before.get().toAgent()));
@@ -191,16 +196,55 @@ public class AgentService {
             loginThrottle.succeeded(ipAddress, workEmail);
             return personService.findByID(ar.personId())
                     .map(person -> {
-                        AgentWithPerson agentWithPerson = new AgentWithPerson(ar.toAgent(), person);
-                        AgentIdentity identity = new AgentIdentity(
-                                agentWithPerson,
-                                grantedRoleService.findRoleNamesForAgent(ar.uuid()),
-                                permissionNamesForAgent(ar.uuid()));
-                        String token = jwtService.generateToken(agentWithPerson);
-                        return new AgentAuthResult(identity, token);
+                        String refreshToken = sessionService.start(ar.uuid(), ipAddress,
+                                userAgent.getBrowser().getName(), userAgent.getOperatingSystem().getName());
+                        return issue(ar, person, refreshToken);
                     });
         }
         return Optional.empty();
+    }
+
+    /**
+     * Trades a refresh token for a new access token and a new refresh token.
+     * Empty when the session is over, for any reason. No password is checked here.
+     */
+    public Optional<AgentAuthResult> refreshSession(String refreshToken, String ipAddress) {
+        Optional<AgentSessionService.Rotated> rotated = sessionService.rotate(refreshToken, ipAddress);
+        if (rotated.isEmpty()) {
+            return Optional.empty();
+        }
+        UUID agentId = rotated.get().agentId();
+
+        // A removed agent, or a session older than a password reset, cannot go on.
+        // Both paths already end sessions; this catches one that forgot to.
+        Optional<AgentRow> agentRow = agentRepository.findById(agentId);
+        OffsetDateTime validFrom = agentRow.map(AgentRow::tokensValidFrom).orElse(null);
+        boolean startedBeforeReset = validFrom != null
+                && rotated.get().sessionStartedAt().isBefore(validFrom);
+        if (agentRow.isEmpty() || startedBeforeReset) {
+            sessionService.endAll(agentId);
+            return Optional.empty();
+        }
+
+        AgentRow ar = agentRow.get();
+        return personService.findByID(ar.personId())
+                .map(person -> issue(ar, person, rotated.get().refreshToken()));
+    }
+
+    /** Log out of this computer only. Unknown tokens are ignored. */
+    public void endSession(String refreshToken) {
+        sessionService.end(refreshToken);
+    }
+
+    // The access token plus who the agent is and what they may do.
+    private AgentAuthResult issue(AgentRow ar, Person person, String refreshToken) {
+        AgentWithPerson agentWithPerson = new AgentWithPerson(ar.toAgent(), person);
+        AgentIdentity identity = new AgentIdentity(
+                agentWithPerson,
+                grantedRoleService.findRoleNamesForAgent(ar.uuid()),
+                permissionNamesForAgent(ar.uuid()));
+        String token = jwtService.generateToken(agentWithPerson);
+        return new AgentAuthResult(identity, token, refreshToken);
     }
 
     /**
@@ -268,4 +312,4 @@ public class AgentService {
     public List<LoginEventRow> getLoginEventsByAgentId(UUID agentId) {
         return loginEventRepository.getLoginEventsByAgentId(agentId);
     }
-}
+}

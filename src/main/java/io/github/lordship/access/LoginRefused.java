@@ -28,6 +28,11 @@ public class LoginRefused extends RuntimeException implements DomainProblem {
         return new LoginRefused(Problem.of("auth.bad_credentials"), null);
     }
 
+    // The refresh token is unknown, used up, or its session has ended. Sign in again.
+    public static LoginRefused sessionExpired() {
+        return new LoginRefused(Problem.of("auth.session_expired"), null);
+    }
+
     public static LoginRefused tooManyAttempts(Duration wait) {
         long seconds = Math.max(1, (wait.toMillis() + 999) / 1000);
         long minutes = seconds < 60 ? 0 : (seconds + 59) / 60;
