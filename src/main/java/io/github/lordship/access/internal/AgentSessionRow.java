@@ -8,7 +8,6 @@ public record AgentSessionRow(
         UUID uuid,
         UUID agentId,
         String tokenHash,
-        String previousHash,
         String ipAddress,
         String browserClient,
         String browserOs,

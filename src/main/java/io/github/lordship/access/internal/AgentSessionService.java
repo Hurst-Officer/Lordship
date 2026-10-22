@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -55,18 +56,21 @@ public class AgentSessionService {
      * Swaps a refresh token for a new one. Empty when the token is unknown, already
      * swapped, ended, unused for too long, or past the hard limit.
      */
+    @Transactional
     public Optional<Rotated> rotate(String refreshToken, String ipAddress) {
         String oldHash = hash(refreshToken);
         Optional<AgentSessionRow> found = sessionRepository.findByTokenHash(oldHash);
 
         if (found.isEmpty()) {
-            // An old token came back after it was swapped. Someone else may hold a copy,
+            // A used-up token came back. Someone else may hold a copy,
             // so end the whole session. The worker signs in again.
-            sessionRepository.findOpenByPreviousHash(oldHash).ifPresent(row -> {
-                sessionRepository.end(row.uuid());
-                log.warn("A replaced refresh token for agent {} was used again. Ended session {}",
-                        row.agentId(), row.uuid());
-            });
+            sessionRepository.findBySpentTokenHash(oldHash)
+                    .filter(row -> row.endedAt() == null)
+                    .ifPresent(row -> {
+                        sessionRepository.end(row.uuid());
+                        log.warn("A used-up refresh token for agent {} came back. Ended session {}",
+                                row.agentId(), row.uuid());
+                    });
             return Optional.empty();
         }
 
@@ -87,6 +91,7 @@ public class AgentSessionService {
         if (!sessionRepository.rotate(row.uuid(), oldHash, hash(next), ipAddress)) {
             return Optional.empty();
         }
+        sessionRepository.markSpent(row.uuid(), oldHash);
         return Optional.of(new Rotated(row.agentId(), row.createdAt(), next));
     }
 

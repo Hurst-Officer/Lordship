@@ -3,6 +3,8 @@ package io.github.lordship.access.internal;
 import io.github.lordship.IntegrationTest;
 import io.github.lordship.TestAuthSupport;
 import io.github.lordship.TestAuthSupport.TestAgent;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +14,9 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
 
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -31,6 +36,9 @@ public class AgentSessionIT extends IntegrationTest {
 
     @Value("${lordship.root.password}")
     private String rootPassword;
+
+    @Value("${jwt.secret}")
+    private String jwtSecret;
 
     @Autowired
     MockMvc mockMvc;
@@ -60,6 +68,19 @@ public class AgentSessionIT extends IntegrationTest {
                 .content("""
                         { "refreshToken": "%s" }
                         """.formatted(refreshToken)));
+    }
+
+    // A correctly signed access token that ran out an hour ago,
+    // like the one Glade holds after a worker comes back from lunch.
+    private String expiredAccessToken(TestAgent agent) {
+        long anHourAgo = System.currentTimeMillis() - 3_600_000;
+        return Jwts.builder()
+                .subject(agent.uuid().toString())
+                .claim("user_type", "AGENT")
+                .issuedAt(new Date(anHourAgo - 900_000))
+                .expiration(new Date(anHourAgo))
+                .signWith(Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8)))
+                .compact();
     }
 
     private String refreshTokenFrom(ResultActions result) throws Exception {
@@ -105,6 +126,20 @@ public class AgentSessionIT extends IntegrationTest {
     }
 
     @Test
+    void refresh_catchesACopyFromSeveralSwapsAgo() throws Exception {
+        TestAgent agent = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken());
+        String stolen = signIn(agent).get("refreshToken").asString();
+        String second = refreshTokenFrom(refresh(stolen).andExpect(status().isOk()));
+        String third = refreshTokenFrom(refresh(second).andExpect(status().isOk()));
+
+        // the thief tries the copy long after Glade moved on
+        refresh(stolen).andExpect(status().isUnauthorized());
+
+        // the session is over for everyone, so Glade signs in again too
+        refresh(third).andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void refresh_refusesAnUnknownToken() throws Exception {
         refresh("not-a-real-token")
                 .andExpect(status().isUnauthorized())
@@ -115,9 +150,16 @@ public class AgentSessionIT extends IntegrationTest {
     void refresh_ignoresAnExpiredAccessTokenSentAlong() throws Exception {
         TestAgent agent = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken());
         String refreshToken = signIn(agent).get("refreshToken").asString();
+        String expired = expiredAccessToken(agent);
 
+        // anywhere else, this token is turned away
+        mockMvc.perform(get("/api/agents/self")
+                        .header("Authorization", "Bearer " + expired))
+                .andExpect(status().isUnauthorized());
+
+        // the refresh call does not look at it
         mockMvc.perform(post("/api/agents/session/refresh")
-                        .header("Authorization", "Bearer not.a.valid-token")
+                        .header("Authorization", "Bearer " + expired)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 { "refreshToken": "%s" }

@@ -44,12 +44,24 @@ public class AgentSessionRepository {
                 .optional();
     }
 
-    // An open session whose token was already swapped for this one.
-    public Optional<AgentSessionRow> findOpenByPreviousHash(String previousHash) {
-        return jdbc.sql("SELECT * FROM agent_session WHERE previous_hash = :previousHash AND ended_at IS NULL")
-                .param("previousHash", previousHash)
+    // The session that once used this token, however many swaps ago.
+    public Optional<AgentSessionRow> findBySpentTokenHash(String tokenHash) {
+        return jdbc.sql("""
+                SELECT s.* FROM agent_session s
+                JOIN agent_session_spent_token t ON t.session_id = s.uuid
+                WHERE t.token_hash = :tokenHash
+                """)
+                .param("tokenHash", tokenHash)
                 .query(AgentSessionRow.class)
                 .optional();
+    }
+
+    // Kept until the session row goes, so an old copy is still caught months later.
+    public void markSpent(UUID sessionId, String tokenHash) {
+        jdbc.sql("INSERT INTO agent_session_spent_token (token_hash, session_id) VALUES (:tokenHash, :sessionId)")
+                .param("tokenHash", tokenHash)
+                .param("sessionId", sessionId)
+                .update();
     }
 
     // False when another request swapped the token first, or the session has ended.
@@ -57,7 +69,6 @@ public class AgentSessionRepository {
         return jdbc.sql("""
                 UPDATE agent_session
                 SET token_hash = :newHash,
-                    previous_hash = :oldHash,
                     last_used_at = now(),
                     ip_address = :ipAddress
                 WHERE uuid = :sessionId AND token_hash = :oldHash AND ended_at IS NULL
