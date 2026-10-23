@@ -29,6 +29,8 @@ public class PropertyRowMapper implements RowMapper<PropertyRow> {
                 rs.getString("property_city"),
                 rs.getString("property_state"),
                 rs.getString("property_zip"),
+                (Double) rs.getObject("latitude"),
+                (Double) rs.getObject("longitude"),
                 rs.getObject("purchase_date", LocalDate.class),
                 rs.getString("property_zoning"),
                 rs.getString("property_parcel"),

@@ -40,8 +40,9 @@ public class PropertyController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    // Every live property, sorted by name.
     @PreAuthorize("hasAuthority('properties:view')")
-    @GetMapping("/getAll")
+    @GetMapping
     public ResponseEntity<List<PropertyResponse>> getAllProperties() {
         return ResponseEntity.ok(propertyService.findAll().stream().map(PropertyResponse::from).toList());
     }
@@ -66,6 +67,17 @@ public class PropertyController {
         if (request.containsKey("yearBuilt"))       changes.put("year_built", request.get("yearBuilt"));
         if (request.containsKey("propertyParcel"))  changes.put("property_parcel", request.get("propertyParcel"));
         if (request.containsKey("customFields"))    changes.put("custom_fields", request.get("customFields"));
+
+        // Latitude and longitude are numbers or null. Set both together, or clear both.
+        for (String key : List.of("latitude", "longitude")) {
+            if (request.containsKey(key)) {
+                Object raw = request.get(key);
+                if (raw != null && !(raw instanceof Number)) {
+                    return ResponseEntity.badRequest().build();
+                }
+                changes.put(key, raw == null ? null : ((Number) raw).doubleValue());
+            }
+        }
 
 
         if (request.containsKey("purchaseDate")) {

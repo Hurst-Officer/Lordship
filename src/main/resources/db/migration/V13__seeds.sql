@@ -53,6 +53,9 @@ INSERT INTO permission_seed (permission_name) VALUES
                                                    ('properties:create'),
                                                    ('properties:delete'),
 
+                                                   -- Site maps
+                                                   ('sitemaps:edit'),
+
                                                    -- Property assignments
                                                    ('assignments:assign-all'),
                                                    ('assignments:view'),
@@ -211,18 +214,19 @@ INSERT INTO permission_area (area, group_key, area_order) VALUES
     ('properties', 'properties', 13),
     ('lots', 'properties', 14),
     ('homes', 'properties', 15),
-    ('assignments', 'properties', 16),
-    ('accounts', 'money', 17),
-    ('transactions', 'money', 18),
-    ('meters', 'utilities', 19),
-    ('meterbills', 'utilities', 20),
-    ('terms_template', 'documents', 21),
-    ('document_template', 'documents', 22),
-    ('property_document', 'documents', 23),
-    ('instrument', 'documents', 24),
-    ('notices', 'notices', 25),
-    ('audit', 'system', 26),
-    ('global_settings', 'system', 27);
+    ('sitemaps', 'properties', 16),
+    ('assignments', 'properties', 17),
+    ('accounts', 'money', 18),
+    ('transactions', 'money', 19),
+    ('meters', 'utilities', 20),
+    ('meterbills', 'utilities', 21),
+    ('terms_template', 'documents', 22),
+    ('document_template', 'documents', 23),
+    ('property_document', 'documents', 24),
+    ('instrument', 'documents', 25),
+    ('notices', 'notices', 26),
+    ('audit', 'system', 27),
+    ('global_settings', 'system', 28);
 
 -- Inside a group: by area, then view, create, edit, delete, then the rest in seed order.
 INSERT INTO permission (permission_name, group_id, sort_order)
@@ -295,6 +299,7 @@ WHERE r.role_name = 'Office Staff'
                             'pets:create',
                             'pets:delete',
                             'properties:view',
+                            'sitemaps:edit',
                             'assignments:view',
                             'assignments:assign-all',
                             'audit:view',

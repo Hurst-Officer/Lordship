@@ -13,6 +13,8 @@ public record Property(
         String propertyCity,
         String propertyState,
         String propertyZip,
+        Double latitude,
+        Double longitude,
         LocalDate purchaseDate,
         String propertyZoning,
         String propertyParcel,
