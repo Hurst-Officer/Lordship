@@ -10,11 +10,16 @@ public final class SiteMapScreenResponses {
 
     private SiteMapScreenResponses() { }
 
-    // One park's outline for the global map
+    // One park's small drawing for the global map.
+    // hull and lots are SVG paths in metres east and south of the middle point.
     public record FootprintResponse(
             UUID propertyId,
-            @JsonRawValue String outline,
-            int lotCount
+            int lotCount,
+            double middleLongitude,
+            double middleLatitude,
+            double sizeMetres,
+            String hull,
+            String lots
     ) { }
 
     // One park's map for the property screen

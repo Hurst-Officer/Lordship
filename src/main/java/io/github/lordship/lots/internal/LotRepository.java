@@ -1,5 +1,6 @@
 package io.github.lordship.lots.internal;
 
+import io.github.lordship.lots.ShapeData;
 import tools.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -20,10 +21,12 @@ public class LotRepository {
     );
 
     private final JdbcClient jdbc;
+    private final ObjectMapper objectMapper;
     private final LotRowMapper rowMapper;
 
     public LotRepository(JdbcClient jdbc, ObjectMapper objectMapper) {
         this.jdbc = jdbc;
+        this.objectMapper = objectMapper;
         this.rowMapper = new LotRowMapper(objectMapper);
     }
 
@@ -107,9 +110,17 @@ public class LotRepository {
                 .list();
     }
 
+    // Where the lot is drawn on the park's plat, in drawing pixels
+    public boolean saveShapeData(UUID uuid, ShapeData shape) {
+        return jdbc.sql("UPDATE lot SET shape_data = :shape::jsonb WHERE uuid = :uuid AND deleted_at IS NULL")
+                .param("shape", objectMapper.writeValueAsString(shape))
+                .param("uuid", uuid)
+                .update() > 0;
+    }
+
     public boolean softDelete(UUID uuid) {
         return jdbc.sql("UPDATE lot SET deleted_at = CURRENT_TIMESTAMP WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)
                 .update() > 0;
     }
-}
+}

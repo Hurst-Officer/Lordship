@@ -14,7 +14,9 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.UUID;
 
+import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -50,7 +52,9 @@ public class SiteMapScreenIT extends IntegrationTest {
                 .single();
     }
 
+    // Rebuilds the out-of-date drawings, the way a read of the global map does, then counts
     private Integer footprintLotCount(UUID propertyId) {
+        jdbc.sql("SELECT refresh_stale_footprints()").query(Integer.class).single();
         return jdbc.sql("SELECT lot_count FROM property_footprint WHERE property_id = :id")
                 .param("id", propertyId)
                 .query(Integer.class)
@@ -77,11 +81,30 @@ public class SiteMapScreenIT extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[*].propertyId", hasItem(cedrona().toString())))
                 .andExpect(jsonPath("$[?(@.propertyId == '%s')].lotCount".formatted(cedrona()), hasItem(54)))
-                .andExpect(jsonPath("$[?(@.propertyId == '%s')].outline.type".formatted(cedrona()), hasItem("Polygon")));
+                .andExpect(jsonPath("$[?(@.propertyId == '%s')].middleLatitude".formatted(cedrona()), hasItem(closeTo(47.1257, 0.001))))
+                .andExpect(jsonPath("$[?(@.propertyId == '%s')].hull".formatted(cedrona()), hasItem(startsWith("M "))))
+                .andExpect(jsonPath("$[?(@.propertyId == '%s')].lots".formatted(cedrona()), hasItem(startsWith("M "))));
+    }
+
+    // Each of the 54 seeded lots survives the corner merge as its own shape
+    @Test
+    void mergingCorners_keepsEveryLot() {
+        UUID park = cedrona();
+        jdbc.sql("SELECT refresh_stale_footprints()").query(Integer.class).single();
+
+        Integer shapes = jdbc.sql("""
+                        SELECT postgis.ST_NumGeometries(merged_lot_shapes(f.property_id, f.middle))
+                          FROM property_footprint f
+                         WHERE f.property_id = :park
+                        """)
+                .param("park", park)
+                .query(Integer.class)
+                .single();
+        assertEquals(54, shapes);
     }
 
     @Test
-    void addingAndRemovingALotShape_rebuildsTheFootprint() {
+    void addingAndRemovingALotShape_rebuildsTheDrawing() {
         LotRow lot = testData.insertChainToLot();
         assertEquals(null, footprintLotCount(lot.propertyId()));
 
@@ -89,6 +112,16 @@ public class SiteMapScreenIT extends IntegrationTest {
         assertEquals(1, footprintLotCount(lot.propertyId()));
 
         jdbc.sql("DELETE FROM lot_outline WHERE lot_id = :lot").param("lot", lot.uuid()).update();
+        assertEquals(null, footprintLotCount(lot.propertyId()));
+    }
+
+    @Test
+    void removingALot_takesItOffTheDrawing() {
+        LotRow lot = testData.insertChainToLot();
+        insertOutline(lot.uuid(), lot.propertyId());
+        assertEquals(1, footprintLotCount(lot.propertyId()));
+
+        jdbc.sql("UPDATE lot SET deleted_at = now() WHERE uuid = :lot").param("lot", lot.uuid()).update();
         assertEquals(null, footprintLotCount(lot.propertyId()));
     }
 

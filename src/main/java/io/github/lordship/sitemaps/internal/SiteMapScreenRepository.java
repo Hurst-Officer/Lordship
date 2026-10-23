@@ -22,12 +22,24 @@ public class SiteMapScreenRepository {
         this.db = db;
     }
 
-    // One row per live property that has lot outlines. Six decimals is about ten centimetres.
+    // Rebuilds the drawings of parks whose lot shapes changed since the last read.
+    // Returns how many were rebuilt.
+    public int refreshStaleFootprints() {
+        return db.sql("SELECT refresh_stale_footprints()")
+                .query(Integer.class)
+                .single();
+    }
+
+    // One row per live property that has lot outlines
     public List<FootprintRow> findFootprints() {
         return db.sql("""
                         SELECT f.property_id,
-                               postgis.ST_AsGeoJSON(f.outline, 6) AS outline,
-                               f.lot_count
+                               f.lot_count,
+                               postgis.ST_X(f.middle) AS middle_longitude,
+                               postgis.ST_Y(f.middle) AS middle_latitude,
+                               f.size_metres,
+                               f.hull_svg,
+                               f.lots_svg
                           FROM property_footprint f
                           JOIN property p ON p.uuid = f.property_id
                          WHERE p.deleted_at IS NULL
@@ -73,7 +85,7 @@ public class SiteMapScreenRepository {
                 .list();
     }
 
-    // Everything drawn around the lots: roads, water, buildings, contours, neighbours.
+    // Everything drawn around the lots: roads, water, buildings, contours, neighbors.
     // context_area is left out. It only marks the frame of the last pull.
     public List<FeatureShapeRow> findFeatureShapes(UUID propertyId) {
         return db.sql("""

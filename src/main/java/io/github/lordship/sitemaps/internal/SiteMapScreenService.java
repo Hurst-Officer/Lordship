@@ -22,9 +22,14 @@ public class SiteMapScreenService {
         this.repository = repository;
     }
 
+    // Not read-only: drawings that went out of date are rebuilt first.
+    @Transactional
     public List<FootprintResponse> footprints() {
+        repository.refreshStaleFootprints();
         return repository.findFootprints().stream()
-                .map(f -> new FootprintResponse(f.propertyId(), f.outline(), f.lotCount()))
+                .map(f -> new FootprintResponse(
+                        f.propertyId(), f.lotCount(), f.middleLongitude(), f.middleLatitude(), f.sizeMetres(),
+                        f.hullSvg(), f.lotsSvg()))
                 .toList();
     }
 

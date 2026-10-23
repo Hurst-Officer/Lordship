@@ -92,6 +92,17 @@ public class LotService {
         return Optional.of(hydrate(after));
     }
 
+    /**
+     * Saves where a lot is drawn on the park's plat drawing, in drawing pixels.
+     *
+     * <p>No audit entry here. The map builder calls this for every lot it saves,
+     * and records one entry for the whole map instead of one per lot.
+     */
+    @Transactional
+    public boolean placeShape(UUID lotId, ShapeData shape) {
+        return lotRepository.saveShapeData(lotId, shape);
+    }
+
     @Transactional
     public boolean deleteLot(UUID uuid) {
         return lotRepository.findById(uuid).map(existing -> {
@@ -287,4 +298,4 @@ public class LotService {
                     "lot_permissible_agreement_type", after.uuid(), diff.before(), diff.after());
         }
     }
-}
+}
