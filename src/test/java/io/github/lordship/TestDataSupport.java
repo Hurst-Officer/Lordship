@@ -24,6 +24,7 @@ import org.springframework.beans.factory.annotation.Value;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -130,14 +131,23 @@ public final class TestDataSupport {
     // ---- records built in memory, for unit tests with no database ----
 
     // The one place a test writes out the Property constructor. A new property column
-    // only changes this method. Location, custom fields, manager and timestamps are left empty.
+    // only changes this method. County, location, acres, business numbers, custom fields,
+    // links, notes, manager and timestamps are left empty.
     public static Property property(UUID uuid, String code, String name, String street,
                                     String city, String state, String zip,
-                                    LocalDate purchaseDate, String zoning, String parcel,
+                                    LocalDate purchaseDate, String zoning, List<String> parcels,
                                     String payableTo, String remittanceAddress, Integer yearBuilt) {
         return new Property(uuid, code, name, street, city, state, zip,
-                null, null,
-                purchaseDate, zoning, parcel, payableTo, remittanceAddress, yearBuilt,
-                Map.of(), null, OffsetDateTime.now(ZoneOffset.UTC), null);
+                null,           // county
+                null, null,     // latitude, longitude
+                purchaseDate, zoning, parcels,
+                null,           // acres
+                payableTo,
+                List.of(),      // business numbers
+                remittanceAddress, yearBuilt,
+                Map.of(),       // custom fields
+                Map.of(),       // field links
+                Map.of(),       // field notes
+                null, OffsetDateTime.now(ZoneOffset.UTC), null);
     }
 }

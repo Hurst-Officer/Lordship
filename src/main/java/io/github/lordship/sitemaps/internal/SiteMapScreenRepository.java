@@ -3,10 +3,12 @@ package io.github.lordship.sitemaps.internal;
 import io.github.lordship.sitemaps.internal.SiteMapScreenRows.FeatureShapeRow;
 import io.github.lordship.sitemaps.internal.SiteMapScreenRows.FootprintRow;
 import io.github.lordship.sitemaps.internal.SiteMapScreenRows.LotShapeRow;
+import io.github.lordship.sitemaps.internal.SiteMapScreenRows.TerrainRow;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -92,7 +94,9 @@ public class SiteMapScreenRepository {
                         SELECT f.kind,
                                f.name,
                                postgis.ST_AsGeoJSON(f.geom, 7) AS geometry,
-                               COALESCE((f.details ->> 'width_m')::float8, 0) AS width_metres
+                               COALESCE((f.details ->> 'width_m')::float8, 0) AS width_metres,
+                               (f.details ->> 'elevation_ft')::float8 AS elevation_ft,
+                               COALESCE((f.details ->> 'index')::boolean, false) AS contour_index
                           FROM map_feature f
                          WHERE f.property_id = :property
                            AND f.deleted_at IS NULL
@@ -101,5 +105,28 @@ public class SiteMapScreenRepository {
                 .param("property", propertyId)
                 .query(FeatureShapeRow.class)
                 .list();
+    }
+
+    // The ground's heights around a park. Empty when they were never pulled.
+    public Optional<TerrainRow> findTerrain(UUID propertyId) {
+        return db.sql("""
+                        SELECT e.min_ft,
+                               e.max_ft,
+                               e.contour_interval_ft,
+                               postgis.ST_XMin(e.extent) AS west,
+                               postgis.ST_YMin(e.extent) AS south,
+                               postgis.ST_XMax(e.extent) AS east,
+                               postgis.ST_YMax(e.extent) AS north,
+                               e.width,
+                               e.height,
+                               e.grid
+                          FROM site_elevation e
+                         WHERE e.property_id = :property
+                           AND e.min_ft IS NOT NULL
+                           AND e.max_ft IS NOT NULL
+                        """)
+                .param("property", propertyId)
+                .query(TerrainRow.class)
+                .optional();
     }
 }

@@ -311,7 +311,7 @@ public class TokenResolverTest {
     private static Property property() {
         return TestDataSupport.property(PROPERTY, "HV", "Harbor View", "100 Marina Drive",
                 "Vine Villa", "WA", "94370", LocalDate.of(2019, 5, 1),
-                "MHP-2", "P-1000", "Harbor View LLC", "PO Box 12, Vine Villa WA 94370",
+                "MHP-2", List.of("P-1000"), "Harbor View LLC", "PO Box 12, Vine Villa WA 94370",
                 1978);
     }
 
@@ -461,7 +461,7 @@ public class TokenResolverTest {
         Property p = property();
         return TestDataSupport.property(p.uuid(), p.propertyCode(), p.propertyName(), p.propertyStreet(),
                 p.propertyCity(), p.propertyState(), p.propertyZip(), p.purchaseDate(),
-                p.propertyZoning(), p.propertyParcel(), null, null, p.yearBuilt());
+                p.propertyZoning(), p.propertyParcels(), null, null, p.yearBuilt());
     }
 
     // ---- lot.rent_history_* --------------------------------------------------

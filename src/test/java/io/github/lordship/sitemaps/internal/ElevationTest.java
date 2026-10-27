@@ -72,4 +72,32 @@ class ElevationTest {
 
         assertEquals(2000, Math.max(asked.width(), asked.height()));
     }
+
+    @Test
+    void aWideGrid_keepsContoursToThePark_andSpacesThemForThePark() {
+        Elevation.Box park = new Elevation.Box(47.1234, -122.5409, 47.1280, -122.5354);
+        Elevation.GridRequest asked = Elevation.gridFor(Elevation.grown(park, 800));
+        int w = asked.width();
+        int h = asked.height();
+        float[] heights = new float[w * h];
+        // A park rising about 6 m, in a bowl of hills about 300 m higher at the edges
+        for (int r = 0; r < h; r++) {
+            for (int c = 0; c < w; c++) {
+                double x = c / (double) w;
+                double rim = Math.max(0, Math.hypot(x - .5, r / (double) h - .5) - .2);
+                heights[r * w + c] = (float) (78 + 6 * x + 1200 * rim * rim);
+            }
+        }
+
+        Elevation.Built built = Elevation.build(park, asked, new HeightTiff.Grid(w, h, heights));
+
+        // 1 ft steps suit the park, even though the hills would ask for 50 ft steps
+        assertEquals(1, built.summary().contourIntervalFt());
+        assertTrue(built.summary().maxFt() > 1000, "the hillshade and heights cover the hills too");
+        for (Elevation.Contour contour : built.contours()) {
+            for (double[] p : contour.points()) {
+                assertTrue(p[0] > park.west() - 0.001 && p[0] < park.east() + 0.001);
+            }
+        }
+    }
 }

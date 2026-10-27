@@ -8,6 +8,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.*;
@@ -61,12 +62,42 @@ public class PropertyController {
         if (request.containsKey("propertyCity"))    changes.put("property_city", request.get("propertyCity"));
         if (request.containsKey("propertyState"))   changes.put("property_state", request.get("propertyState"));
         if (request.containsKey("propertyZip"))     changes.put("property_zip", request.get("propertyZip"));
+        if (request.containsKey("propertyCounty"))  changes.put("property_county", request.get("propertyCounty"));
         if (request.containsKey("propertyZoning"))  changes.put("property_zoning", request.get("propertyZoning"));
         if (request.containsKey("payableTo"))       changes.put("payable_to", request.get("payableTo"));
         if (request.containsKey("remittanceAddress"))  changes.put("remittance_address", request.get("remittanceAddress"));
         if (request.containsKey("yearBuilt"))       changes.put("year_built", request.get("yearBuilt"));
-        if (request.containsKey("propertyParcel"))  changes.put("property_parcel", request.get("propertyParcel"));
         if (request.containsKey("customFields"))    changes.put("custom_fields", request.get("customFields"));
+
+        // Parcels are sent as a whole list of text. Null clears them.
+        if (request.containsKey("propertyParcels")) {
+            Object raw = request.get("propertyParcels");
+            if (raw != null && !(raw instanceof List<?> parcels
+                    && parcels.stream().allMatch(parcel -> parcel instanceof String))) {
+                return ResponseEntity.badRequest().build();
+            }
+            changes.put("property_parcels", raw);
+        }
+
+        // Business numbers are sent as a whole list of objects. Null clears them.
+        // Anything else would save fine but then fail to read back, so it is refused here.
+        if (request.containsKey("businessNumbers")) {
+            Object raw = request.get("businessNumbers");
+            if (raw != null && !(raw instanceof List<?> numbers
+                    && numbers.stream().allMatch(number -> number instanceof Map<?, ?>))) {
+                return ResponseEntity.badRequest().build();
+            }
+            changes.put("business_numbers", raw);
+        }
+
+        // Acres is a number or null
+        if (request.containsKey("acres")) {
+            Object raw = request.get("acres");
+            if (raw != null && !(raw instanceof Number)) {
+                return ResponseEntity.badRequest().build();
+            }
+            changes.put("acres", raw == null ? null : new BigDecimal(raw.toString()));
+        }
 
         // Latitude and longitude are numbers or null. Set both together, or clear both.
         for (String key : List.of("latitude", "longitude")) {
@@ -110,6 +141,32 @@ public class PropertyController {
         }
 
         return propertyService.patchProperty(uuid, changes)
+                .map(PropertyResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // Sets or clears the link that goes with one field.
+    // Body: {"field": "property_zoning", "url": "https://..."}. A null or blank url clears it.
+    @PreAuthorize("hasAuthority('properties:edit')")
+    @PutMapping("/{uuid}/field-links")
+    public ResponseEntity<PropertyResponse> setFieldLink(
+            @PathVariable UUID uuid,
+            @RequestBody FieldLinkRequest request) {
+        return propertyService.setFieldLink(uuid, request.field(), request.url())
+                .map(PropertyResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // Sets or clears the note that goes with one field.
+    // Body: {"field": "property_zoning", "note": "..."}. A null or blank note clears it.
+    @PreAuthorize("hasAuthority('properties:edit')")
+    @PutMapping("/{uuid}/field-notes")
+    public ResponseEntity<PropertyResponse> setFieldNote(
+            @PathVariable UUID uuid,
+            @RequestBody FieldNoteRequest request) {
+        return propertyService.setFieldNote(uuid, request.field(), request.note())
                 .map(PropertyResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());

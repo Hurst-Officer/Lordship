@@ -37,11 +37,30 @@ public final class SiteMapScreenResponses {
             double labelLatitude
     ) { }
 
-    // widthMetres is the real width of a road or stream; 0 for everything else
+    // widthMetres is the real width of a road or stream; 0 for everything else.
+    // elevationFt is a contour's height, null for everything else. index: a heavier contour.
     public record FeatureShape(
             String kind,
             String name,
             @JsonRawValue String geometry,
-            double widthMetres
+            double widthMetres,
+            Double elevationFt,
+            boolean index
     ) { }
+
+    // The ground around one park, for the property screen's backdrop.
+    // west, south, east and north bound the hillshade (GET .../hillshade.png) and the heights.
+    public record TerrainResponse(
+            double minFt,
+            double maxFt,
+            Double intervalFt,
+            double west,
+            double south,
+            double east,
+            double north,
+            Heights heights
+    ) { }
+
+    // A coarse grid of ground heights in feet, top (north) row first. null where there is no data.
+    public record Heights(int columns, int rows, List<Double> feet) { }
 }

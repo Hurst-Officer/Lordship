@@ -41,6 +41,7 @@ CREATE TABLE property (
                           property_city    TEXT NOT NULL CONSTRAINT property_city_must_not_be_blank CHECK (length(trim(property_city)) > 0),
                           property_state   VARCHAR(2) NOT NULL CONSTRAINT property_state_must_be_two_capital_letters CHECK (property_state ~ '^[A-Z]{2}$'),
                           property_zip     TEXT NOT NULL CONSTRAINT property_zip_must_be_5_digits_or_zip_plus_4 CHECK (property_zip ~ '^[0-9]{5}(-[0-9]{4})?$'),
+                          property_county  TEXT,
 
                           -- where the park sits, for the global map. Set by hand or by the map builder
                           latitude         DOUBLE PRECISION CONSTRAINT property_latitude_must_be_minus_90_to_90 CHECK (latitude BETWEEN -90 AND 90),
@@ -48,11 +49,15 @@ CREATE TABLE property (
 
                           purchase_date    DATE,
                           property_zoning  TEXT,
-                          property_parcel  TEXT,
+                          property_parcels TEXT[] NOT NULL DEFAULT '{}',
+                          acres            NUMERIC(12,4),
                           payable_to       TEXT, -- who to pay
+                          business_numbers JSONB NOT NULL DEFAULT '[]'::jsonb, -- the owner's registration numbers, e.g. [{"state": "WA", "type": "UBI", "number": "604 959 374", "link": "https://..."}]
                           remittance_address TEXT, -- where checks are mailed;
                           year_built       INT CONSTRAINT property_year_built_must_be_1800_to_2100 CHECK (year_built BETWEEN 1800 AND 2100),
                           custom_fields    JSONB NOT NULL DEFAULT '{}'::jsonb CONSTRAINT property_custom_fields_must_be_an_object CHECK (jsonb_typeof(custom_fields) = 'object'), -- labels the office adds later; people are linked in property_contact
+                          field_links      JSONB NOT NULL DEFAULT '{}'::jsonb, -- one link per field, keyed by column name or custom field label, e.g. {"property_zoning": "https://..."}
+                          field_notes      JSONB NOT NULL DEFAULT '{}'::jsonb, -- one note per field, keyed the same way as field_links
                           property_manager UUID, -- FK to agent added in V3 after agent table exists
                           created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
                           deleted_at       TIMESTAMPTZ,
