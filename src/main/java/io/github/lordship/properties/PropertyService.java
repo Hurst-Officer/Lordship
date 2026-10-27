@@ -4,6 +4,7 @@ import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.properties.internal.PropertyRow;
 import io.github.lordship.properties.internal.PropertyRepository;
+import io.github.lordship.shared.InvalidRequest;
 import jakarta.transaction.Transactional;
 import org.springframework.stereotype.Service;
 
@@ -49,10 +50,27 @@ public class PropertyService {
                 .toList();
     }
 
+    // Columns that can carry a link and a note. Custom field labels can too.
+    // business_numbers is not here because each number carries its own link and note.
+    private static final Set<String> FIELD_COLUMNS = Set.of(
+            "property_code", "property_name", "property_street", "property_city", "property_state",
+            "property_zip", "property_county", "purchase_date", "property_zoning", "property_parcels",
+            "acres", "payable_to", "remittance_address", "year_built"
+    );
+
     @Transactional
     public Optional<Property> patchProperty(UUID uuid, Map<String, Object> changes) {
 
         PropertyRow before = propertyRepository.findById(uuid).orElse(null);
+
+        // A custom field that was removed takes its link and note with it
+        if (before != null && changes.containsKey("custom_fields")) {
+            Object newCustomFields = changes.get("custom_fields");
+            changes = new HashMap<>(changes);
+            changes.put("field_links", stillInUse(before.fieldLinks(), newCustomFields));
+            changes.put("field_notes", stillInUse(before.fieldNotes(), newCustomFields));
+        }
+
         Optional<PropertyRow> result = propertyRepository.patch(uuid, changes);
         result.ifPresent(after -> {
             if (before != null) {
@@ -63,6 +81,69 @@ public class PropertyService {
             }
         });
         return result.map(PropertyRow::toProperty);
+    }
+
+    // Sets the link that goes with one field. A null or blank url clears it.
+    // field is a column name like "property_zoning", or a custom field label.
+    @Transactional
+    public Optional<Property> setFieldLink(UUID uuid, String field, String url) {
+        String link = blankToNull(url);
+        if (link != null) {
+            String lower = link.toLowerCase(Locale.ROOT);
+            if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+                throw InvalidRequest.onField("url", "property.link_not_a_url");
+            }
+        }
+        return setFieldText(uuid, field, link, propertyRepository::setFieldLink);
+    }
+
+    // Sets the note that goes with one field. A null or blank note clears it.
+    @Transactional
+    public Optional<Property> setFieldNote(UUID uuid, String field, String note) {
+        return setFieldText(uuid, field, blankToNull(note), propertyRepository::setFieldNote);
+    }
+
+    // Writes one link or note, after checking the field exists on this property
+    private interface FieldTextWriter {
+        Optional<PropertyRow> write(UUID uuid, String field, String text);
+    }
+
+    private Optional<Property> setFieldText(UUID uuid, String field, String text, FieldTextWriter writer) {
+        PropertyRow before = propertyRepository.findById(uuid).orElse(null);
+        if (before == null) {
+            return Optional.empty();
+        }
+
+        boolean knownField = field != null
+                && (FIELD_COLUMNS.contains(field) || before.customFields().containsKey(field));
+        if (!knownField) {
+            throw InvalidRequest.onField("field", "property.field_unknown", field);
+        }
+
+        Optional<PropertyRow> result = writer.write(uuid, field, text);
+        result.ifPresent(after -> {
+            AuditMapper.Diff diff = AuditMapper.diff(before, after);
+            if (!diff.before().isEmpty()) {
+                auditService.recordUpdate("property", uuid, diff.before(), diff.after());
+            }
+        });
+        return result.map(PropertyRow::toProperty);
+    }
+
+    private static String blankToNull(String text) {
+        return (text == null || text.isBlank()) ? null : text.trim();
+    }
+
+    // Keeps entries for columns, and for custom fields that still exist.
+    private static Map<String, String> stillInUse(Map<String, String> entries, Object newCustomFields) {
+        Map<String, String> kept = new LinkedHashMap<>();
+        entries.forEach((field, text) -> {
+            boolean stillCustom = newCustomFields instanceof Map<?, ?> custom && custom.containsKey(field);
+            if (FIELD_COLUMNS.contains(field) || stillCustom) {
+                kept.put(field, text);
+            }
+        });
+        return kept;
     }
 
     @Transactional

@@ -14,6 +14,12 @@ final class SiteMapScreenRows {
     // sql: lot_outline joined to lot, with the point where the lot number goes
     record LotShapeRow(UUID lotId, String lotNumber, String outline, double labelLongitude, double labelLatitude) { }
 
-    // sql: map_feature
-    record FeatureShapeRow(String kind, String name, String geometry, double widthMetres) { }
+    // sql: map_feature. elevationFt and contourIndex come from a contour's details; null and false for the rest.
+    record FeatureShapeRow(String kind, String name, String geometry, double widthMetres,
+                           Double elevationFt, boolean contourIndex) { }
+
+    // sql: site_elevation. grid is 32-bit little-endian floats in metres, top row first.
+    record TerrainRow(double minFt, double maxFt, Double contourIntervalFt,
+                      double west, double south, double east, double north,
+                      int width, int height, byte[] grid) { }
 }

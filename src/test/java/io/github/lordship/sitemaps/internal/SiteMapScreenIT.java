@@ -12,10 +12,14 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -154,6 +158,86 @@ public class SiteMapScreenIT extends IntegrationTest {
         mockMvc.perform(get("/api/sitemaps/{id}", cedrona())
                         .header("Authorization", "Bearer " + agent.token()))
                 .andExpect(status().isForbidden());
+    }
+
+    // ---- terrain: the ground behind the property page ----
+
+    // A 4 x 2 grid of heights for a park: 100 to 107 metres, with one hole
+    private void insertElevation(UUID propertyId) {
+        ByteBuffer grid = ByteBuffer.allocate(8 * 4).order(ByteOrder.LITTLE_ENDIAN);
+        for (float m : new float[] {100, 101, 102, 103, 104, Float.NaN, 106, 107}) {
+            grid.putFloat(m);
+        }
+        jdbc.sql("""
+                INSERT INTO site_elevation (property_id, grid, width, height, bbox_3857, extent,
+                                            min_ft, max_ft, contour_interval_ft, hillshade_png)
+                VALUES (:property, :grid, 4, 2, ARRAY[0, 0, 1, 1]::float8[],
+                        postgis.ST_MakeEnvelope(-122.51, 47.12, -122.50, 47.13, 4326),
+                        328.1, 351.0, 5, NULL)
+                ON CONFLICT (property_id) DO UPDATE SET
+                    grid = EXCLUDED.grid, width = 4, height = 2, extent = EXCLUDED.extent,
+                    min_ft = EXCLUDED.min_ft, max_ft = EXCLUDED.max_ft, contour_interval_ft = 5
+                """)
+                .param("property", propertyId)
+                .param("grid", grid.array())
+                .update();
+    }
+
+    @Test
+    void terrain_returnsTheHeightRangeTheBoxAndACoarseGrid() throws Exception {
+        UUID park = cedrona();
+        insertElevation(park);
+
+        mockMvc.perform(get("/api/sitemaps/{id}/terrain", park)
+                        .header("Authorization", "Bearer " + rootToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.minFt").value(closeTo(328.1, 0.01)))
+                .andExpect(jsonPath("$.maxFt").value(closeTo(351.0, 0.01)))
+                .andExpect(jsonPath("$.intervalFt").value(closeTo(5.0, 0.01)))
+                .andExpect(jsonPath("$.west").value(closeTo(-122.51, 0.000001)))
+                .andExpect(jsonPath("$.north").value(closeTo(47.13, 0.000001)))
+                .andExpect(jsonPath("$.heights.columns").value(4))
+                .andExpect(jsonPath("$.heights.rows").value(2))
+                .andExpect(jsonPath("$.heights.feet[0]").value(closeTo(328.1, 0.01)))
+                .andExpect(jsonPath("$.heights.feet[5]").value(nullValue()));
+    }
+
+    @Test
+    void terrain_returns404_whenTheHeightsWereNeverPulled() throws Exception {
+        LotRow lot = testData.insertChainToLot();
+
+        mockMvc.perform(get("/api/sitemaps/{id}/terrain", lot.propertyId())
+                        .header("Authorization", "Bearer " + rootToken()))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void terrain_needsPropertiesView() throws Exception {
+        TestAgent agent = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken());
+
+        mockMvc.perform(get("/api/sitemaps/{id}/terrain", cedrona())
+                        .header("Authorization", "Bearer " + agent.token()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void siteMap_givesEachContourItsHeight() throws Exception {
+        UUID park = cedrona();
+        jdbc.sql("""
+                INSERT INTO map_feature (property_id, kind, name, geom, source, source_ref, details)
+                VALUES (:property, 'contour', '330 ft', postgis.ST_GeomFromText(
+                            'LINESTRING(-122.5 47.1, -122.4999 47.1001)', 4326),
+                        'usgs_3dep', 'dem', '{"elevation_ft": 330, "index": true}'::jsonb)
+                """)
+                .param("property", park)
+                .update();
+
+        mockMvc.perform(get("/api/sitemaps/{id}", park)
+                        .header("Authorization", "Bearer " + rootToken()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.features[?(@.kind == 'contour')].elevationFt", hasItem(330.0)))
+                .andExpect(jsonPath("$.features[?(@.kind == 'contour')].index", hasItem(true)))
+                .andExpect(jsonPath("$.features[?(@.kind == 'road')].elevationFt", everyItem(nullValue())));
     }
 
     @Test

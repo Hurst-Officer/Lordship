@@ -69,9 +69,10 @@ public class SurroundingsService {
      * @param counts rows of each kind saved, plus "home": lots with a home on them
      * @param notes  sources that could not be reached, in words
      * @param error  why a failed pull failed, in words
+     * @param step   while running: what it is doing right now, such as "Asking overpass-api.de"
      */
     public record Status(String state, OffsetDateTime startedAt, OffsetDateTime finishedAt,
-                         Map<String, Integer> counts, List<String> notes, String error) { }
+                         Map<String, Integer> counts, List<String> notes, String error, String step) { }
 
     /** What a pull fetched. A null part means that source could not be used this time. */
     record Fetched(JsonNode osm, JsonNode parcels, HeightTiff.Grid heights, Elevation.GridRequest heightsAsked,
@@ -88,6 +89,7 @@ public class SurroundingsService {
         volatile OffsetDateTime finishedAt;
         volatile Outcome outcome;
         volatile Problem error;
+        volatile Problem step;
     }
 
     private final Map<UUID, Run> runs = new ConcurrentHashMap<>();
@@ -103,19 +105,22 @@ public class SurroundingsService {
     private final ObjectMapper objectMapper;
     private final MessageSource messages;
     private final int marginMeters;
+    private final int terrainMarginMeters;
 
     public SurroundingsService(SurroundingsRepository repository,
                                SurroundingsSources sources,
                                PlatformTransactionManager transactionManager,
                                ObjectMapper objectMapper,
                                MessageSource messages,
-                               @Value("${lordship.surroundings.margin-meters:150}") int marginMeters) {
+                               @Value("${lordship.surroundings.margin-meters:150}") int marginMeters,
+                               @Value("${lordship.surroundings.terrain-margin-meters:800}") int terrainMarginMeters) {
         this.repository = repository;
         this.sources = sources;
         this.transaction = new TransactionTemplate(transactionManager);
         this.objectMapper = objectMapper;
         this.messages = messages;
         this.marginMeters = marginMeters;
+        this.terrainMarginMeters = terrainMarginMeters;
     }
 
     @PreDestroy
@@ -179,7 +184,7 @@ public class SurroundingsService {
             Outcome outcome = null;
             Problem error = null;
             try {
-                outcome = pull(propertyId);
+                outcome = pull(propertyId, run);
             } catch (RuleConflict e) {
                 error = e.problem();
             } catch (RuntimeException e) {
@@ -208,11 +213,12 @@ public class SurroundingsService {
         Run run = runs.get(propertyId);
         if (run != null && (run.state.equals("running") || run.state.equals("failed"))) {
             return new Status(run.state, run.startedAt, run.finishedAt, Map.of(), List.of(),
-                    run.error == null ? null : words(run.error));
+                    run.error == null ? null : words(run.error),
+                    run.state.equals("running") && run.step != null ? words(run.step) : null);
         }
         if (run != null && run.outcome != null) {
             return new Status("done", run.startedAt, run.finishedAt, run.outcome.counts(),
-                    run.outcome.problems().stream().map(this::words).toList(), null);
+                    run.outcome.problems().stream().map(this::words).toList(), null, null);
         }
         return repository.findLastPull(propertyId)
                 .map(last -> {
@@ -225,9 +231,9 @@ public class SurroundingsService {
                         p.path("args").forEach(a -> args.add(a.asString()));
                         notes.add(words(new Problem(p.path("code").asString(), null, args)));
                     }
-                    return new Status("done", null, last.fetchedAt(), counts, notes, null);
+                    return new Status("done", null, last.fetchedAt(), counts, notes, null, null);
                 })
-                .orElse(new Status("never", null, null, Map.of(), List.of(), null));
+                .orElse(new Status("never", null, null, Map.of(), List.of(), null, null));
     }
 
     /** True while a pull for this park is fetching or saving. Hand edits wait for it. */
@@ -247,32 +253,36 @@ public class SurroundingsService {
 
     // ---- the pull --------------------------------------------------------------------------
 
-    private Outcome pull(UUID propertyId) {
+    private Outcome pull(UUID propertyId, Run run) {
         PullArea area = repository.pullArea(propertyId, marginMeters)
                 .orElseThrow(() -> RuleConflict.of("surroundings.no_lots"));
-        return save(propertyId, area, fetch(area));
+        Fetched fetched = fetch(area, step -> run.step = step);
+        run.step = Problem.of("surroundings.step_saving");
+        return save(propertyId, area, fetched);
     }
 
     // Asks every source. A source that fails is noted, and the others carry on.
-    private Fetched fetch(PullArea area) {
+    private Fetched fetch(PullArea area, java.util.function.Consumer<Problem> step) {
         List<Problem> problems = new ArrayList<>();
         JsonNode osm = null;
         JsonNode parcels = null;
         HeightTiff.Grid heights = null;
-        Elevation.GridRequest asked = Elevation.gridFor(
-                new Elevation.Box(area.south(), area.west(), area.north(), area.east()));
+        // The heights cover more ground than the rest, so the ground drawn behind a page
+        // reaches the edges of the window. Contours are still kept to the pulled area.
+        Elevation.GridRequest asked = Elevation.gridFor(Elevation.grown(
+                new Elevation.Box(area.south(), area.west(), area.north(), area.east()), terrainMarginMeters));
         try {
-            osm = sources.openStreetMap(area);
+            osm = sources.openStreetMap(area, step);
         } catch (SourceDown e) {
             problems.add(Problem.of("surroundings.osm_unreachable", e.getMessage()));
         }
         try {
-            parcels = sources.parcels(area);
+            parcels = sources.parcels(area, step);
         } catch (SourceDown e) {
             problems.add(Problem.of("surroundings.parcels_unreachable", e.getMessage()));
         }
         try {
-            heights = sources.heights(asked);
+            heights = sources.heights(asked, step);
         } catch (SourceDown e) {
             problems.add(Problem.of("surroundings.heights_unreachable", e.getMessage()));
         }

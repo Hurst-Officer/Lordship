@@ -98,6 +98,16 @@ final class Elevation {
      * Throws IllegalArgumentException when the grid holds no heights at all.
      */
     static Built build(Box box, GridRequest request, HeightTiff.Grid raw) {
+        return build(box, request, raw, box);
+    }
+
+    /**
+     * The same, for a grid that covers more ground than the park.
+     * The hillshade covers the whole grid. Contour lines are kept only where they reach into
+     * contourBox, and their spacing suits the heights inside it, so a hill a kilometer away
+     * does not make the park's own contours coarse.
+     */
+    static Built build(Box box, GridRequest request, HeightTiff.Grid raw, Box contourBox) {
         float[] grid = clean(raw.values());
         int width = raw.width();
         int height = raw.height();
@@ -117,10 +127,18 @@ final class Elevation {
 
         double k = Math.cos(Math.toRadians((box.south() + box.north()) / 2));
         double metersPerPx = (bbox[2] - bbox[0]) / width * k;
-        int interval = contourIntervalFt(grid);
+        // Contours are worked out only over the part of the grid inside contourBox
+        int[] w = window(width, height, bbox, contourBox);
+        int subWidth = w[2] - w[0];
+        int subHeight = w[3] - w[1];
+        float[] sub = new float[subWidth * subHeight];
+        for (int r = 0; r < subHeight; r++) {
+            System.arraycopy(grid, (w[1] + r) * width + w[0], sub, r * subWidth, subWidth);
+        }
+        int interval = contourIntervalFt(sub);
 
         List<Contour> contours = new ArrayList<>();
-        for (Line line : contourLines(grid, width, height, interval)) {
+        for (Line line : contourLines(sub, subWidth, subHeight, interval)) {
             double lengthPx = 0;
             for (int i = 1; i < line.points.size(); i++) {
                 double[] a = line.points.get(i - 1);
@@ -132,7 +150,7 @@ final class Elevation {
             }
             List<double[]> lngLat = new ArrayList<>(line.points.size());
             for (double[] p : line.points) {
-                lngLat.add(pixelToLngLat(bbox, width, height, p[0], p[1]));
+                lngLat.add(pixelToLngLat(bbox, width, height, p[0] + w[0], p[1] + w[1]));
             }
             boolean index = Math.floorMod(Math.round(line.levelFt / interval), INDEX_EVERY) == 0;
             contours.add(new Contour(line.levelFt, index, lngLat));
@@ -144,6 +162,28 @@ final class Elevation {
                 Math.round(high * FT_PER_M * 10) / 10.0,
                 interval);
         return new Built(summary, contours, hillshadePng(grid, width, height, metersPerPx));
+    }
+
+    // The pixels of the grid inside a box: { first column, first row, column after last, row after last }.
+    // The whole grid when the box misses it.
+    static int[] window(int width, int height, double[] bbox, Box box) {
+        double[] sw = toMercator(box.west(), box.south());
+        double[] ne = toMercator(box.east(), box.north());
+        int c0 = Math.max(0, (int) Math.floor((sw[0] - bbox[0]) / (bbox[2] - bbox[0]) * width));
+        int c1 = Math.min(width, (int) Math.ceil((ne[0] - bbox[0]) / (bbox[2] - bbox[0]) * width));
+        int r0 = Math.max(0, (int) Math.floor((bbox[3] - ne[1]) / (bbox[3] - bbox[1]) * height));
+        int r1 = Math.min(height, (int) Math.ceil((bbox[3] - sw[1]) / (bbox[3] - bbox[1]) * height));
+        if (c1 - c0 < 2 || r1 - r0 < 2) {
+            return new int[] {0, 0, width, height};
+        }
+        return new int[] {c0, r0, c1, r1};
+    }
+
+    /** A box grown by some meters on every side. */
+    static Box grown(Box box, double meters) {
+        double dLat = meters / 111320.0;
+        double dLng = dLat / Math.cos(Math.toRadians((box.south() + box.north()) / 2));
+        return new Box(box.south() - dLat, box.west() - dLng, box.north() + dLat, box.east() + dLng);
     }
 
     // The grid with the service's "no data" values turned into NaN

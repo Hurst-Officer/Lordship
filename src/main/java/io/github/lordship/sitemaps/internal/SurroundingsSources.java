@@ -1,5 +1,6 @@
 package io.github.lordship.sitemaps.internal;
 
+import io.github.lordship.shared.DomainProblem.Problem;
 import io.github.lordship.sitemaps.internal.SurroundingsRepository.PullArea;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.JsonNode;
@@ -13,7 +14,12 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
+import java.util.function.IntFunction;
 
 /**
  * Asks the outside sources for what is around a park. Nothing is saved here.
@@ -33,15 +39,27 @@ import java.util.Locale;
 @Component
 public class SurroundingsSources {
 
-    static final String OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+    // The main Overpass server first, then public mirrors with world coverage, from the list on
+    // wiki.openstreetmap.org/wiki/Overpass_API. The main server is often overloaded.
+    static final List<String> OVERPASS_URLS = List.of(
+            "https://overpass-api.de/api/interpreter",
+            "https://overpass.private.coffee/api/interpreter",
+            "https://maps.mail.ru/osm/tools/overpass/api/interpreter");
     static final String PARCELS_URL = "https://services.arcgis.com/jsIt88o09Q0r1j8h/arcgis/rest/services/"
             + "Current_Parcels/FeatureServer/0/query";
     static final String HEIGHTS_URL = "https://elevation.nationalmap.gov/arcgis/rest/services/"
             + "3DEPElevation/ImageServer/exportImage";
 
     // Overpass asks every caller to name itself
-    private static final String USER_AGENT = "Lordship map builder (property management)";
-    private static final Duration TIMEOUT = Duration.ofSeconds(90);
+    private static final String USER_AGENT = "Lordship-MapBuilder/1.0 (property management software)";
+    // A busy Overpass can take a while to accept a connection, and longer to answer
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(45);
+    private static final Duration TIMEOUT = Duration.ofSeconds(150);
+    // A busy source often answers on a later try. The waits between rounds, in seconds.
+    // Overpass asks callers to pause 30 seconds after a refusal.
+    private static final int[] RETRY_WAITS = {30, 45};
+    // No source is asked for longer than this in one pull, tries and waits included
+    private static final Duration SOURCE_LIMIT = Duration.ofMinutes(5);
 
     /** A source that could not be reached, or that answered with an error. */
     public static class SourceDown extends RuntimeException {
@@ -54,8 +72,11 @@ public class SurroundingsSources {
         }
     }
 
+    // HTTP/1.1 on purpose. Java asks for HTTP/2 by default, and overpass-api.de
+    // answers some HTTP/2 requests with 406 Not Acceptable.
     private final HttpClient http = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(20))
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(CONNECT_TIMEOUT)
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
     private final ObjectMapper objectMapper;
@@ -64,8 +85,11 @@ public class SurroundingsSources {
         this.objectMapper = objectMapper;
     }
 
-    /** Roads, water, streams, shoreline and buildings in the area: Overpass's "elements" list. */
-    public JsonNode openStreetMap(PullArea area) {
+    /**
+     * Roads, water, streams, shoreline and buildings in the area: Overpass's "elements" list.
+     * step hears which server is being asked, for the screen.
+     */
+    public JsonNode openStreetMap(PullArea area, Consumer<Problem> step) {
         String box = "%s,%s,%s,%s".formatted(area.south(), area.west(), area.north(), area.east());
         String query = """
                 [out:json][timeout:60];
@@ -79,29 +103,51 @@ public class SurroundingsSources {
                 );
                 out tags geom;
                 """.formatted(box);
-        HttpRequest request = HttpRequest.newBuilder(URI.create(OVERPASS_URL))
-                .timeout(TIMEOUT)
-                .header("User-Agent", USER_AGENT)
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .POST(HttpRequest.BodyPublishers.ofString("data=" + encode(query)))
-                .build();
-        JsonNode reply = json(request);
-        // A busy Overpass says so in "remark" and sends back part of the answer, or none.
-        // Saving that would wipe the good roads saved last time.
-        if (reply.hasNonNull("remark")) {
-            throw new SourceDown(firstLine(reply.get("remark").asString()));
+        Instant giveUp = Instant.now().plus(SOURCE_LIMIT);
+        return withRetries("OpenStreetMap", step, giveUp, attempt -> overpassOnce(query, attempt, step, giveUp));
+    }
+
+    // One round: the main server, then each mirror
+    private JsonNode overpassOnce(String query, int attempt, Consumer<Problem> step, Instant giveUp) {
+        List<String> failures = new ArrayList<>();
+        for (String url : OVERPASS_URLS) {
+            if (Instant.now().isAfter(giveUp)) {
+                break;
+            }
+            step.accept(asking(URI.create(url).getHost(), attempt));
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(TIMEOUT)
+                    .header("User-Agent", USER_AGENT)
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .POST(HttpRequest.BodyPublishers.ofString("data=" + encode(query)))
+                    .build();
+            try {
+                JsonNode reply = json(request);
+                // A busy Overpass says so in "remark" and sends back part of the answer, or none.
+                // Saving that would wipe the good roads saved last time.
+                if (reply.hasNonNull("remark")) {
+                    throw new SourceDown(request.uri().getHost() + ": " + firstLine(reply.get("remark").asString()));
+                }
+                return reply.path("elements");
+            } catch (SourceDown e) {
+                failures.add(e.getMessage());
+            }
         }
-        return reply.path("elements");
+        throw new SourceDown(String.join("; then ", failures));
     }
 
     /** County parcels touching the area, as GeoJSON features. */
-    public JsonNode parcels(PullArea area) {
+    public JsonNode parcels(PullArea area, Consumer<Problem> step) {
         String url = PARCELS_URL
                 + "?geometry=" + encode("%s,%s,%s,%s".formatted(area.west(), area.south(), area.east(), area.north()))
                 + "&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects"
                 + "&outFields=" + encode("PARCEL_ID_NR,COUNTY_NM,SITUS_ADDRESS,SITUS_CITY_NM,SITUS_ZIP_NR,LANDUSE_CD")
                 + "&outSR=4326&f=geojson";
-        JsonNode reply = json(get(url));
+        JsonNode reply = withRetries("the parcel service", step, Instant.now().plus(SOURCE_LIMIT), attempt -> {
+            step.accept(asking("the WA parcel service", attempt));
+            return json(get(url));
+        });
         // ArcGIS reports errors inside a normal-looking reply
         if (reply.hasNonNull("error")) {
             throw new SourceDown(firstLine(reply.get("error").toString()));
@@ -113,7 +159,7 @@ public class SurroundingsSources {
     }
 
     /** The ground's height in meters, as a grid in Web Mercator with square pixels. */
-    public HeightTiff.Grid heights(Elevation.GridRequest grid) {
+    public HeightTiff.Grid heights(Elevation.GridRequest grid, Consumer<Problem> step) {
         double[] b = grid.bbox3857();
         String url = HEIGHTS_URL
                 + "?bbox=" + encode(String.format(Locale.ROOT, "%.3f,%.3f,%.3f,%.3f", b[0], b[1], b[2], b[3]))
@@ -121,7 +167,10 @@ public class SurroundingsSources {
                 + "&size=" + grid.width() + "," + grid.height()
                 + "&format=tiff&pixelType=F32&noDataInterpretation=esriNoDataMatchAny"
                 + "&interpolation=RSP_BilinearInterpolation&f=image";
-        byte[] body = bytes(get(url));
+        byte[] body = withRetries("USGS", step, Instant.now().plus(SOURCE_LIMIT), attempt -> {
+            step.accept(asking("USGS for ground heights", attempt));
+            return bytes(get(url));
+        });
         try {
             return HeightTiff.read(body);
         } catch (RuntimeException e) {
@@ -131,6 +180,44 @@ public class SurroundingsSources {
     }
 
     // ---- plumbing ------------------------------------------------------------------
+
+    /**
+     * Asks up to three times, waiting 30 then 45 seconds between tries, and gives up at giveUp.
+     * Busy public servers often refuse or time out once, then answer.
+     * Throws the last failure when every try fails.
+     */
+    private <T> T withRetries(String source, Consumer<Problem> step, Instant giveUp, IntFunction<T> ask) {
+        SourceDown last = null;
+        int tries = RETRY_WAITS.length + 1;
+        for (int round = 0; round < tries; round++) {
+            if (round > 0) {
+                long waitMs = RETRY_WAITS[round - 1] * 1000L;
+                if (Instant.now().plusMillis(waitMs).isAfter(giveUp)) {
+                    break;
+                }
+                step.accept(Problem.of("surroundings.step_waiting", source, RETRY_WAITS[round - 1]));
+                try {
+                    Thread.sleep(waitMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new SourceDown("stopped while waiting to try again", e);
+                }
+            }
+            try {
+                return ask.apply(round + 1);
+            } catch (SourceDown e) {
+                last = e;
+            }
+        }
+        throw new SourceDown(last == null ? "no answer in " + SOURCE_LIMIT.toMinutes() + " minutes"
+                : last.getMessage() + " (gave up after " + SOURCE_LIMIT.toMinutes() + " minutes or 3 tries)", last);
+    }
+
+    // "Asking overpass-api.de", or "Asking overpass-api.de (try 2 of 3)"
+    private static Problem asking(String who, int attempt) {
+        return attempt <= 1 ? Problem.of("surroundings.step_asking", who)
+                : Problem.of("surroundings.step_asking_again", who, attempt, RETRY_WAITS.length + 1);
+    }
 
     private static HttpRequest get(String url) {
         return HttpRequest.newBuilder(URI.create(url))

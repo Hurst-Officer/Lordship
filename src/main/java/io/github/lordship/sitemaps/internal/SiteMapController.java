@@ -2,6 +2,7 @@ package io.github.lordship.sitemaps.internal;
 
 import io.github.lordship.sitemaps.internal.SiteMapScreenResponses.FootprintResponse;
 import io.github.lordship.sitemaps.internal.SiteMapScreenResponses.SiteMapResponse;
+import io.github.lordship.sitemaps.internal.SiteMapScreenResponses.TerrainResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,6 +38,17 @@ public class SiteMapController {
     @GetMapping("/{propertyId}")
     public ResponseEntity<SiteMapResponse> siteMap(@PathVariable UUID propertyId) {
         return siteMapScreenService.siteMap(propertyId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // The ground around one park: its height range, the box its hillshade covers, and a coarse
+    // grid of heights. The picture itself is GET /{propertyId}/hillshade.png.
+    // 404 when the park's heights were never pulled.
+    @PreAuthorize("hasAuthority('properties:view')")
+    @GetMapping("/{propertyId}/terrain")
+    public ResponseEntity<TerrainResponse> terrain(@PathVariable UUID propertyId) {
+        return siteMapScreenService.terrain(propertyId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }

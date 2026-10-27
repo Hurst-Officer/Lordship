@@ -21,8 +21,21 @@ public class PropertyRepository {
 
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
             "property_code", "property_name", "property_street", "property_city",
-            "property_state", "property_zip", "latitude", "longitude", "purchase_date", "property_zoning", "property_parcel",
-            "payable_to", "remittance_address", "year_built", "custom_fields", "property_manager"
+            "property_state", "property_zip", "property_county", "latitude", "longitude", "purchase_date",
+            "property_zoning", "property_parcels", "acres", "payable_to", "business_numbers",
+            "remittance_address", "year_built", "custom_fields", "field_links", "field_notes", "property_manager"
+    );
+
+    // These columns arrive as Java lists or maps. They are sent as JSON text,
+    // and this is the SQL that turns that text into the column's type.
+    // A JSON null becomes an empty list or map, since the columns are NOT NULL.
+    private static final Map<String, String> JSON_COLUMN_SQL = Map.of(
+            "custom_fields", "CAST(:custom_fields AS jsonb)",
+            "field_links", "COALESCE(NULLIF(CAST(:field_links AS jsonb), 'null'::jsonb), '{}'::jsonb)",
+            "field_notes", "COALESCE(NULLIF(CAST(:field_notes AS jsonb), 'null'::jsonb), '{}'::jsonb)",
+            "business_numbers", "COALESCE(NULLIF(CAST(:business_numbers AS jsonb), 'null'::jsonb), '[]'::jsonb)",
+            "property_parcels", "ARRAY(SELECT jsonb_array_elements_text("
+                    + "COALESCE(NULLIF(CAST(:property_parcels AS jsonb), 'null'::jsonb), '[]'::jsonb)))"
     );
 
     public PropertyRow save(String propertyName, String propertyStreet, String propertyCity,
@@ -75,11 +88,8 @@ public class PropertyRepository {
             }
         }
 
-        // custom_fields is jsonb, so it is sent as JSON text and cast
         String setClauses = changes.keySet().stream()
-                .map(col -> col.equals("custom_fields")
-                        ? col + " = CAST(:" + col + " AS jsonb)"
-                        : col + " = :" + col)
+                .map(col -> col + " = " + JSON_COLUMN_SQL.getOrDefault(col, ":" + col))
                 .collect(Collectors.joining(", "));
 
         String sql = "UPDATE property SET " + setClauses +
@@ -87,12 +97,43 @@ public class PropertyRepository {
 
         Map<String, Object> params = new HashMap<>(changes);
         params.put("uuid", uuid);
-        if (params.containsKey("custom_fields")) {
-            params.put("custom_fields", objectMapper.writeValueAsString(params.get("custom_fields")));
+        for (String col : JSON_COLUMN_SQL.keySet()) {
+            if (params.containsKey(col)) {
+                params.put(col, objectMapper.writeValueAsString(params.get(col)));
+            }
         }
 
         return jdbc.sql(sql)
                 .params(params)
+                .query(rowMapper)
+                .optional();
+    }
+
+    // Sets the link for one field. A null url removes it.
+    public Optional<PropertyRow> setFieldLink(UUID uuid, String field, String url) {
+        return setFieldText("field_links", uuid, field, url);
+    }
+
+    // Sets the note for one field. A null note removes it.
+    public Optional<PropertyRow> setFieldNote(UUID uuid, String field, String note) {
+        return setFieldText("field_notes", uuid, field, note);
+    }
+
+    // column is always "field_links" or "field_notes", never input from a request
+    private Optional<PropertyRow> setFieldText(String column, UUID uuid, String field, String text) {
+        String sql = """
+                UPDATE property
+                SET %1$s = CASE
+                        WHEN CAST(:text AS text) IS NULL THEN %1$s - CAST(:field AS text)
+                        ELSE %1$s || jsonb_build_object(CAST(:field AS text), CAST(:text AS text))
+                    END
+                WHERE uuid = :uuid AND deleted_at IS NULL
+                RETURNING *
+                """.formatted(column);
+        return jdbc.sql(sql)
+                .param("uuid", uuid)
+                .param("field", field)
+                .param("text", text)
                 .query(rowMapper)
                 .optional();
     }
