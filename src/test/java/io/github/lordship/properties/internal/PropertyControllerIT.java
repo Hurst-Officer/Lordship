@@ -308,6 +308,45 @@ public class PropertyControllerIT extends IntegrationTest {
                 .andExpect(jsonPath("$.propertyStreet").value("989 Test Ave"));
     }
 
+    // ── Title link ───────────────────────────────────────────
+
+    @Test
+    void patchProperty_shouldReturn200_andShowTheTitleLink() throws Exception {
+        String token = loginAsRoot();
+        String propertyUuid = createTestProperty();
+
+        mockMvc.perform(patch("/api/properties/{uuid}", propertyUuid)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "titleLink": "https://onedrive.example.com/TP" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.titleLink").value("https://onedrive.example.com/TP"));
+
+        // the link is also there when the property is read back
+        mockMvc.perform(get("/api/properties/{uuid}", propertyUuid)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.titleLink").value("https://onedrive.example.com/TP"));
+    }
+
+    @Test
+    void patchProperty_shouldReturn400_withCodeAndField_whenTheTitleLinkIsNotHttp() throws Exception {
+        String token = loginAsRoot();
+        String propertyUuid = createTestProperty();
+
+        mockMvc.perform(patch("/api/properties/{uuid}", propertyUuid)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "titleLink": "javascript:alert(1)" }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("property.link_not_a_url"))
+                .andExpect(jsonPath("$.field").value("title_link"));
+    }
+
     // ── New fields: shape checks ──────────────────────────────
 
     @Test
@@ -718,3 +757,4 @@ public class PropertyControllerIT extends IntegrationTest {
                 .andExpect(status().isBadRequest());
     }
 }
+

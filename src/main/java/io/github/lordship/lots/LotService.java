@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -57,6 +58,10 @@ public class LotService {
             return Optional.empty();
         }
         LotRow before = beforeOpt.get();
+
+        if (changes.containsKey("title_link")) {
+            changes.put("title_link", checkedLink(changes.get("title_link")));
+        }
 
         boolean rentableAfter = changes.containsKey("is_rentable")
                 ? Boolean.TRUE.equals(changes.get("is_rentable"))
@@ -262,6 +267,26 @@ public class LotService {
         return rows.stream()
                 .map(row -> row.toLot(agreementTypesByLot.getOrDefault(row.uuid(), List.of())))
                 .toList();
+    }
+
+    // Returns the trimmed link, or null when it is blank.
+    // Throws when it is not an http or https address.
+    private static String checkedLink(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (!(raw instanceof String text)) {
+            throw new IllegalArgumentException("titleLink must be text");
+        }
+        String link = text.trim();
+        if (link.isEmpty()) {
+            return null;
+        }
+        String lower = link.toLowerCase(Locale.ROOT);
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+            throw new IllegalArgumentException("titleLink must start with http:// or https://");
+        }
+        return link;
     }
 
     private static void requireNotNegative(BigDecimal rate, String field) {

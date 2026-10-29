@@ -304,8 +304,7 @@ public class TokenResolverTest {
     }
 
     private static Lot lot() {
-        return new Lot(LOT, PROPERTY, true, null, "42", "42 Dockside Way", "P-9981",
-                null, null, 1, null, OffsetDateTime.now(ZoneOffset.UTC), null, List.of());
+        return TestDataSupport.lot(LOT, PROPERTY, true, null, "42", "42 Dockside Way", "P-9981");
     }
 
     private static Property property() {

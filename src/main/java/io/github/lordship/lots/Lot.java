@@ -14,6 +14,7 @@ public record Lot(
         Boolean isRentable,
         String notRentableReason,
         String lotNumber,
+        String titleLink,
         String lotAddress,
         String lotParcel,
         String description,

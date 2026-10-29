@@ -58,6 +58,7 @@ public class PropertyController {
 
         if (request.containsKey("propertyCode"))    changes.put("property_code", request.get("propertyCode"));
         if (request.containsKey("propertyName"))    changes.put("property_name", request.get("propertyName"));
+        if (request.containsKey("titleLink")) changes.put("title_link", request.get("titleLink"));
         if (request.containsKey("propertyStreet"))  changes.put("property_street", request.get("propertyStreet"));
         if (request.containsKey("propertyCity"))    changes.put("property_city", request.get("propertyCity"));
         if (request.containsKey("propertyState"))   changes.put("property_state", request.get("propertyState"));

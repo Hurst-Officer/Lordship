@@ -363,7 +363,7 @@ public class LotServiceTest {
         LotRow before = stubRow(propertyId);
         LotRow after = new LotRow(
                 before.uuid(), propertyId, true, null,
-                "14", before.lotAddress(), "3005051", before.description(), before.notes(), before.sortOrder(),
+                "14", before.titleLink(), before.lotAddress(), "3005051", before.description(), before.notes(), before.sortOrder(),
                 before.shapeData(), before.createdAt(), null
         );
         when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
@@ -405,7 +405,7 @@ public class LotServiceTest {
         // value equality, not because the stub handed back the very same object.
         LotRow after = new LotRow(
                 before.uuid(), before.propertyId(), before.isRentable(), before.notRentableReason(),
-                before.lotNumber(), before.lotAddress(), before.lotParcel(), before.description(), before.notes(),
+                before.lotNumber(), before.titleLink(), before.lotAddress(), before.lotParcel(), before.description(), before.notes(),
                 before.sortOrder(), before.shapeData(), before.createdAt(), before.deletedAt()
         );
         when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
@@ -439,6 +439,57 @@ public class LotServiceTest {
         verify(lotRepository, never()).patch(any(), any());
         verifyNoInteractions(auditService);
         verifyNoInteractions(lotPermissibleAgreementTypeRepository);
+    }
+
+    // ---- title link ----------------------------------------------------------
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void patchLot_shouldTrimTheTitleLink_beforeSavingIt() {
+        LotRow before = stubRow(UUID.randomUUID());
+        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+        when(lotPermissibleAgreementTypeRepository.findByLotId(before.uuid())).thenReturn(List.of());
+        ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass((Class) Map.class);
+
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("title_link", "  https://onedrive.example.com/TP Lot 12  ");
+        lotService.patchLot(before.uuid(), changes);
+
+        verify(lotRepository).patch(eq(before.uuid()), sent.capture());
+        assertEquals("https://onedrive.example.com/TP Lot 12", sent.getValue().get("title_link"));
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void patchLot_shouldClearTheTitleLink_whenItIsBlank() {
+        LotRow before = stubRow(UUID.randomUUID());
+        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+        when(lotPermissibleAgreementTypeRepository.findByLotId(before.uuid())).thenReturn(List.of());
+        ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass((Class) Map.class);
+
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("title_link", "   ");
+        lotService.patchLot(before.uuid(), changes);
+
+        verify(lotRepository).patch(eq(before.uuid()), sent.capture());
+        assertTrue(sent.getValue().containsKey("title_link"));
+        assertNull(sent.getValue().get("title_link"));
+    }
+
+    @Test
+    void patchLot_shouldRefuseATitleLinkThatIsNotHttp_andSaveNothing() {
+        LotRow before = stubRow(UUID.randomUUID());
+        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        for (String url : List.of("ftp://example.gov", "example.gov", "javascript:alert(1)")) {
+            Map<String, Object> changes = new HashMap<>();
+            changes.put("title_link", url);
+            assertThrows(IllegalArgumentException.class, () -> lotService.patchLot(before.uuid(), changes));
+        }
+        verify(lotRepository, never()).patch(any(), any());
+        verifyNoInteractions(auditService);
     }
 
     // ---- reads ---------------------------------------------------------------
@@ -565,7 +616,7 @@ public class LotServiceTest {
     private LotRow stubRow(UUID uuid, UUID propertyId) {
         return new LotRow(
                 uuid, propertyId, true, null,
-                "12", "123 Main St", null, "Rental lot", "Front row", 1,
+                "12", null, "123 Main St", null, "Rental lot", "Front row", 1,
                 null, OffsetDateTime.now(ZoneOffset.UTC), null
         );
     }

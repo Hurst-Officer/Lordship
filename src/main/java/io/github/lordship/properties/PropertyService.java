@@ -53,7 +53,7 @@ public class PropertyService {
     // Columns that can carry a link and a note. Custom field labels can too.
     // business_numbers is not here because each number carries its own link and note.
     private static final Set<String> FIELD_COLUMNS = Set.of(
-            "property_code", "property_name", "property_street", "property_city", "property_state",
+            "property_name", "property_street", "property_city", "property_state",
             "property_zip", "property_county", "purchase_date", "property_zoning", "property_parcels",
             "acres", "payable_to", "remittance_address", "year_built"
     );
@@ -62,6 +62,16 @@ public class PropertyService {
     public Optional<Property> patchProperty(UUID uuid, Map<String, Object> changes) {
 
         PropertyRow before = propertyRepository.findById(uuid).orElse(null);
+
+        // A blank link clears it. Anything else must be a web address.
+        if (changes.containsKey("title_link")) {
+            Object raw = changes.get("title_link");
+            if (raw != null && !(raw instanceof String)) {
+                throw InvalidRequest.onField("title_link", "property.link_not_a_url");
+            }
+            changes = new HashMap<>(changes);
+            changes.put("title_link", checkedLink("title_link", (String) raw));
+        }
 
         // A custom field that was removed takes its link and note with it
         if (before != null && changes.containsKey("custom_fields")) {
@@ -87,14 +97,20 @@ public class PropertyService {
     // field is a column name like "property_zoning", or a custom field label.
     @Transactional
     public Optional<Property> setFieldLink(UUID uuid, String field, String url) {
+        return setFieldText(uuid, field, checkedLink("url", url), propertyRepository::setFieldLink);
+    }
+
+    // Returns the trimmed link, or null when it is blank.
+    // Throws when it is not an http or https address. inputName is the field named in the error.
+    private static String checkedLink(String inputName, String url) {
         String link = blankToNull(url);
         if (link != null) {
             String lower = link.toLowerCase(Locale.ROOT);
             if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
-                throw InvalidRequest.onField("url", "property.link_not_a_url");
+                throw InvalidRequest.onField(inputName, "property.link_not_a_url");
             }
         }
-        return setFieldText(uuid, field, link, propertyRepository::setFieldLink);
+        return link;
     }
 
     // Sets the note that goes with one field. A null or blank note clears it.

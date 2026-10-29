@@ -20,7 +20,7 @@ public class PropertyRepository {
     }
 
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
-            "property_code", "property_name", "property_street", "property_city",
+            "property_code", "property_name", "title_link", "property_street", "property_city",
             "property_state", "property_zip", "property_county", "latitude", "longitude", "purchase_date",
             "property_zoning", "property_parcels", "acres", "payable_to", "business_numbers",
             "remittance_address", "year_built", "custom_fields", "field_links", "field_notes", "property_manager"

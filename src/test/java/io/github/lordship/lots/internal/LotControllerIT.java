@@ -151,6 +151,43 @@ public class LotControllerIT extends IntegrationTest {
     }
 
     @Test
+    void patchLot_shouldSaveTheTitleLink_andShowItOnRead() throws Exception {
+        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+        UUID propertyId = testData.insertProperty("L006").uuid();
+        UUID lotId = testData.insertLot(propertyId, "7").uuid();
+
+        mockMvc.perform(patch("/api/lots/" + lotId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "titleLink": "https://onedrive.example.com/L006 Lot 7" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.titleLink").value("https://onedrive.example.com/L006 Lot 7"));
+
+        // the link is also there when the lot is read back
+        mockMvc.perform(get("/api/lots/" + lotId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.titleLink").value("https://onedrive.example.com/L006 Lot 7"));
+    }
+
+    @Test
+    void patchLot_shouldReturn400_whenTheTitleLinkIsNotHttp() throws Exception {
+        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+        UUID propertyId = testData.insertProperty("L007").uuid();
+        UUID lotId = testData.insertLot(propertyId, "8").uuid();
+
+        mockMvc.perform(patch("/api/lots/" + lotId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "titleLink": "javascript:alert(1)" }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void patchLot_shouldReturn404_whenNotFound() throws Exception {
         // Arrange
         String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);

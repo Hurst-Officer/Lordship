@@ -53,6 +53,7 @@ public class PropertyRepositoryTest {
         assertEquals(List.of(), saved.businessNumbers());
         assertEquals(Map.of(), saved.fieldLinks());
         assertEquals(Map.of(), saved.fieldNotes());
+        assertNull(saved.titleLink());
         assertNull(saved.acres());
         assertNull(saved.propertyCounty());
     }
@@ -249,6 +250,43 @@ public class PropertyRepositoryTest {
         PropertyRow patched = propertyRepository.patch(saved.uuid(), clear).orElseThrow();
 
         assertEquals(List.of(), patched.businessNumbers());
+    }
+
+    // ---- title link ----
+
+    @Test
+    void patch_savesTheTitleLink_andNullClearsIt() {
+        PropertyRow saved = saveTestProperty();
+
+        PropertyRow linked = propertyRepository
+                .patch(saved.uuid(), Map.of("title_link", "https://onedrive.example.com/Com. Test Mobile Park"))
+                .orElseThrow();
+        assertEquals("https://onedrive.example.com/Com. Test Mobile Park", linked.titleLink());
+
+        Map<String, Object> clear = new HashMap<>();
+        clear.put("title_link", null);
+        PropertyRow cleared = propertyRepository.patch(saved.uuid(), clear).orElseThrow();
+        assertNull(cleared.titleLink());
+    }
+
+    @Test
+    void patch_rejectsATitleLinkThatIsNotAWebAddress() {
+        PropertyRow saved = saveTestProperty();
+
+        // the database check is the backstop when a caller skips the service
+        assertThrows(DataIntegrityViolationException.class, () ->
+                propertyRepository.patch(saved.uuid(), Map.of("title_link", "C:\\Users\\folder")));
+    }
+
+    @Test
+    void setFieldLink_leavesTheTitleLinkAlone() {
+        PropertyRow saved = saveTestProperty();
+        propertyRepository.patch(saved.uuid(), Map.of("title_link", "https://onedrive.example.com/TP"));
+
+        PropertyRow linked = propertyRepository.setFieldLink(saved.uuid(), "acres", "https://gis.example.gov")
+                .orElseThrow();
+
+        assertEquals("https://onedrive.example.com/TP", linked.titleLink());
     }
 
     // ---- field links ----

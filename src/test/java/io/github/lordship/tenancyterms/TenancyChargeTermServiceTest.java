@@ -1,5 +1,6 @@
 package io.github.lordship.tenancyterms;
 
+import io.github.lordship.TestDataSupport;
 import io.github.lordship.audit.AuditContext;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.Lot;
@@ -1100,9 +1101,7 @@ public class TenancyChargeTermServiceTest {
     }
 
     private static Lot lot(PermissibleAgreementType... permissible) {
-        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        return new Lot(LOT, PROPERTY, true, null, "42", null, null, null, null,
-                1, null, now, null, List.of(permissible));
+        return TestDataSupport.lot(LOT, PROPERTY, true, null, "42", null, null, permissible);
     }
 
     /**

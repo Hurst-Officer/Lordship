@@ -11,6 +11,7 @@ public record Property(
         UUID uuid,
         String propertyCode,
         String propertyName,
+        String titleLink,
         String propertyStreet,
         String propertyCity,
         String propertyState,
