@@ -116,6 +116,7 @@ public class LotController {
         Map<String, Object> changes = new HashMap<>();
 
         if (request.containsKey("lotNumber"))         changes.put("lot_number", request.get("lotNumber"));
+        if (request.containsKey("titleLink"))         changes.put("title_link", request.get("titleLink"));
         if (request.containsKey("lotAddress"))        changes.put("lot_address", request.get("lotAddress"));
         if (request.containsKey("lotParcel"))         changes.put("lot_parcel", request.get("lotParcel"));
         if (request.containsKey("description"))       changes.put("description", request.get("description"));

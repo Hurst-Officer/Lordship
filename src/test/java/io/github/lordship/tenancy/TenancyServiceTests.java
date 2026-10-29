@@ -1,5 +1,6 @@
 package io.github.lordship.tenancy;
 
+import io.github.lordship.TestDataSupport;
 import io.github.lordship.accounts.AccountService;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.Lot;
@@ -76,22 +77,7 @@ public class TenancyServiceTests {
     }
 
     private Lot lot(boolean isRentable, String notRentableReason) {
-        return new Lot(
-                lotId,
-                UUID.randomUUID(),
-                isRentable,
-                notRentableReason,
-                "14",
-                null,
-                null,
-                null,
-                null,
-                1,
-                null,
-                OffsetDateTime.now(ZoneOffset.UTC),
-                null,
-                List.of()
-        );
+        return TestDataSupport.lot(lotId, UUID.randomUUID(), isRentable, notRentableReason, "14", null, null);
     }
 
     // Stubbed per test rather than in setup: MockitoExtension is strict, and the

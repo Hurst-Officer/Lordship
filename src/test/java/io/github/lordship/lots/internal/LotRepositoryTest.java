@@ -32,7 +32,7 @@ public class LotRepositoryTest extends IntegrationTest {
     private LotRow richRow(UUID propertyId, String lotNumber) {
         return new LotRow(
                 null, propertyId, true, null,
-                lotNumber, "123 Main St", null, "Rental lot", "Front row", 1,
+                lotNumber, null, "123 Main St", null, "Rental lot", "Front row", 1,
                 null, null, null
         );
     }
@@ -54,6 +54,7 @@ public class LotRepositoryTest extends IntegrationTest {
         assertNull(saved.lotAddress());
         assertNull(saved.description());
         assertNull(saved.notes());
+        assertNull(saved.titleLink());
         assertNotNull(saved.createdAt());
         assertNull(saved.deletedAt());
 
@@ -191,6 +192,33 @@ public class LotRepositoryTest extends IntegrationTest {
         assertThrows(InvalidDataAccessApiUsageException.class, () ->
                 lotRepository.patch(saved.uuid(), Map.of("target_rent", 150.0))
         );
+    }
+
+    // ---- title link ----
+
+    @Test
+    void patch_shouldSaveTheTitleLink_andNullClearsIt() {
+        UUID propertyId = testData.insertProperty("I012").uuid();
+        LotRow saved = lotRepository.save(propertyId, "12");
+
+        LotRow linked = lotRepository.patch(saved.uuid(), Map.of("title_link", "https://onedrive.example.com/TP Lot 12"))
+                .orElseThrow();
+        assertEquals("https://onedrive.example.com/TP Lot 12", linked.titleLink());
+
+        Map<String, Object> clear = new HashMap<>();
+        clear.put("title_link", null);
+        LotRow cleared = lotRepository.patch(saved.uuid(), clear).orElseThrow();
+        assertNull(cleared.titleLink());
+    }
+
+    @Test
+    void patch_shouldRejectATitleLinkThatIsNotAWebAddress() {
+        UUID propertyId = testData.insertProperty("I013").uuid();
+        LotRow saved = lotRepository.save(propertyId, "12");
+
+        // the database check is the backstop when a caller skips the service
+        assertThrows(DataIntegrityViolationException.class, () ->
+                lotRepository.patch(saved.uuid(), Map.of("title_link", "C:\\Users\\folder")));
     }
 
     @Test

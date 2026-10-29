@@ -32,6 +32,7 @@ public class PropertyRowMapper implements RowMapper<PropertyRow> {
                 (UUID) rs.getObject("uuid"),
                 rs.getString("property_code"),
                 rs.getString("property_name"),
+                rs.getString("title_link"),
                 rs.getString("property_street"),
                 rs.getString("property_city"),
                 rs.getString("property_state"),

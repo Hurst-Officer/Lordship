@@ -8,6 +8,7 @@ CREATE TABLE lot ( --TODO: add square footage, also, add a MFH (manufactured hom
                      is_rentable   BOOLEAN NOT NULL DEFAULT TRUE,
                      not_rentable_reason TEXT,
                      lot_number    TEXT NOT NULL,        -- human-facing id; numeric OR lettered (e.g. "DF"); mutable
+                     title_link    TEXT CONSTRAINT lot_title_link_must_be_a_web_address CHECK (title_link ~* '^https?://'), -- "Lot 12" opens this where it is shown as a page title
                      lot_address   TEXT,
                      lot_parcel    TEXT,                 -- optional (not all lots have their own parcels)
                      description   TEXT,

@@ -4,6 +4,8 @@ import io.github.lordship.access.internal.agents.AgentRepository;
 import io.github.lordship.access.internal.agents.AgentRow;
 import io.github.lordship.accounts.internal.AccountRepository;
 import io.github.lordship.accounts.internal.AccountRow;
+import io.github.lordship.lots.Lot;
+import io.github.lordship.lots.PermissibleAgreementType;
 import io.github.lordship.lots.internal.LotRepository;
 import io.github.lordship.lots.internal.LotRow;
 import io.github.lordship.meters.internal.MeterRepository;
@@ -131,13 +133,15 @@ public final class TestDataSupport {
     // ---- records built in memory, for unit tests with no database ----
 
     // The one place a test writes out the Property constructor. A new property column
-    // only changes this method. County, location, acres, business numbers, custom fields,
+    // only changes this method. Title link, county, location, acres, business numbers, custom fields,
     // links, notes, manager and timestamps are left empty.
     public static Property property(UUID uuid, String code, String name, String street,
                                     String city, String state, String zip,
                                     LocalDate purchaseDate, String zoning, List<String> parcels,
                                     String payableTo, String remittanceAddress, Integer yearBuilt) {
-        return new Property(uuid, code, name, street, city, state, zip,
+        return new Property(uuid, code, name,
+                null,           // title link
+                street, city, state, zip,
                 null,           // county
                 null, null,     // latitude, longitude
                 purchaseDate, zoning, parcels,
@@ -149,5 +153,21 @@ public final class TestDataSupport {
                 Map.of(),       // field links
                 Map.of(),       // field notes
                 null, OffsetDateTime.now(ZoneOffset.UTC), null);
+    }
+
+    // The one place a test writes out the Lot constructor. A new lot column
+    // only changes this method. Title link, description, notes and shape are
+    // left empty. The sort order is 1. Agreement types are optional, at the end.
+    public static Lot lot(UUID uuid, UUID propertyId, boolean isRentable, String notRentableReason,
+                          String lotNumber, String lotAddress, String lotParcel,
+                          PermissibleAgreementType... permissible) {
+        return new Lot(uuid, propertyId, isRentable, notRentableReason, lotNumber,
+                null,           // title link
+                lotAddress, lotParcel,
+                null, null,     // description, notes
+                1,              // sort order
+                null,           // shape
+                OffsetDateTime.now(ZoneOffset.UTC), null,
+                List.of(permissible));
     }
 }

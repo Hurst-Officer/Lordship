@@ -35,6 +35,7 @@ CREATE TABLE property (
                           uuid             UUID PRIMARY KEY DEFAULT uuidv7(),
                           property_code    VARCHAR(255) CONSTRAINT property_code_must_not_be_blank CHECK (length(trim(property_code)) > 0), -- optional; set after create
                           property_name    TEXT NOT NULL CONSTRAINT property_name_must_not_be_blank CHECK (length(trim(property_name)) > 0),
+                          title_link       TEXT CONSTRAINT property_title_link_must_be_a_web_address CHECK (title_link ~* '^https?://'), -- the name opens this where it is shown as a page title, e.g. the park's OneDrive folder
 
                           -- the address arrives already split (autocomplete), so all four parts are required
                           property_street  TEXT NOT NULL CONSTRAINT property_street_must_not_be_blank CHECK (length(trim(property_street)) > 0),

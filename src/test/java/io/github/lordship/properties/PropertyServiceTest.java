@@ -11,6 +11,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -61,6 +62,7 @@ public class PropertyServiceTest {
         assertEquals(List.of(), created.businessNumbers());
         assertEquals(Map.of(), created.fieldLinks());
         assertEquals(Map.of(), created.fieldNotes());
+        assertNull(created.titleLink());
         assertNull(created.acres());
         assertNull(created.propertyCounty());
     }
@@ -179,6 +181,70 @@ public class PropertyServiceTest {
         assertEquals(Map.of("customFields", Map.of("Pool guy", "Rob")), after.getAllValues().get(1));
     }
 
+    // ---- title link ----
+
+    @Test
+    void patchPropertySavesTheTitleLink_andTrimsIt() {
+        Property created = createProperty();
+
+        Property linked = propertyService.patchProperty(created.uuid(), new HashMap<>(Map.of(
+                "title_link", "  https://onedrive.example.com/TP  "))).orElseThrow();
+
+        assertEquals("https://onedrive.example.com/TP", linked.titleLink());
+    }
+
+    @Test
+    void patchPropertyClearsTheTitleLink_whenNullOrBlank() {
+        Property created = createProperty();
+
+        for (String empty : Arrays.asList(null, "", "   ")) {
+            propertyService.patchProperty(created.uuid(), new HashMap<>(Map.of(
+                    "title_link", "https://onedrive.example.com/TP")));
+            Map<String, Object> clear = new HashMap<>();
+            clear.put("title_link", empty);
+
+            Property cleared = propertyService.patchProperty(created.uuid(), clear).orElseThrow();
+
+            assertNull(cleared.titleLink());
+        }
+    }
+
+    @Test
+    void patchPropertyRejectsATitleLinkThatIsNotHttp() {
+        Property created = createProperty();
+
+        for (String url : List.of("ftp://example.gov", "example.gov", "javascript:alert(1)")) {
+            InvalidRequest e = assertThrows(InvalidRequest.class, () ->
+                    propertyService.patchProperty(created.uuid(), new HashMap<>(Map.of("title_link", url))));
+            assertEquals("property.link_not_a_url", e.problem().code());
+            assertEquals("title_link", e.problem().field());
+        }
+    }
+
+    @Test
+    void patchPropertyRejectsATitleLinkThatIsNotText() {
+        Property created = createProperty();
+
+        InvalidRequest e = assertThrows(InvalidRequest.class, () ->
+                propertyService.patchProperty(created.uuid(), new HashMap<>(Map.of("title_link", 42))));
+
+        assertEquals("property.link_not_a_url", e.problem().code());
+        assertEquals("title_link", e.problem().field());
+    }
+
+    @Test
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void patchPropertyRecordsTheTitleLinkChange() {
+        Property created = createProperty();
+        ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass((Class) Map.class);
+
+        propertyService.patchProperty(created.uuid(), new HashMap<>(Map.of(
+                "title_link", "https://onedrive.example.com/TP")));
+
+        verify(auditService).recordUpdate(eq("property"), eq(created.uuid()), any(), after.capture());
+        assertEquals(Map.of("titleLink", "https://onedrive.example.com/TP"), after.getValue());
+    }
+
     // ---- field links ----
 
     @Test
@@ -250,8 +316,9 @@ public class PropertyServiceTest {
     void setFieldLinkRejectsAColumnThatCannotHoldALink() {
         Property created = createProperty();
 
-        // business numbers carry their own links, and custom_fields is a container, not a field
-        for (String field : List.of("business_numbers", "custom_fields", "field_links", "field_notes", "property_manager")) {
+        // the code needs no link, title_link is a link already, business numbers carry their own links,
+        // and custom_fields is a container, not a field
+        for (String field : List.of("property_code", "title_link", "business_numbers", "custom_fields", "field_links", "field_notes", "property_manager")) {
             InvalidRequest e = assertThrows(InvalidRequest.class, () ->
                     propertyService.setFieldLink(created.uuid(), field, "https://example.gov"));
             assertEquals("property.field_unknown", e.problem().code());
