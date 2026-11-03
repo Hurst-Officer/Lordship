@@ -58,7 +58,11 @@ public class SecurityConfig {
                         // back 401 instead of its real status. Must stay first: rules match in
                         // declaration order. The original handler does not re-run on this pass;
                         // only the error body is written.
-                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                        //
+                        // ASYNC is the same story for the presence stream (Server-Sent Events). When a
+                        // stream closes, the request is dispatched a second time to finish it, and that
+                        // pass has no Authentication either. The first pass was already checked.
+                        .dispatcherTypeMatchers(DispatcherType.ERROR, DispatcherType.ASYNC).permitAll()
                         .requestMatchers(HttpMethod.POST,
                                 LoginBodySizeFilter.LOGIN_PATH,
                                 LoginBodySizeFilter.REFRESH_PATH,
