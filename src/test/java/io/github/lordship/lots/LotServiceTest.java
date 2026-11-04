@@ -309,6 +309,94 @@ public class LotServiceTest {
         verifyNoInteractions(auditService);
     }
 
+    // ---- rentable across a selection -----------------------------------------
+
+    @Test
+    void setRentable_shouldRefuseAMissingReason_andSaveNothing() {
+        for (String reason : Arrays.asList(null, "", "   ")) {
+            assertThrows(IllegalArgumentException.class, () -> lotService.setRentable(
+                    List.of(UUID.randomUUID()), false, reason));
+        }
+        verifyNoInteractions(lotRepository);
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void setRentable_shouldGiveEveryLotTheReason_andOnlyLogTheLotsThatChanged() {
+        // Arrange -- lot A is rentable, lot B already has the same reason
+        UUID propertyId = UUID.randomUUID();
+        LotRow lotA = stubRow(propertyId);
+        LotRow lotB = withRentable(stubRow(propertyId), false, "Needs sewer upgrade");
+        when(lotRepository.findById(lotA.uuid())).thenReturn(Optional.of(lotA));
+        when(lotRepository.findById(lotB.uuid())).thenReturn(Optional.of(lotB));
+        when(lotRepository.patch(eq(lotA.uuid()), any()))
+                .thenReturn(Optional.of(withRentable(lotA, false, "Needs sewer upgrade")));
+        when(lotRepository.patch(eq(lotB.uuid()), any())).thenReturn(Optional.of(lotB));
+
+        // Act -- the reason arrives with spaces around it
+        int updated = lotService.setRentable(List.of(lotA.uuid(), lotB.uuid()), false, "  Needs sewer upgrade ");
+
+        // Assert -- both lots were sent the trimmed reason
+        Map<String, Object> expected = new HashMap<>();
+        expected.put("is_rentable", false);
+        expected.put("not_rentable_reason", "Needs sewer upgrade");
+        verify(lotRepository).patch(lotA.uuid(), expected);
+        verify(lotRepository).patch(lotB.uuid(), expected);
+
+        // Only lot A changed
+        assertEquals(1, updated);
+        AuditMapper.Diff logged = capturedUpdate(lotA.uuid());
+        assertEquals(Set.of("isRentable", "notRentableReason"), logged.before().keySet());
+        assertEquals("Needs sewer upgrade", logged.after().get("notRentableReason"));
+    }
+
+    @Test
+    void setRentable_shouldReplaceAnOldReason() {
+        // Arrange
+        LotRow before = withRentable(stubRow(UUID.randomUUID()), false, "Burned down");
+        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.patch(eq(before.uuid()), any()))
+                .thenReturn(Optional.of(withRentable(before, false, "Needs sewer upgrade")));
+
+        // Act
+        int updated = lotService.setRentable(List.of(before.uuid()), false, "Needs sewer upgrade");
+
+        // Assert
+        assertEquals(1, updated);
+        AuditMapper.Diff logged = capturedUpdate(before.uuid());
+        assertEquals(Set.of("notRentableReason"), logged.before().keySet());
+        assertEquals("Burned down", logged.before().get("notRentableReason"));
+    }
+
+    @Test
+    void setRentable_shouldClearTheReasons_whenTheLotsAreRentableAgain() {
+        // Arrange
+        LotRow before = withRentable(stubRow(UUID.randomUUID()), false, "Needs sewer upgrade");
+        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(withRentable(before, true, null)));
+
+        // Act -- a reason sent along with rentable is ignored
+        lotService.setRentable(List.of(before.uuid()), true, "ignored");
+
+        // Assert
+        Map<String, Object> expected = new HashMap<>();
+        expected.put("is_rentable", true);
+        expected.put("not_rentable_reason", null);
+        verify(lotRepository).patch(before.uuid(), expected);
+    }
+
+    @Test
+    void setRentable_shouldThrow_whenALotIsUnknown() {
+        // The transaction rolls back, so the lots already saved are undone too
+        UUID unknown = UUID.randomUUID();
+        when(lotRepository.findById(unknown)).thenReturn(Optional.empty());
+
+        assertThrows(IllegalArgumentException.class, () -> lotService.setRentable(
+                List.of(unknown), false, "Needs sewer upgrade"));
+        verify(lotRepository, never()).patch(any(), any());
+        verifyNoInteractions(auditService);
+    }
+
     // ---- delete --------------------------------------------------------------
 
     @Test
@@ -611,6 +699,15 @@ public class LotServiceTest {
 
     private LotRow stubRow(UUID propertyId) {
         return stubRow(UUID.randomUUID(), propertyId);
+    }
+
+    // The same lot with a different rentable state
+    private LotRow withRentable(LotRow row, boolean isRentable, String reason) {
+        return new LotRow(
+                row.uuid(), row.propertyId(), isRentable, reason,
+                row.lotNumber(), row.titleLink(), row.lotAddress(), row.lotParcel(), row.description(), row.notes(),
+                row.sortOrder(), row.shapeData(), row.createdAt(), row.deletedAt()
+        );
     }
 
     private LotRow stubRow(UUID uuid, UUID propertyId) {

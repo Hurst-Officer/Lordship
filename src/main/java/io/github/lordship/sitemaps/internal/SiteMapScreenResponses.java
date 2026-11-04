@@ -22,11 +22,14 @@ public final class SiteMapScreenResponses {
             String lots
     ) { }
 
-    // One park's map for the property screen
+    // One park's map for the property screen.
+    // platTurnDegrees turns the north-up map clockwise so the plat drawing reads upright.
+    // It is null when the park's placement has no matrix.
     public record SiteMapResponse(
             UUID propertyId,
             List<LotShape> lots,
-            List<FeatureShape> features
+            List<FeatureShape> features,
+            Double platTurnDegrees
     ) { }
 
     public record LotShape(

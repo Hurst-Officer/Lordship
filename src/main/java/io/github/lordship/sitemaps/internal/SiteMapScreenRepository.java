@@ -3,6 +3,7 @@ package io.github.lordship.sitemaps.internal;
 import io.github.lordship.sitemaps.internal.SiteMapScreenRows.FeatureShapeRow;
 import io.github.lordship.sitemaps.internal.SiteMapScreenRows.FootprintRow;
 import io.github.lordship.sitemaps.internal.SiteMapScreenRows.LotShapeRow;
+import io.github.lordship.sitemaps.internal.SiteMapScreenRows.PlatAxisRow;
 import io.github.lordship.sitemaps.internal.SiteMapScreenRows.TerrainRow;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -59,6 +60,21 @@ public class SiteMapScreenRepository {
                 .param("property", propertyId)
                 .query(Boolean.class)
                 .single();
+    }
+
+    // Two numbers of the plat's pixel-to-map matrix [a, b, c, d, e, f].
+    // Together they say which way the plat drawing's "up" points on the ground.
+    public Optional<PlatAxisRow> findPlatAxis(UUID propertyId) {
+        return db.sql("""
+                        SELECT (image_to_world -> 'pixel_to_3857' ->> 1)::float8 AS b,
+                               (image_to_world -> 'pixel_to_3857' ->> 4)::float8 AS e
+                          FROM site_map
+                         WHERE property_id = :property
+                           AND deleted_at IS NULL
+                        """)
+                .param("property", propertyId)
+                .query(PlatAxisRow.class)
+                .optional();
     }
 
     // The lot number goes at the middle of the biggest circle that fits inside the lot,
