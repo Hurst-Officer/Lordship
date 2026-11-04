@@ -50,7 +50,26 @@ public class SiteMapScreenService {
                 .map(f -> new FeatureShape(f.kind(), f.name(), f.geometry(), f.widthMetres(),
                         f.elevationFt(), f.contourIndex()))
                 .toList();
-        return Optional.of(new SiteMapResponse(propertyId, lots, features));
+        Double platTurn = repository.findPlatAxis(propertyId)
+                .map(axis -> platTurnDegrees(axis.b(), axis.e()))
+                .orElse(null);
+        return Optional.of(new SiteMapResponse(propertyId, lots, features, platTurn));
+    }
+
+    /**
+     * How far to turn a north-up map clockwise so the plat drawing reads upright, in degrees.
+     * b and e come from the pixel_to_3857 matrix [a, b, c, d, e, f].
+     * One pixel up the drawing lands at (-b, -e) on the map. Grove works it out the same way.
+     * The answer is between -180 and 180. Null when the matrix is missing.
+     */
+    static Double platTurnDegrees(Double b, Double e) {
+        if (b == null || e == null || (b == 0 && e == 0)) {
+            return null;
+        }
+        double degrees = -90 - Math.toDegrees(Math.atan2(e, -b));
+        double turn = ((degrees % 360) + 540) % 360 - 180;
+        // a plat that is already within half a degree of north is north up
+        return Math.abs(turn) < 0.5 ? 0.0 : Math.round(turn * 10) / 10.0;
     }
 
     // The coarse grid has at most this many columns. Enough for the hills along the bottom of the page.

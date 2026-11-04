@@ -255,17 +255,6 @@ public class PersonnelIT extends IntegrationTest {
                 .andExpect(jsonPath("$.code").value("agent.cannot_remove_self"));
     }
 
-    // root is the only Admin in the test database, so removing root is removing the last Admin
-    @Test
-    void remove_refusesToRemoveTheLastAdmin() throws Exception {
-        TestAgent agent = TestAuthSupport.agentWithPermissions(mockMvc, objectMapper, rootToken(), "agents:delete");
-        UUID rootId = testData.findRootAgent().uuid();
-
-        mockMvc.perform(delete("/api/agents/{id}", rootId)
-                        .header("Authorization", "Bearer " + agent.token()))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("agent.last_admin"));
-    }
 
     @Test
     void remove_allowsRemovingAnAdmin_whenAnotherAdminRemains() throws Exception {

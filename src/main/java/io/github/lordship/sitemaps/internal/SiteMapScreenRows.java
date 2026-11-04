@@ -11,6 +11,9 @@ final class SiteMapScreenRows {
     record FootprintRow(UUID propertyId, int lotCount, double middleLongitude, double middleLatitude, double sizeMetres,
                         String hullSvg, String lotsSvg) { }
 
+    // sql: site_map.image_to_world. b and e are two of the six numbers in its pixel_to_3857 matrix.
+    record PlatAxisRow(Double b, Double e) { }
+
     // sql: lot_outline joined to lot, with the point where the lot number goes
     record LotShapeRow(UUID lotId, String lotNumber, String outline, double labelLongitude, double labelLatitude) { }
 

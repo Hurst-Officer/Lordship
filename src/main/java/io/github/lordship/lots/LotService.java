@@ -11,6 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -95,6 +97,43 @@ public class LotService {
         }
 
         return Optional.of(hydrate(after));
+    }
+
+    /**
+     * Marks a selection of lots rentable, or not rentable for one reason.
+     * The office picks the lots on the map or in the list, then sets them all at once.
+     *
+     * <p>All or nothing: an unknown lot or a missing reason saves none of them.
+     * Not rentable replaces any reason a lot already had. Rentable clears the reasons.
+     * Each lot that actually changed gets its own audit entry. Returns how many changed.
+     */
+    @Transactional
+    public int setRentable(Collection<UUID> lotIds, boolean isRentable, String reason) {
+        String cleanReason = (reason == null) ? null : reason.strip();
+        if (!isRentable && (cleanReason == null || cleanReason.isEmpty())) {
+            throw new IllegalArgumentException("notRentableReason is required when a lot is not rentable");
+        }
+
+        int changed = 0;
+        // a lot picked twice is saved once
+        for (UUID lotId : new LinkedHashSet<>(lotIds)) {
+            LotRow before = lotRepository.findById(lotId)
+                    .orElseThrow(() -> new IllegalArgumentException("Lot " + lotId + " does not exist"));
+
+            Map<String, Object> changes = new HashMap<>();
+            changes.put("is_rentable", isRentable);
+            changes.put("not_rentable_reason", isRentable ? null : cleanReason);
+
+            LotRow after = lotRepository.patch(lotId, changes)
+                    .orElseThrow(() -> new IllegalArgumentException("Lot " + lotId + " does not exist"));
+
+            var diff = AuditMapper.diff(before, after);
+            if (!diff.before().isEmpty()) {
+                auditService.recordUpdate("lot", lotId, diff.before(), diff.after());
+                changed++;
+            }
+        }
+        return changed;
     }
 
     /**

@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -70,6 +71,21 @@ public class LotController {
     ) { }
 
     public record SetRatesResult(int updated) { }
+
+    // Rentable or not across a selection, from the map or the lots list.
+    // notRentableReason is needed when isRentable is false, and replaces each lot's old reason.
+    public record SetRentableRequest(
+            @NotEmpty
+            @Size(max = 2000)
+            List<UUID> lotIds,
+
+            @NotNull
+            Boolean isRentable,
+
+            String notRentableReason
+    ) { }
+
+    public record SetRentableResult(int updated) { }
 
     public LotController(LotService lotService) {
         this.lotService = lotService;
@@ -173,6 +189,15 @@ public class LotController {
                 request.targetRate(), request.askingRate());
 
         return ResponseEntity.ok(new SetRatesResult(updated));
+    }
+
+    // All or nothing. 400 when a lot is unknown or the reason is missing, and then nothing is saved.
+    // updated counts the lots that actually changed.
+    @PreAuthorize("hasAuthority('lots:edit')")
+    @PutMapping("/rentable")
+    public ResponseEntity<SetRentableResult> setRentable(@Valid @RequestBody SetRentableRequest request) {
+        int updated = lotService.setRentable(request.lotIds(), request.isRentable(), request.notRentableReason());
+        return ResponseEntity.ok(new SetRentableResult(updated));
     }
 
     @PreAuthorize("hasAuthority('lots:delete')")
