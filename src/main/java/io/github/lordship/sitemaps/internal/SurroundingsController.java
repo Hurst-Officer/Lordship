@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Arrays;
 import java.util.UUID;
 
 /**
@@ -53,12 +54,14 @@ public class SurroundingsController {
     }
 
     // The shaded picture of the ground. 404 when the heights were never pulled.
+    // Kept by the browser and checked by its fingerprint before reuse, like the other map layers.
     @PreAuthorize("hasAuthority('properties:view')")
     @GetMapping(value = "/{propertyId}/hillshade.png", produces = MediaType.IMAGE_PNG_VALUE)
     public ResponseEntity<byte[]> hillshade(@PathVariable UUID propertyId) {
         return surroundingsService.hillshade(propertyId)
                 .map(png -> ResponseEntity.ok()
-                        .cacheControl(CacheControl.noCache())
+                        .cacheControl(CacheControl.noCache().cachePrivate())
+                        .eTag(Integer.toHexString(Arrays.hashCode(png)))
                         .body(png))
                 .orElse(ResponseEntity.notFound().build());
     }

@@ -4,12 +4,15 @@ import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.PermissibleAgreementType;
 import io.github.lordship.lots.ShapeData;
 import io.github.lordship.shared.AgreementType;
+import org.springframework.modulith.NamedInterface;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
+// Shared with the screens module, so the screens' one call sends lots in this same shape
+@NamedInterface("responses")
 public record LotResponse(
         UUID id,
         UUID propertyId,

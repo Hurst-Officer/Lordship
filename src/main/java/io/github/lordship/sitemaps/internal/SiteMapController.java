@@ -3,6 +3,7 @@ package io.github.lordship.sitemaps.internal;
 import io.github.lordship.sitemaps.internal.SiteMapScreenResponses.FootprintResponse;
 import io.github.lordship.sitemaps.internal.SiteMapScreenResponses.SiteMapResponse;
 import io.github.lordship.sitemaps.internal.SiteMapScreenResponses.TerrainResponse;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,6 +16,10 @@ import java.util.UUID;
 
 /**
  * Maps for Glade's screens. Geometry is GeoJSON in [longitude, latitude] order.
+ *
+ * <p>These answers are large and rarely change, so each carries a fingerprint (an ETag) and
+ * "no-cache": the browser keeps its copy and asks the server whether it is still good.
+ * When nothing changed, Spring answers 304 with no body and the browser uses its copy.
  */
 @RestController
 @RequestMapping("/api/sitemaps")
@@ -30,7 +35,7 @@ public class SiteMapController {
     @PreAuthorize("hasAuthority('properties:view')")
     @GetMapping("/footprints")
     public ResponseEntity<List<FootprintResponse>> footprints() {
-        return ResponseEntity.ok(siteMapScreenService.footprints());
+        return cached(siteMapScreenService.footprints());
     }
 
     // One park's lots and surroundings. 404 when the park has never been placed on a map.
@@ -38,7 +43,7 @@ public class SiteMapController {
     @GetMapping("/{propertyId}")
     public ResponseEntity<SiteMapResponse> siteMap(@PathVariable UUID propertyId) {
         return siteMapScreenService.siteMap(propertyId)
-                .map(ResponseEntity::ok)
+                .map(SiteMapController::cached)
                 .orElse(ResponseEntity.notFound().build());
     }
 
@@ -49,7 +54,16 @@ public class SiteMapController {
     @GetMapping("/{propertyId}/terrain")
     public ResponseEntity<TerrainResponse> terrain(@PathVariable UUID propertyId) {
         return siteMapScreenService.terrain(propertyId)
-                .map(ResponseEntity::ok)
+                .map(SiteMapController::cached)
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    // A 200 the browser may keep, checking with the server before each reuse.
+    // The fingerprint is the answer's hash: the records hash their values, so the same map gives the same tag.
+    static <T> ResponseEntity<T> cached(T body) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noCache().cachePrivate())
+                .eTag(Integer.toHexString(body.hashCode()))
+                .body(body);
     }
 }

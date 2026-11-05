@@ -2,12 +2,15 @@ package io.github.lordship.homes.internal;
 
 import io.github.lordship.homes.Home;
 import io.github.lordship.homes.HomeCondition;
+import org.springframework.modulith.NamedInterface;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 
+// Shared with the screens module, so the lot page's one call sends homes in this same shape
+@NamedInterface("responses")
 public record HomeResponse(
         UUID id,
         String name,

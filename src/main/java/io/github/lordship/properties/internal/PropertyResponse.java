@@ -2,6 +2,7 @@ package io.github.lordship.properties.internal;
 
 import io.github.lordship.properties.BusinessNumber;
 import io.github.lordship.properties.Property;
+import org.springframework.modulith.NamedInterface;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -10,6 +11,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+// Shared with the screens module, so the property page's one call sends a property in this same shape
+@NamedInterface("responses")
 public record PropertyResponse(
         UUID id,
         String propertyCode,
