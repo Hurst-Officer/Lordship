@@ -21,6 +21,8 @@ import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -32,8 +34,11 @@ import java.util.stream.Collectors;
  * thrown during handler invocation and a broad handler here would swallow it, turning
  * every missing-authority 403 into something else. Leave it to Spring Security.
  *
- * <p>A controller's own @ExceptionHandler still wins over anything here, so the local
- * handlers in LotController and HomeController keep their behaviour.
+ * <p>A controller's own @ExceptionHandler still wins over anything here. That is why
+ * controllers should not have one: it would answer a DomainProblem with its diagnostic
+ * code instead of the sentence in the worker's language.
+ *
+ * <p>Every sentence here comes from messages.properties, so a Spanish request gets Spanish.
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -46,6 +51,11 @@ public class ApiExceptionHandler {
 
     private static ResponseEntity<Map<String, String>> of(HttpStatus status, String message) {
         return ResponseEntity.status(status).body(Map.of("message", message));
+    }
+
+    // The sentence for a code in the request's language
+    private String text(String code, Object... args) {
+        return messages.getMessage(code, args, code, LocaleContextHolder.getLocale());
     }
 
     /**
@@ -140,25 +150,25 @@ public class ApiExceptionHandler {
         String message = e.getBindingResult().getFieldErrors().stream()
                 .map(f -> f.getField() + " " + f.getDefaultMessage())
                 .collect(Collectors.joining("; "));
-        return of(HttpStatus.BAD_REQUEST, message.isBlank() ? "Request body is not valid" : message);
+        return of(HttpStatus.BAD_REQUEST, message.isBlank() ? text("request.body_invalid") : message);
     }
 
     // malformed JSON, or a value the body cannot be read into
     @ExceptionHandler(HttpMessageNotReadableException.class)
     ResponseEntity<Map<String, String>> unreadableBody(HttpMessageNotReadableException e) {
-        return of(HttpStatus.BAD_REQUEST, "Request body could not be read");
+        return of(HttpStatus.BAD_REQUEST, text("request.body_unreadable"));
     }
 
     // a path variable or query parameter of the wrong type, e.g. a uuid that is not one
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     ResponseEntity<Map<String, String>> badParameterType(MethodArgumentTypeMismatchException e) {
-        return of(HttpStatus.BAD_REQUEST, e.getName() + " is not a valid " +
-                (e.getRequiredType() == null ? "value" : e.getRequiredType().getSimpleName()));
+        return of(HttpStatus.BAD_REQUEST, text("request.parameter_wrong_type", e.getName(),
+                e.getRequiredType() == null ? "value" : e.getRequiredType().getSimpleName()));
     }
 
     @ExceptionHandler(MissingServletRequestParameterException.class)
     ResponseEntity<Map<String, String>> missingParameter(MissingServletRequestParameterException e) {
-        return of(HttpStatus.BAD_REQUEST, "Missing required parameter: " + e.getParameterName());
+        return of(HttpStatus.BAD_REQUEST, text("request.parameter_missing", e.getParameterName()));
     }
 
     // Fallback for the throw sites not yet converted to InvalidRequest. Spring
@@ -192,16 +202,28 @@ public class ApiExceptionHandler {
 
         if ("23514".equals(state) && detail != null && !detail.isBlank()) {
             return detail.contains("violates check constraint")
-                    ? of(HttpStatus.BAD_REQUEST, detail)
+                    ? of(HttpStatus.BAD_REQUEST, ruleText(detail, detail))
                     : of(HttpStatus.CONFLICT, detail);
         }
         if ("23505".equals(state)) {
-            return of(HttpStatus.CONFLICT, "That record already exists");
+            return of(HttpStatus.CONFLICT, ruleText(detail, text("data.already_exists")));
         }
         if ("23503".equals(state)) {
-            return of(HttpStatus.BAD_REQUEST, "That change refers to a record that does not exist");
+            return of(HttpStatus.BAD_REQUEST, text("data.missing_reference"));
         }
-        return of(HttpStatus.CONFLICT, "That change conflicts with existing data");
+        return of(HttpStatus.CONFLICT, text("data.conflict"));
+    }
+
+    // Postgres names the rule in its message: ... violates check constraint "lot_title_link_must_be_a_web_address"
+    private static final Pattern RULE_NAME = Pattern.compile("constraint \"([^\"]+)\"");
+
+    // The sentence for a named database rule (constraint.<name>), or fallback when there is none.
+    // English has no entries on purpose, so English keeps Postgres's own sentence.
+    private String ruleText(String detail, String fallback) {
+        if (detail == null) return fallback;
+        Matcher found = RULE_NAME.matcher(detail);
+        if (!found.find()) return fallback;
+        return messages.getMessage("constraint." + found.group(1), null, fallback, LocaleContextHolder.getLocale());
     }
 
     // Postgres puts CONTEXT and WHERE lines under the message; only the first line is

@@ -2,12 +2,12 @@ package io.github.lordship.homes.internal;
 
 import io.github.lordship.homes.Home;
 import io.github.lordship.homes.HomeService;
+import io.github.lordship.shared.InvalidRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -58,7 +58,7 @@ public class HomeController {
             @RequestParam(value = "vin", required = false) String vin) {
 
         if (Stream.of(propertyCode, lotId, vin).filter(Objects::nonNull).count() != 1) {
-            throw new IllegalArgumentException("Give exactly one of property, lot or vin");
+            throw InvalidRequest.of("home.filter_needs_exactly_one");
         }
 
         List<Home> found;
@@ -124,10 +124,6 @@ public class HomeController {
                 : ResponseEntity.notFound().build();
     }
 
-    // Carries the message: an unknown condition or a bad filter combination is worth
-    // naming, and an empty 400 throws that away.
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("message", String.valueOf(e.getMessage())));
-    }
+    // No @ExceptionHandler here. A local one would win over ApiExceptionHandler and
+    // answer with the diagnostic code instead of the sentence in the worker's language.
 }
