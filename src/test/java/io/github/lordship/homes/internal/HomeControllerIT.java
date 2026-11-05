@@ -168,6 +168,7 @@ public class HomeControllerIT extends IntegrationTest {
                                 { "lotId": "%s" }
                                 """.formatted(unknown)))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("home.lot_unknown"))
                 .andExpect(jsonPath("$.message").value("No lot " + unknown));
     }
 
@@ -283,7 +284,9 @@ public class HomeControllerIT extends IntegrationTest {
                         .content("""
                                 { "condition": "MEDIOCRE" }
                                 """))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("home.condition_unknown"))
+                .andExpect(jsonPath("$.field").value("condition"));
     }
 
     @Test
@@ -355,6 +358,7 @@ public class HomeControllerIT extends IntegrationTest {
         mockMvc.perform(get("/api/homes")
                         .header("Authorization", "Bearer " + rootToken()))
                 .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("home.filter_needs_exactly_one"))
                 .andExpect(jsonPath("$.message").value("Give exactly one of property, lot or vin"));
     }
 

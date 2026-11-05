@@ -208,7 +208,7 @@ public class PropertyService {
     private String generatePropertyCode(String propertyName, Set<String> usedCodes) {
         List<String> words = lettersByWord(propertyName);
         if (words.isEmpty()) {
-            throw new IllegalArgumentException("Property name must contain letters: " + propertyName);
+            throw InvalidRequest.onField("property_name", "property.name_needs_letters");
         }
         Set<String> taken = usedCodes.stream()
                 .map(code -> code.toUpperCase(Locale.ROOT))

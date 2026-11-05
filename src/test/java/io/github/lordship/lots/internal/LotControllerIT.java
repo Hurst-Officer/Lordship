@@ -184,7 +184,47 @@ public class LotControllerIT extends IntegrationTest {
                         .content("""
                                 { "titleLink": "javascript:alert(1)" }
                                 """))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("lot.link_not_a_url"))
+                .andExpect(jsonPath("$.field").value("title_link"));
+    }
+
+    @Test
+    void patchLot_shouldAnswerInSpanish_whenTheRequestAsksForIt() throws Exception {
+        // Glade sends Accept-Language: es when the worker picks ES in the bar
+        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+        UUID propertyId = testData.insertProperty("L008").uuid();
+        UUID lotId = testData.insertLot(propertyId, "9").uuid();
+
+        mockMvc.perform(patch("/api/lots/" + lotId)
+                        .header("Authorization", "Bearer " + token)
+                        .header("Accept-Language", "es")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "titleLink": "onedrive.example.com" }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("lot.link_not_a_url"))
+                .andExpect(jsonPath("$.message").value("title_link: Un enlace debe comenzar con http:// o https://"));
+    }
+
+    @Test
+    void setRentable_shouldAnswerInSpanish_whenTheReasonIsMissing() throws Exception {
+        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+        UUID propertyId = testData.insertProperty("L009").uuid();
+        UUID lotId = testData.insertLot(propertyId, "10").uuid();
+
+        mockMvc.perform(put("/api/lots/rentable")
+                        .header("Authorization", "Bearer " + token)
+                        .header("Accept-Language", "es")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "lotIds": ["%s"], "isRentable": false, "notRentableReason": " " }
+                                """.formatted(lotId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("lot.not_rentable_needs_reason"))
+                .andExpect(jsonPath("$.message").value(
+                        "not_rentable_reason: Un lote que no se puede rentar necesita una razón"));
     }
 
     @Test

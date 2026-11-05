@@ -13,7 +13,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -208,16 +207,6 @@ public class LotController {
                 : ResponseEntity.notFound().build();
     }
 
-    // Carries the message: "this property has no terms template for STORAGE" is
-    // the whole content of the refusal, and an empty 409 throws it away.
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("message", String.valueOf(e.getMessage())));
-    }
-
-    @ExceptionHandler(IllegalStateException.class)
-    ResponseEntity<Map<String, String>> conflict(IllegalStateException e) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("message", String.valueOf(e.getMessage())));
-    }
+    // No @ExceptionHandler here. A local one would win over ApiExceptionHandler and
+    // answer with the diagnostic code instead of the sentence in the worker's language.
 }

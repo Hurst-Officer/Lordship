@@ -4,6 +4,8 @@ import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.internal.*;
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.termstemplate.TermsTemplateService;
 import org.springframework.stereotype.Service;
@@ -80,7 +82,7 @@ public class LotService {
                     : before.notRentableReason();
             String reasonAfter = (supplied == null) ? null : supplied.toString();
             if (reasonAfter == null || reasonAfter.isBlank()) {
-                throw new IllegalArgumentException("notRentableReason is required when a lot is not rentable");
+                throw InvalidRequest.onField("not_rentable_reason", "lot.not_rentable_needs_reason");
             }
             changes.put("not_rentable_reason", reasonAfter);
         }
@@ -111,21 +113,21 @@ public class LotService {
     public int setRentable(Collection<UUID> lotIds, boolean isRentable, String reason) {
         String cleanReason = (reason == null) ? null : reason.strip();
         if (!isRentable && (cleanReason == null || cleanReason.isEmpty())) {
-            throw new IllegalArgumentException("notRentableReason is required when a lot is not rentable");
+            throw InvalidRequest.onField("not_rentable_reason", "lot.not_rentable_needs_reason");
         }
 
         int changed = 0;
         // a lot picked twice is saved once
         for (UUID lotId : new LinkedHashSet<>(lotIds)) {
             LotRow before = lotRepository.findById(lotId)
-                    .orElseThrow(() -> new IllegalArgumentException("Lot " + lotId + " does not exist"));
+                    .orElseThrow(() -> InvalidRequest.of("lot.unknown", lotId));
 
             Map<String, Object> changes = new HashMap<>();
             changes.put("is_rentable", isRentable);
             changes.put("not_rentable_reason", isRentable ? null : cleanReason);
 
             LotRow after = lotRepository.patch(lotId, changes)
-                    .orElseThrow(() -> new IllegalArgumentException("Lot " + lotId + " does not exist"));
+                    .orElseThrow(() -> InvalidRequest.of("lot.unknown", lotId));
 
             var diff = AuditMapper.diff(before, after);
             if (!diff.before().isEmpty()) {
@@ -203,14 +205,12 @@ public class LotService {
 
         TermsTemplate template = termsTemplateService
                 .findForProperty(lot.propertyId(), agreementType)
-                .orElseThrow(() -> new IllegalStateException(
-                        "This property has no terms template for " + agreementType
-                                + ", so no lot in it can host that kind of agreement"));
+                .orElseThrow(() -> RuleConflict.of("property.no_template", agreementType));
 
         BigDecimal target = (targetRate != null) ? targetRate : template.targetRate();
         BigDecimal asking = (askingRate != null) ? askingRate : template.askingRate();
-        requireNotNegative(target, "targetRate");
-        requireNotNegative(asking, "askingRate");
+        requireNotNegative(target, "target_rate");
+        requireNotNegative(asking, "asking_rate");
 
         savePermissible(lotUuid, agreementType, target, asking);
         return Optional.of(hydrate(lot));
@@ -251,10 +251,10 @@ public class LotService {
     public int setRates(Collection<UUID> lotIds, AgreementType agreementType,
                         BigDecimal targetRate, BigDecimal askingRate) {
         if (targetRate == null && askingRate == null) {
-            throw new IllegalArgumentException("Supply a targetRate, an askingRate, or both");
+            throw InvalidRequest.of("lot.rates_need_a_figure");
         }
-        requireNotNegative(targetRate, "targetRate");
-        requireNotNegative(askingRate, "askingRate");
+        requireNotNegative(targetRate, "target_rate");
+        requireNotNegative(askingRate, "asking_rate");
         if (lotIds.isEmpty()) {
             return 0;
         }
@@ -315,7 +315,7 @@ public class LotService {
             return null;
         }
         if (!(raw instanceof String text)) {
-            throw new IllegalArgumentException("titleLink must be text");
+            throw InvalidRequest.onField("title_link", "lot.link_not_a_url");
         }
         String link = text.trim();
         if (link.isEmpty()) {
@@ -323,14 +323,15 @@ public class LotService {
         }
         String lower = link.toLowerCase(Locale.ROOT);
         if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
-            throw new IllegalArgumentException("titleLink must start with http:// or https://");
+            throw InvalidRequest.onField("title_link", "lot.link_not_a_url");
         }
         return link;
     }
 
+    // field is the API's own name for the rate, like "target_rate"
     private static void requireNotNegative(BigDecimal rate, String field) {
         if (rate != null && rate.signum() < 0) {
-            throw new IllegalArgumentException(field + " cannot be negative");
+            throw InvalidRequest.onField(field, "lot.rate_negative");
         }
     }
 

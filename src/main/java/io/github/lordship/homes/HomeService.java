@@ -5,6 +5,7 @@ import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.homes.internal.HomeRepository;
 import io.github.lordship.homes.internal.HomeRow;
+import io.github.lordship.shared.InvalidRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,7 +51,7 @@ public class HomeService {
     @Transactional
     public Home createHome(UUID lotId) {
         HomeRow row = homeRepository.save(lotId, auditContext.getActingUserId())
-                .orElseThrow(() -> new IllegalArgumentException("No lot " + lotId));
+                .orElseThrow(() -> InvalidRequest.of("home.lot_unknown", lotId));
         auditService.recordInsert(TABLE, row.uuid(), AuditMapper.toMap(row));
         return row.toHome();
     }
@@ -164,8 +165,12 @@ public class HomeService {
         Object value = changes.get(key);
         if (value == null || value instanceof String s && s.isBlank()) {
             changes.put(key, null);
-        } else {
+            return;
+        }
+        try {
             changes.put(key, new BigDecimal(value.toString()));
+        } catch (NumberFormatException e) {
+            throw InvalidRequest.onField(key, "home.not_a_number");
         }
     }
 
@@ -178,7 +183,12 @@ public class HomeService {
             changes.put("condition", null);
             return;
         }
-        changes.put("condition", HomeCondition.valueOf(value.toString().trim().toUpperCase()).name());
+        String grade = value.toString().trim().toUpperCase();
+        try {
+            changes.put("condition", HomeCondition.valueOf(grade).name());
+        } catch (IllegalArgumentException e) {
+            throw InvalidRequest.onField("condition", "home.condition_unknown", value);
+        }
     }
 
     private static Integer readInt(Object value) {
