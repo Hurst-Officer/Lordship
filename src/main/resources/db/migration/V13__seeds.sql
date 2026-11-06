@@ -385,6 +385,7 @@ WHERE r.role_name = 'Property Manager'
                             'meterbills:view',
                             'meterbills:edit',
                             'instrument:view',
+                            'lots:view',
                             'homes:view',
                             'security_deposit:view'
     );

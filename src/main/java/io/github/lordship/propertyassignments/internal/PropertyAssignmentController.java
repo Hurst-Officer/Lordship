@@ -1,8 +1,6 @@
 package io.github.lordship.propertyassignments.internal;
 
-import io.github.lordship.audit.AuditContext;
 import io.github.lordship.identity.AgentPrincipal;
-import io.github.lordship.identity.LordshipPrincipal;
 import io.github.lordship.propertyassignments.PropertyAssignmentService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -13,6 +11,8 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
 
+// An agent can only assign or end assignments for properties in their own scope (see PropertyScope).
+// A property outside it is treated as if it did not exist: 404. So no one can widen their own access.
 @RestController
 @RequestMapping("/api/property-assignments")
 public class PropertyAssignmentController {
@@ -26,8 +26,12 @@ public class PropertyAssignmentController {
     @PreAuthorize("hasAuthority('assignments:assign')")
     @PostMapping("/assign")
     public ResponseEntity<PropertyAssignmentResponse> assignPropertyToAgent(@Valid @RequestBody PropertyAssignmentRequest req, Authentication authentication) {
-        if (!(authentication.getPrincipal() instanceof AgentPrincipal principal)){
-            return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
+        // only agents assign properties
+        if (!(authentication.getPrincipal() instanceof AgentPrincipal principal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        if (!principal.propertyScope().allows(req.propertyId())) {
+            return ResponseEntity.notFound().build();
         }
 
         PropertyAssignmentResponse response = PropertyAssignmentResponse.from(
@@ -38,7 +42,13 @@ public class PropertyAssignmentController {
 
     @PreAuthorize("hasAuthority('assignments:remove')")
     @DeleteMapping("/{uuid}")
-    public ResponseEntity<Void> removeAssignment(@PathVariable UUID uuid) {
+    public ResponseEntity<Void> removeAssignment(@PathVariable UUID uuid, Authentication authentication) {
+        if (!(authentication.getPrincipal() instanceof AgentPrincipal principal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        if (!propertyAssignmentService.inScope(uuid, principal.propertyScope())) {
+            return ResponseEntity.notFound().build();
+        }
         return propertyAssignmentService.endAssignment(uuid) ?
                 ResponseEntity.noContent().build() :
                 ResponseEntity.notFound().build();

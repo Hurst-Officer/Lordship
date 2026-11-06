@@ -1,5 +1,6 @@
 package io.github.lordship.presence.internal;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -7,11 +8,13 @@ import java.util.UUID;
  * place is where they are, like "properties/{propertyId}/lots/{lotId}".
  * field is the box they have selected, like "propertyZoning", or null.
  * typing is true while they are typing in that box.
+ * picks are the records they have picked on that screen, like lot ids. Empty when none.
  */
 public record PresentAgent(
         UUID agentId,
         String name,
         String place,
         String field,
-        boolean typing
+        boolean typing,
+        List<String> picks
 ) { }

@@ -5,6 +5,7 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.internal.*;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.PropertyScope;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.termstemplate.TermsTemplateService;
@@ -12,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -57,7 +59,8 @@ public class LotService {
 
     @Transactional
     public Optional<Lot> patchLot(UUID uuid, Map<String, Object> changes) {
-        Optional<LotRow> beforeOpt = lotRepository.findById(uuid);
+        // locked, so a coworker's save waits for this one and both are logged right
+        Optional<LotRow> beforeOpt = lotRepository.findByIdForUpdate(uuid);
         if (beforeOpt.isEmpty()) {
             return Optional.empty();
         }
@@ -119,7 +122,7 @@ public class LotService {
         int changed = 0;
         // a lot picked twice is saved once
         for (UUID lotId : new LinkedHashSet<>(lotIds)) {
-            LotRow before = lotRepository.findById(lotId)
+            LotRow before = lotRepository.findByIdForUpdate(lotId)
                     .orElseThrow(() -> InvalidRequest.of("lot.unknown", lotId));
 
             Map<String, Object> changes = new HashMap<>();
@@ -149,21 +152,129 @@ public class LotService {
         return lotRepository.saveShapeData(lotId, shape);
     }
 
+    // Refused while the lot has an active tenancy (409).
     @Transactional
     public boolean deleteLot(UUID uuid) {
-        return lotRepository.findById(uuid).map(existing -> {
-            if (!lotRepository.softDelete(uuid)) {
-                return false;
+        return lotRepository.findById(uuid).map(this::softDelete).orElse(false);
+    }
+
+    /**
+     * Deletes a selection of lots, picked on the map or in the list.
+     *
+     * <p>All or nothing: an unknown lot, or a lot with an active tenancy, deletes none of them.
+     * A lot a coworker already deleted is skipped. Returns how many were deleted.
+     */
+    @Transactional
+    public int deleteLots(Collection<UUID> lotIds) {
+        // First check every lot, so a refusal comes before anything is deleted.
+        // A lot picked twice is deleted once. A lot that is already deleted is skipped.
+        List<LotRow> toDelete = new ArrayList<>();
+        for (UUID lotId : new LinkedHashSet<>(lotIds)) {
+            LotRow existing = lotRepository.findAnyById(lotId)
+                    .orElseThrow(() -> InvalidRequest.of("lot.unknown", lotId));
+            if (existing.deletedAt() == null) {
+                refuseIfRented(existing);
+                toDelete.add(existing);
             }
-            // The permissible types stay: they describe what the space could
-            // host, which is still true of a lot nobody is renting today.
-            auditService.recordDelete("lot", uuid, AuditMapper.toMap(existing));
-            return true;
-        }).orElse(false);
+        }
+
+        int deleted = 0;
+        for (LotRow existing : toDelete) {
+            if (softDelete(existing)) {
+                deleted++;
+            }
+        }
+        return deleted;
+    }
+
+    private void refuseIfRented(LotRow lot) {
+        if (lotRepository.hasActiveTenancy(lot.uuid())) {
+            throw RuleConflict.of("lot.has_tenancy", lot.lotNumber());
+        }
+    }
+
+    // One lot that exists and is not deleted
+    private boolean softDelete(LotRow existing) {
+        refuseIfRented(existing);
+        if (!lotRepository.softDelete(existing.uuid())) {
+            return false;
+        }
+        // The permissible types stay: they describe what the space could
+        // host, which is still true of a lot nobody is renting today.
+        auditService.recordDelete("lot", existing.uuid(), AuditMapper.toMap(existing));
+        return true;
+    }
+
+    /**
+     * Brings deleted lots back, like an undo or the list of deleted lots.
+     *
+     * <p>All or nothing: an unknown lot, or a lot whose property is deleted, restores none of them.
+     * A lot that is not deleted is skipped. Returns how many were restored.
+     */
+    @Transactional
+    public int restoreLots(Collection<UUID> lotIds) {
+        // First check every lot, so a refusal comes before anything is restored.
+        // A lot that is not deleted is skipped.
+        List<LotRow> toRestore = new ArrayList<>();
+        for (UUID lotId : new LinkedHashSet<>(lotIds)) {
+            LotRow before = lotRepository.findAnyById(lotId)
+                    .orElseThrow(() -> InvalidRequest.of("lot.unknown", lotId));
+            if (before.deletedAt() == null) {
+                continue;
+            }
+            if (!lotRepository.isPropertyLive(before.propertyId())) {
+                throw RuleConflict.of("lot.property_deleted", before.lotNumber());
+            }
+            toRestore.add(before);
+        }
+
+        int restored = 0;
+        for (LotRow before : toRestore) {
+            UUID lotId = before.uuid();
+            Optional<LotRow> after = lotRepository.restore(lotId);
+            if (after.isPresent()) {
+                AuditMapper.Diff diff = AuditMapper.diff(before, after.get());
+                auditService.recordUpdate("lot", lotId, diff.before(), diff.after());
+                restored++;
+            }
+        }
+        return restored;
+    }
+
+    // A property's deleted lots, the most recently deleted first
+    public List<Lot> findDeletedByProperty(UUID propertyId) {
+        return hydrate(lotRepository.findDeletedByProperty(propertyId));
     }
 
     public Optional<Lot> findById(UUID uuid) {
         return lotRepository.findById(uuid).map(this::hydrate);
+    }
+
+    // ---- property scope -------------------------------------------------------
+    // An agent only sees the lots of properties they are assigned to (or all, with assignments:assign-all).
+    // A lot outside their scope is treated as if it did not exist.
+
+    // True when the lot, deleted or not, is in a property this scope may see.
+    // Always true with every property: an unknown lot then gets its usual not-found answer.
+    public boolean inScope(UUID lotId, PropertyScope scope) {
+        if (scope.isAll()) {
+            return true;
+        }
+        return lotRepository.findAnyById(lotId)
+                .map(lot -> scope.allows(lot.propertyId()))
+                .orElse(false);
+    }
+
+    // Refuses a selection with a lot outside the scope, the same way as an unknown lot
+    public void requireInScope(Collection<UUID> lotIds, PropertyScope scope) {
+        if (scope.isAll()) {
+            return;
+        }
+        for (UUID lotId : new LinkedHashSet<>(lotIds)) {
+            if (!inScope(lotId, scope)) {
+                throw InvalidRequest.of("lot.unknown", lotId);
+            }
+        }
     }
 
     public List<Lot> findByProperty(String propertyCode) {

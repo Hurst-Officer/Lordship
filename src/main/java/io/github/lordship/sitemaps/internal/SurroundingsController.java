@@ -1,5 +1,6 @@
 package io.github.lordship.sitemaps.internal;
 
+import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.properties.PropertyService;
 import io.github.lordship.sitemaps.internal.SurroundingsService.Status;
 import org.springframework.http.CacheControl;
@@ -7,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -19,6 +21,7 @@ import java.util.UUID;
 /**
  * A park's surroundings: roads, water, buildings, property lines and the height of the ground,
  * pulled from outside sources. Saving a map in the builder starts a pull on its own.
+ * A park outside the agent's scope (see PropertyScope) is treated as if it did not exist.
  */
 @RestController
 @RequestMapping("/api/sitemaps")
@@ -35,8 +38,9 @@ public class SurroundingsController {
     // What the last pull is doing or did. 404 when there is no such property.
     @PreAuthorize("hasAuthority('sitemaps:edit')")
     @GetMapping("/{propertyId}/surroundings")
-    public ResponseEntity<Status> status(@PathVariable UUID propertyId) {
-        if (propertyService.findByPropertyId(propertyId).isEmpty()) {
+    public ResponseEntity<Status> status(@PathVariable UUID propertyId, Authentication authentication) {
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)
+                || propertyService.findByPropertyId(propertyId).isEmpty()) {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(surroundingsService.status(propertyId));
@@ -46,8 +50,9 @@ public class SurroundingsController {
     // 409 when the park has no lots on the map yet. 404 when there is no such property.
     @PreAuthorize("hasAuthority('sitemaps:edit')")
     @PostMapping("/{propertyId}/surroundings")
-    public ResponseEntity<Status> refresh(@PathVariable UUID propertyId) {
-        if (propertyService.findByPropertyId(propertyId).isEmpty()) {
+    public ResponseEntity<Status> refresh(@PathVariable UUID propertyId, Authentication authentication) {
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)
+                || propertyService.findByPropertyId(propertyId).isEmpty()) {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(surroundingsService.refresh(propertyId));
@@ -57,7 +62,10 @@ public class SurroundingsController {
     // Kept by the browser and checked by its fingerprint before reuse, like the other map layers.
     @PreAuthorize("hasAuthority('properties:view')")
     @GetMapping(value = "/{propertyId}/hillshade.png", produces = MediaType.IMAGE_PNG_VALUE)
-    public ResponseEntity<byte[]> hillshade(@PathVariable UUID propertyId) {
+    public ResponseEntity<byte[]> hillshade(@PathVariable UUID propertyId, Authentication authentication) {
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
+            return ResponseEntity.notFound().build();
+        }
         return surroundingsService.hillshade(propertyId)
                 .map(png -> ResponseEntity.ok()
                         .cacheControl(CacheControl.noCache().cachePrivate())

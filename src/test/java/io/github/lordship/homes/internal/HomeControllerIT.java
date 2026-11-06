@@ -40,6 +40,19 @@ public class HomeControllerIT extends IntegrationTest {
         return testData.insertLot(propertyId, lotNumber).uuid();
     }
 
+    // Assigns an agent to a property, so a test agent without assignments:assign-all can see it
+    private void assign(String rootToken, UUID agentId, UUID propertyId) throws Exception {
+        mockMvc.perform(post("/api/property-assignments/assign")
+                        .header("Authorization", "Bearer " + rootToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "agentId": "%s", "propertyId": "%s" }
+                                """.formatted(agentId, propertyId)))
+                .andExpect(status().isCreated());
+        // the agent's scope is read again on their next request
+        authorizationCache.invalidateAll();
+    }
+
     private UUID createHome(String token, UUID lotId) throws Exception {
         String body = mockMvc.perform(post("/api/homes")
                         .header("Authorization", "Bearer " + token)
@@ -82,13 +95,15 @@ public class HomeControllerIT extends IntegrationTest {
 
     @Test
     void listHomes_shouldReturn200_whenAgentHoldsOnlyHomesView() throws Exception {
-        // Arrange
+        // Arrange: no assignments:assign-all, so the agent is assigned to the home's property instead
         String rootToken = rootToken();
-        UUID lotId = lotOn("HC02", "1");
+        UUID propertyId = testData.insertProperty("HC02").uuid();
+        UUID lotId = testData.insertLot(propertyId, "1").uuid();
         createHome(rootToken, lotId);
 
         TestAuthSupport.TestAgent agent = TestAuthSupport.agentWithPermissions(
                 mockMvc, objectMapper, rootToken, "homes:view");
+        assign(rootToken, agent.uuid(), propertyId);
 
         // Act & Assert
         mockMvc.perform(get("/api/homes")
@@ -96,6 +111,24 @@ public class HomeControllerIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + agent.token()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1));
+    }
+
+    @Test
+    void listHomes_shouldReturnEmpty_whenTheLotIsOutsideTheAgentsProperties() throws Exception {
+        // Arrange: the authority is there, but the agent is not assigned to this property
+        String rootToken = rootToken();
+        UUID lotId = lotOn("HC15", "1");
+        createHome(rootToken, lotId);
+
+        TestAuthSupport.TestAgent agent = TestAuthSupport.agentWithPermissions(
+                mockMvc, objectMapper, rootToken, "homes:view");
+
+        // Act & Assert: the homes are left out, as if the lot had none
+        mockMvc.perform(get("/api/homes")
+                        .param("lotId", lotId.toString())
+                        .header("Authorization", "Bearer " + agent.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 
     @Test

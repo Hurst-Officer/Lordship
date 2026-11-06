@@ -14,7 +14,7 @@ import java.util.UUID;
 
 /**
  * Who else is looking at the same screen, and which box they have selected.
- * Any signed-in agent may use it. Nothing is saved and nothing is audited.
+ * Any signed-in agent may use it; anyone else gets 403. Nothing is saved and nothing is audited.
  * Places under a property the agent is not assigned to are left out of what they hear.
  */
 @RestController
@@ -29,7 +29,7 @@ public class PresenceController {
 
     /**
      * The stream a window hears everyone else on (Server-Sent Events).
-     * Each "roster" event carries { agents: [{ agentId, name, place, field, typing }] }, the viewer left out.
+     * Each "roster" event carries { agents: [{ agentId, name, place, field, typing, picks }] }, the viewer left out.
      * A "saved" event { agentId, name, place, field, byYou } means someone saved something there (see /saved).
      * The first one arrives at once. A ":ping" comment comes every 15 seconds.
      * The stream closes after 10 minutes; open a new one with a fresh token.
@@ -38,6 +38,9 @@ public class PresenceController {
     @PreAuthorize("isAuthenticated()")
     @GetMapping(path = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<SseEmitter> stream(@RequestParam UUID client, Authentication authentication) {
+        if (!(authentication.getPrincipal() instanceof AgentPrincipal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         SseEmitter stream = hub.open(agent(authentication), client);
         if (stream == null) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
@@ -48,15 +51,18 @@ public class PresenceController {
     }
 
     /**
-     * Where the window is now. Send it when the place, the selected box or typing changes,
+     * Where the window is now. Send it when the place, the selected box, typing or the picks change,
      * and every 15 seconds besides. A window silent for 75 seconds is dropped.
      * 204, or 403 when the client id belongs to another agent.
      */
     @PreAuthorize("isAuthenticated()")
     @PostMapping
     public ResponseEntity<Void> update(@Valid @RequestBody PresenceUpdateRequest request, Authentication authentication) {
+        if (!(authentication.getPrincipal() instanceof AgentPrincipal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         boolean saved = hub.update(agent(authentication), request.client(),
-                request.place(), request.field(), request.typing());
+                request.place(), request.field(), request.typing(), request.picks());
         return saved
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.status(HttpStatus.FORBIDDEN).build();
@@ -70,6 +76,9 @@ public class PresenceController {
     @PreAuthorize("isAuthenticated()")
     @PostMapping("/saved")
     public ResponseEntity<Void> saved(@Valid @RequestBody PresenceSavedRequest request, Authentication authentication) {
+        if (!(authentication.getPrincipal() instanceof AgentPrincipal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         boolean sent = hub.saved(agent(authentication), request.client(), request.place(), request.field());
         return sent
                 ? ResponseEntity.noContent().build()
@@ -80,6 +89,9 @@ public class PresenceController {
     @PreAuthorize("isAuthenticated()")
     @DeleteMapping("/{client}")
     public ResponseEntity<Void> leave(@PathVariable UUID client, Authentication authentication) {
+        if (!(authentication.getPrincipal() instanceof AgentPrincipal)) {
+            return ResponseEntity.noContent().build();
+        }
         hub.leave(agent(authentication), client);
         return ResponseEntity.noContent().build();
     }

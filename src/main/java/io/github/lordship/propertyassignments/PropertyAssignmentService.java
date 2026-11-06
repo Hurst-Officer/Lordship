@@ -5,6 +5,7 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.identity.AgentAuthorizationCache;
 import io.github.lordship.propertyassignments.internal.PropertyAssignmentRepository;
 import io.github.lordship.propertyassignments.internal.PropertyAssignmentRow;
+import io.github.lordship.shared.PropertyScope;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +51,13 @@ public class PropertyAssignmentService {
             auditService.recordDelete("agent_property_assignment", assignmentId, AuditMapper.toMap(assignment));
             return true;
         }).orElse(false);
+    }
+
+    // True when the active assignment is to a property this scope may see. False for an unknown assignment.
+    public boolean inScope(UUID assignmentId, PropertyScope scope) {
+        return propertyAssignmentRepository.findById(assignmentId)
+                .map(assignment -> scope.allows(assignment.propertyId()))
+                .orElse(false);
     }
 
     public Set<UUID> getAgentAssignedPropertyUUIDs(UUID agentId) {

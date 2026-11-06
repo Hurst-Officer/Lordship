@@ -107,7 +107,7 @@ public class HomeServiceTest {
         UUID lotId = UUID.randomUUID();
         HomeRow before = row(uuid, "Mobile home on lot 4B", lotId, null);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
         when(homeRepository.findLotNumber(lotId)).thenReturn(Optional.of("4B"));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(row(uuid, "Double wide on lot 4B", lotId, 2)));
 
@@ -123,7 +123,7 @@ public class HomeServiceTest {
         UUID newLot = UUID.randomUUID();
         HomeRow before = row(uuid, "Double wide on lot 4B", oldLot, 2);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
         when(homeRepository.findLotNumber(oldLot)).thenReturn(Optional.of("4B"));
         when(homeRepository.findLotNumber(newLot)).thenReturn(Optional.of("9C"));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(row(uuid, "Double wide on lot 9C", newLot, 2)));
@@ -142,7 +142,7 @@ public class HomeServiceTest {
         UUID lotId = UUID.randomUUID();
         HomeRow before = row(uuid, "Blue one by the office", lotId, null);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
         when(homeRepository.findLotNumber(lotId)).thenReturn(Optional.of("4B"));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
 
@@ -157,7 +157,7 @@ public class HomeServiceTest {
         UUID lotId = UUID.randomUUID();
         HomeRow before = row(uuid, "Mobile home on lot 4B", lotId, null);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
 
         Map<String, Object> changes = new HashMap<>();
@@ -175,7 +175,7 @@ public class HomeServiceTest {
         UUID uuid = UUID.randomUUID();
         HomeRow before = row(uuid, "Mobile home on lot 4B", UUID.randomUUID(), null);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
 
         homeService.patchHome(uuid, new HashMap<>(Map.of("make", "Fleetwood")));
@@ -191,7 +191,7 @@ public class HomeServiceTest {
         UUID uuid = UUID.randomUUID();
         HomeRow before = row(uuid, "Mobile home", null, null);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
 
         // Jackson hands a Map<String,Object> body's 42500.75 over as a Double
@@ -208,7 +208,7 @@ public class HomeServiceTest {
         UUID lotId = UUID.randomUUID();
         HomeRow before = row(uuid, "Blue one", lotId, null);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
 
         Map<String, Object> changes = new HashMap<>();
@@ -224,7 +224,7 @@ public class HomeServiceTest {
         UUID uuid = UUID.randomUUID();
         HomeRow before = row(uuid, "Blue one", null, null);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(before));
 
         homeService.patchHome(uuid, new HashMap<>(Map.of("condition", " good ")));
@@ -236,7 +236,7 @@ public class HomeServiceTest {
     void patchHome_rejectsAnUnknownCondition_beforeItReachesTheDatabase() {
         UUID uuid = UUID.randomUUID();
         HomeRow before = row(uuid, "Blue one", null, null);
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
 
         assertThrows(IllegalArgumentException.class, () ->
                 homeService.patchHome(uuid, new HashMap<>(Map.of("condition", "MEDIOCRE"))));
@@ -253,7 +253,7 @@ public class HomeServiceTest {
         HomeRow before = row(uuid, "Blue one", null, null);
         HomeRow after = row(uuid, "Blue one", null, 2);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(before));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(before));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(after));
 
         homeService.patchHome(uuid, new HashMap<>(Map.of("sections", 2)));
@@ -266,7 +266,7 @@ public class HomeServiceTest {
         UUID uuid = UUID.randomUUID();
         HomeRow unchanged = row(uuid, "Blue one", null, 2);
 
-        when(homeRepository.findById(uuid)).thenReturn(Optional.of(unchanged));
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.of(unchanged));
         when(homeRepository.patch(eq(uuid), any())).thenReturn(Optional.of(unchanged));
 
         homeService.patchHome(uuid, new HashMap<>(Map.of("sections", 2)));
@@ -277,7 +277,7 @@ public class HomeServiceTest {
     @Test
     void patchHome_returnsEmpty_andTouchesNothing_whenTheHomeIsNotThere() {
         UUID uuid = UUID.randomUUID();
-        when(homeRepository.findById(uuid)).thenReturn(Optional.empty());
+        when(homeRepository.findByIdForUpdate(uuid)).thenReturn(Optional.empty());
 
         assertTrue(homeService.patchHome(uuid, new HashMap<>(Map.of("sections", 2))).isEmpty());
 

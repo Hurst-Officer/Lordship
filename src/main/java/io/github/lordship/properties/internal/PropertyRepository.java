@@ -30,7 +30,7 @@ public class PropertyRepository {
     // and this is the SQL that turns that text into the column's type.
     // A JSON null becomes an empty list or map, since the columns are NOT NULL.
     private static final Map<String, String> JSON_COLUMN_SQL = Map.of(
-            "custom_fields", "CAST(:custom_fields AS jsonb)",
+            "custom_fields", "COALESCE(NULLIF(CAST(:custom_fields AS jsonb), 'null'::jsonb), '{}'::jsonb)",
             "field_links", "COALESCE(NULLIF(CAST(:field_links AS jsonb), 'null'::jsonb), '{}'::jsonb)",
             "field_notes", "COALESCE(NULLIF(CAST(:field_notes AS jsonb), 'null'::jsonb), '{}'::jsonb)",
             "business_numbers", "COALESCE(NULLIF(CAST(:business_numbers AS jsonb), 'null'::jsonb), '[]'::jsonb)",
@@ -68,6 +68,15 @@ public class PropertyRepository {
 
     public Optional<PropertyRow> findById(UUID propertyId) {
         return jdbc.sql("SELECT * FROM property WHERE uuid = :propertyId AND deleted_at IS NULL")
+                .param("propertyId", propertyId)
+                .query(rowMapper)
+                .optional();
+    }
+
+    // The same, and the row stays locked until the transaction ends.
+    // A save reads its "before" this way, so two saves at once cannot both log the same before.
+    public Optional<PropertyRow> findByIdForUpdate(UUID propertyId) {
+        return jdbc.sql("SELECT * FROM property WHERE uuid = :propertyId AND deleted_at IS NULL FOR UPDATE")
                 .param("propertyId", propertyId)
                 .query(rowMapper)
                 .optional();
@@ -138,12 +147,12 @@ public class PropertyRepository {
                 .optional();
     }
 
+    // Deleted properties keep their codes, so a restore never collides with a newer property
     public Set<String> findUsedPropertyCodes() {
         return jdbc.sql("""
             SELECT property_code
             FROM property
             WHERE property_code IS NOT NULL
-              AND deleted_at IS NULL
             """)
                 .query(String.class)
                 .set();
@@ -154,5 +163,74 @@ public class PropertyRepository {
                 .param("uuid", uuid)
                 .update();
         return rows > 0;
+    }
+
+    // A property whether it is deleted or not
+    public Optional<PropertyRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM property WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    // Deleted properties, the most recently deleted first
+    public List<PropertyRow> findDeleted() {
+        return jdbc.sql("SELECT * FROM property WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, uuid")
+                .query(rowMapper)
+                .list();
+    }
+
+    // Whether a live property uses this code, in any letter case
+    public boolean isCodeInUse(String propertyCode) {
+        return jdbc.sql("""
+                SELECT EXISTS (
+                    SELECT 1 FROM property
+                    WHERE LOWER(property_code) = LOWER(:propertyCode)
+                      AND deleted_at IS NULL
+                )
+                """)
+                .param("propertyCode", propertyCode)
+                .query(Boolean.class)
+                .single();
+    }
+
+    // Whether another property, live or deleted, has this code in any letter case
+    public boolean isCodeUsedByAnother(String propertyCode, UUID except) {
+        return jdbc.sql("""
+                SELECT EXISTS (
+                    SELECT 1 FROM property
+                    WHERE LOWER(property_code) = LOWER(:propertyCode)
+                      AND uuid <> :except
+                )
+                """)
+                .param("propertyCode", propertyCode)
+                .param("except", except)
+                .query(Boolean.class)
+                .single();
+    }
+
+    // sql: a tenancy is active while it has no end_date (see idx_tenancy_lot_active in V7).
+    // Only tenancies on the property's live lots count.
+    public int countActiveTenancies(UUID propertyId) {
+        return jdbc.sql("""
+                SELECT count(*)::int
+                FROM tenancy t
+                JOIN lot l ON l.uuid = t.lot_id
+                WHERE l.property_id = :propertyId
+                  AND l.deleted_at IS NULL
+                  AND t.end_date IS NULL
+                  AND t.deleted_at IS NULL
+                """)
+                .param("propertyId", propertyId)
+                .query(Integer.class)
+                .single();
+    }
+
+    // Brings a deleted property back. Empty when it was not deleted.
+    public Optional<PropertyRow> restore(UUID uuid) {
+        return jdbc.sql("UPDATE property SET deleted_at = NULL WHERE uuid = :uuid AND deleted_at IS NOT NULL RETURNING *")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
     }
 }

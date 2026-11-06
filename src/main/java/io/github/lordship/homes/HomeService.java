@@ -6,6 +6,8 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.homes.internal.HomeRepository;
 import io.github.lordship.homes.internal.HomeRow;
 import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.PropertyScope;
+import io.github.lordship.shared.RuleConflict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -72,10 +74,43 @@ public class HomeService {
         return homeRepository.findByVin(vin).stream().map(HomeRow::toHome).toList();
     }
 
+    // ---- property scope -------------------------------------------------------
+    // An agent only sees the homes in properties they are assigned to (or all, with assignments:assign-all).
+    // A home is in a property through its lot. A home on no lot is only seen with every property.
+
+    // True when the home, deleted or not, is in a property this scope may see.
+    // Always true with every property: an unknown home then gets its usual not-found answer.
+    public boolean inScope(UUID homeId, PropertyScope scope) {
+        if (scope.isAll()) {
+            return true;
+        }
+        return homeRepository.findAnyById(homeId)
+                .map(home -> home.lotId() == null ? scope.isAll() : lotInScope(home.lotId(), scope))
+                .orElse(false);
+    }
+
+    // True when the lot, deleted or not, is in a property this scope may see
+    public boolean lotInScope(UUID lotId, PropertyScope scope) {
+        return scope.isAll() || homeRepository.findPropertyIdOfLot(lotId).map(scope::allows).orElse(false);
+    }
+
+    // True when the property with this code is one this scope may see
+    public boolean propertyCodeInScope(String propertyCode, PropertyScope scope) {
+        return scope.isAll() || homeRepository.findPropertyIdByCode(propertyCode).map(scope::allows).orElse(false);
+    }
+
+    // The homes with this VIN that this scope may see
+    public List<Home> findByVin(String vin, PropertyScope scope) {
+        return findByVin(vin).stream()
+                .filter(home -> home.lotId() == null ? scope.isAll() : lotInScope(home.lotId(), scope))
+                .toList();
+    }
+
     @Transactional
     public Optional<Home> patchHome(UUID uuid, Map<String, Object> changes) {
 
-        Optional<HomeRow> homeBeforeOpt = homeRepository.findById(uuid);
+        // locked, so a coworker's save waits for this one and both are logged right
+        Optional<HomeRow> homeBeforeOpt = homeRepository.findByIdForUpdate(uuid);
         if (homeBeforeOpt.isEmpty()) {
             return Optional.empty();
         }
@@ -106,6 +141,40 @@ public class HomeService {
             auditService.recordDelete(TABLE, uuid, AuditMapper.toMap(home));
             return true;
         }).orElse(false);
+    }
+
+    // Brings a deleted home back, with its secured parties (they were never touched).
+    // A home that is not deleted is returned as it is. Empty when there is no such home.
+    // Refused while the home's lot is deleted (409).
+    @Transactional
+    public Optional<Home> restoreHome(UUID uuid) {
+        Optional<HomeRow> found = homeRepository.findAnyById(uuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        HomeRow before = found.get();
+        if (before.deletedAt() == null) {
+            return Optional.of(before.toHome());
+        }
+        if (before.lotId() != null && !homeRepository.isLotLive(before.lotId())) {
+            throw RuleConflict.of("home.lot_deleted");
+        }
+
+        Optional<HomeRow> after = homeRepository.restore(uuid);
+        after.ifPresent(row -> {
+            var diff = AuditMapper.diff(before, row);
+            auditService.recordUpdate(TABLE, uuid, diff.before(), diff.after());
+        });
+        // a coworker restored it a moment earlier
+        if (after.isEmpty()) {
+            return findById(uuid);
+        }
+        return after.map(HomeRow::toHome);
+    }
+
+    // A lot's deleted homes, the most recently deleted first
+    public List<Home> findDeletedByLot(UUID lotId) {
+        return homeRepository.findDeletedByLot(lotId).stream().map(HomeRow::toHome).toList();
     }
 
     // Keeps the generated name in step with the two fields it is built from, but only

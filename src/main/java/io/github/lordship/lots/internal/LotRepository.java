@@ -55,6 +55,15 @@ public class LotRepository {
                 .optional();
     }
 
+    // The same, and the row stays locked until the transaction ends.
+    // A save reads its "before" this way, so two saves at once cannot both log the same before.
+    public Optional<LotRow> findByIdForUpdate(UUID uuid) {
+        return jdbc.sql("SELECT * FROM lot WHERE uuid = :uuid AND deleted_at IS NULL FOR UPDATE")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
     public Optional<LotRow> patch(UUID uuid, Map<String, Object> changes) {
         if (changes.isEmpty()) return findById(uuid);
 
@@ -122,5 +131,56 @@ public class LotRepository {
         return jdbc.sql("UPDATE lot SET deleted_at = CURRENT_TIMESTAMP WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)
                 .update() > 0;
+    }
+
+    // A lot whether it is deleted or not
+    public Optional<LotRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM lot WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    // A property's deleted lots, the most recently deleted first
+    public List<LotRow> findDeletedByProperty(UUID propertyId) {
+        return jdbc.sql("""
+            SELECT * FROM lot
+            WHERE property_id = :propertyId
+              AND deleted_at IS NOT NULL
+            ORDER BY deleted_at DESC, lot_number
+            """)
+                .param("propertyId", propertyId)
+                .query(rowMapper)
+                .list();
+    }
+
+    // Brings a deleted lot back. Empty when it was not deleted.
+    public Optional<LotRow> restore(UUID uuid) {
+        return jdbc.sql("UPDATE lot SET deleted_at = NULL WHERE uuid = :uuid AND deleted_at IS NOT NULL RETURNING *")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    // sql: a tenancy is active while it has no end_date (see idx_tenancy_lot_active in V7)
+    public boolean hasActiveTenancy(UUID lotId) {
+        return jdbc.sql("""
+            SELECT EXISTS (
+                SELECT 1 FROM tenancy
+                WHERE lot_id = :lotId
+                  AND end_date IS NULL
+                  AND deleted_at IS NULL
+            )
+            """)
+                .param("lotId", lotId)
+                .query(Boolean.class)
+                .single();
+    }
+
+    public boolean isPropertyLive(UUID propertyId) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM property WHERE uuid = :propertyId AND deleted_at IS NULL)")
+                .param("propertyId", propertyId)
+                .query(Boolean.class)
+                .single();
     }
 }
