@@ -52,6 +52,9 @@ public class PresenceHub {
 
     static final int MAX_TEXT = 200;
 
+    // A window reports at most this many picks. A whole park is a few hundred lots.
+    static final int MAX_PICKS = 2000;
+
     private final PersonService personService;
 
     // Each check-in puts the window again, which restarts its time.
@@ -92,10 +95,11 @@ public class PresenceHub {
     }
 
     /**
-     * Records where a window is and which box it has selected.
+     * Records where a window is, which box it has selected, and what it has picked there.
      * False when the window id belongs to another agent.
      */
-    public boolean update(AgentPrincipal who, UUID client, String place, String field, boolean typing) {
+    public boolean update(AgentPrincipal who, UUID client, String place, String field, boolean typing,
+                          List<String> picks) {
         Window window = windowFor(who, client);
         if (window == null) {
             return false;
@@ -105,16 +109,20 @@ public class PresenceHub {
         // a box only counts inside a place, and typing only inside a box
         String cleanField = cleanPlace == null ? null : clean(field);
         boolean cleanTyping = cleanField != null && typing;
+        // picks only count inside a place
+        List<String> cleanPicks = cleanPlace == null ? List.of() : cleanList(picks);
 
         boolean changed;
         synchronized (window) {
             window.scope = who.propertyScope();
             changed = !Objects.equals(window.place, cleanPlace)
                     || !Objects.equals(window.field, cleanField)
-                    || window.typing != cleanTyping;
+                    || window.typing != cleanTyping
+                    || !window.picks.equals(cleanPicks);
             window.place = cleanPlace;
             window.field = cleanField;
             window.typing = cleanTyping;
+            window.picks = cleanPicks;
         }
         // restarts the window's time
         cache.put(client, window);
@@ -282,7 +290,8 @@ public class PresenceHub {
             }
             synchronized (other) {
                 if (other.place != null && visibleTo(scope, other.place)) {
-                    agents.add(new PresentAgent(other.agentId, other.name, other.place, other.field, other.typing));
+                    agents.add(new PresentAgent(other.agentId, other.name, other.place, other.field, other.typing,
+                            other.picks));
                 }
             }
         }
@@ -393,6 +402,19 @@ public class PresenceHub {
         return trimmed.length() > MAX_TEXT ? trimmed.substring(0, MAX_TEXT) : trimmed;
     }
 
+    // Each pick cleaned like any text, blanks and repeats dropped, and the list cut at MAX_PICKS
+    static List<String> cleanList(List<String> texts) {
+        if (texts == null || texts.isEmpty()) {
+            return List.of();
+        }
+        return texts.stream()
+                .map(PresenceHub::clean)
+                .filter(Objects::nonNull)
+                .distinct()
+                .limit(MAX_PICKS)
+                .toList();
+    }
+
     // One Glade window. Everything after name can change, so it is read and written while holding the window.
     // The lock is only held for these fields, never while writing to the stream.
     static final class Window {
@@ -402,6 +424,7 @@ public class PresenceHub {
         String place;
         String field;
         boolean typing;
+        List<String> picks = List.of();
         SseEmitter stream;
 
         Window(UUID agentId, String name, PropertyScope scope) {

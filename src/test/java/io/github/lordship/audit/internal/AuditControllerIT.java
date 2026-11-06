@@ -42,7 +42,7 @@ public class AuditControllerIT extends IntegrationTest {
     ObjectMapper objectMapper;
 
     @Test
-    void shouldReturnMaskedAuditLog_WhenNewAgentChangesPersonInfo() throws Exception {
+    void shouldReturnAuditLog_WhenNewAgentChangesPersonInfo() throws Exception {
         // Arrange
         String rootAuthToken = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
         String registerAgentBody = """
@@ -183,9 +183,19 @@ public class AuditControllerIT extends IntegrationTest {
                 .andExpect(jsonPath("$.personalPhone").value(nullValue()))
                 .andReturn();
 
+        // Jimmy is a property manager, limited to his assigned properties, so he cannot read the
+        // log of everything an agent did. Root, who sees every property, reads it instead.
+        mockMvc.perform(get("/api/auditlogs/byagent/" + jimmyUUID)
+                        .header("Authorization", "Bearer " + jimmyToken)
+                        .param("page", "0")
+                        .param("pageSize", "10")
+                        .param("sortBy", "changed_at")
+                        .param("ascending", "true"))
+                .andExpect(status().isForbidden());
+
         // Act
         MvcResult getLogsResult = mockMvc.perform(get("/api/auditlogs/byagent/" + jimmyUUID)
-                        .header("Authorization", "Bearer " + jimmyToken)
+                        .header("Authorization", "Bearer " + rootAuthToken)
                         .param("page", "0")
                         .param("pageSize", "10")
                         .param("sortBy", "changed_at")
@@ -210,10 +220,11 @@ public class AuditControllerIT extends IntegrationTest {
         assertEquals("{\"birthday\":null}", logs.get(1).get("valueBefore"));
         assertEquals("{\"birthday\":\"1990-05-12\"}", logs.get(1).get("valueAfter"));
 
-        // Update social (masked)
+        // Update social. Root has persons_ssn:view, so root sees the whole number.
+        // Masking for a reader without it is tested in AuditLogResponseTest.
         assertEquals("UPDATE", logs.get(2).get("operation"));
         assertEquals("{\"social\":null}", logs.get(2).get("valueBefore"));
-        assertEquals("{\"social\":\"***-**-6371\"}", logs.get(2).get("valueAfter"));
+        assertEquals("{\"social\":\"547-25-6371\"}", logs.get(2).get("valueAfter"));
 
     // UPDATE personalEmail + personalPhone
         assertEquals("UPDATE", logs.get(3).get("operation"));

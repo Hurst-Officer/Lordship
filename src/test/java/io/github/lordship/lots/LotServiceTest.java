@@ -327,8 +327,8 @@ public class LotServiceTest {
         UUID propertyId = UUID.randomUUID();
         LotRow lotA = stubRow(propertyId);
         LotRow lotB = withRentable(stubRow(propertyId), false, "Needs sewer upgrade");
-        when(lotRepository.findById(lotA.uuid())).thenReturn(Optional.of(lotA));
-        when(lotRepository.findById(lotB.uuid())).thenReturn(Optional.of(lotB));
+        when(lotRepository.findByIdForUpdate(lotA.uuid())).thenReturn(Optional.of(lotA));
+        when(lotRepository.findByIdForUpdate(lotB.uuid())).thenReturn(Optional.of(lotB));
         when(lotRepository.patch(eq(lotA.uuid()), any()))
                 .thenReturn(Optional.of(withRentable(lotA, false, "Needs sewer upgrade")));
         when(lotRepository.patch(eq(lotB.uuid()), any())).thenReturn(Optional.of(lotB));
@@ -354,7 +354,7 @@ public class LotServiceTest {
     void setRentable_shouldReplaceAnOldReason() {
         // Arrange
         LotRow before = withRentable(stubRow(UUID.randomUUID()), false, "Burned down");
-        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.findByIdForUpdate(before.uuid())).thenReturn(Optional.of(before));
         when(lotRepository.patch(eq(before.uuid()), any()))
                 .thenReturn(Optional.of(withRentable(before, false, "Needs sewer upgrade")));
 
@@ -372,7 +372,7 @@ public class LotServiceTest {
     void setRentable_shouldClearTheReasons_whenTheLotsAreRentableAgain() {
         // Arrange
         LotRow before = withRentable(stubRow(UUID.randomUUID()), false, "Needs sewer upgrade");
-        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.findByIdForUpdate(before.uuid())).thenReturn(Optional.of(before));
         when(lotRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(withRentable(before, true, null)));
 
         // Act -- a reason sent along with rentable is ignored
@@ -389,7 +389,7 @@ public class LotServiceTest {
     void setRentable_shouldThrow_whenALotIsUnknown() {
         // The transaction rolls back, so the lots already saved are undone too
         UUID unknown = UUID.randomUUID();
-        when(lotRepository.findById(unknown)).thenReturn(Optional.empty());
+        when(lotRepository.findByIdForUpdate(unknown)).thenReturn(Optional.empty());
 
         assertThrows(IllegalArgumentException.class, () -> lotService.setRentable(
                 List.of(unknown), false, "Needs sewer upgrade"));
@@ -454,7 +454,7 @@ public class LotServiceTest {
                 "14", before.titleLink(), before.lotAddress(), "3005051", before.description(), before.notes(), before.sortOrder(),
                 before.shapeData(), before.createdAt(), null
         );
-        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.findByIdForUpdate(before.uuid())).thenReturn(Optional.of(before));
         when(lotRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(after));
 
         List<LotPermissibleAgreementTypeRow> agreementTypes =
@@ -496,7 +496,7 @@ public class LotServiceTest {
                 before.lotNumber(), before.titleLink(), before.lotAddress(), before.lotParcel(), before.description(), before.notes(),
                 before.sortOrder(), before.shapeData(), before.createdAt(), before.deletedAt()
         );
-        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.findByIdForUpdate(before.uuid())).thenReturn(Optional.of(before));
         when(lotRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(after));
         when(lotPermissibleAgreementTypeRepository.findByLotId(before.uuid())).thenReturn(List.of());
 
@@ -514,7 +514,7 @@ public class LotServiceTest {
     void patchLot_shouldReturnEmpty_andNotRecordAudit_whenNotExists() {
         // Arrange
         UUID unknownUuid = UUID.randomUUID();
-        when(lotRepository.findById(unknownUuid)).thenReturn(Optional.empty());
+        when(lotRepository.findByIdForUpdate(unknownUuid)).thenReturn(Optional.empty());
 
         Map<String, Object> changes = new HashMap<>();
         changes.put("lot_number", "14");
@@ -535,7 +535,7 @@ public class LotServiceTest {
     @SuppressWarnings({"unchecked", "rawtypes"})
     void patchLot_shouldTrimTheTitleLink_beforeSavingIt() {
         LotRow before = stubRow(UUID.randomUUID());
-        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.findByIdForUpdate(before.uuid())).thenReturn(Optional.of(before));
         when(lotRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
         when(lotPermissibleAgreementTypeRepository.findByLotId(before.uuid())).thenReturn(List.of());
         ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass((Class) Map.class);
@@ -552,7 +552,7 @@ public class LotServiceTest {
     @SuppressWarnings({"unchecked", "rawtypes"})
     void patchLot_shouldClearTheTitleLink_whenItIsBlank() {
         LotRow before = stubRow(UUID.randomUUID());
-        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.findByIdForUpdate(before.uuid())).thenReturn(Optional.of(before));
         when(lotRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
         when(lotPermissibleAgreementTypeRepository.findByLotId(before.uuid())).thenReturn(List.of());
         ArgumentCaptor<Map<String, Object>> sent = ArgumentCaptor.forClass((Class) Map.class);
@@ -569,7 +569,7 @@ public class LotServiceTest {
     @Test
     void patchLot_shouldRefuseATitleLinkThatIsNotHttp_andSaveNothing() {
         LotRow before = stubRow(UUID.randomUUID());
-        when(lotRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(lotRepository.findByIdForUpdate(before.uuid())).thenReturn(Optional.of(before));
 
         for (String url : List.of("ftp://example.gov", "example.gov", "javascript:alert(1)")) {
             Map<String, Object> changes = new HashMap<>();

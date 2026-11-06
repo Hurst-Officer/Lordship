@@ -117,17 +117,24 @@ public class PropertyRepositoryTest {
                 propertyRepository.save("Other Park", "1 Other St", "Testville", "WA", "98000", "tp"));
     }
 
+    // A deleted property keeps its code, so restoring it can never collide with a newer property
     @Test
-    void save_letsANewPropertyReuseTheCodeOfADeletedOne() {
+    void save_rejectsTheCodeOfADeletedProperty() {
         // Arrange
         PropertyRow first = saveTestProperty();
         propertyRepository.softDelete(first.uuid());
 
-        // Act
-        PropertyRow second = propertyRepository.save("Other Park", "1 Other St", "Testville", "WA", "98000", "TP");
+        // Act and Assert
+        assertThrows(DataIntegrityViolationException.class, () ->
+                propertyRepository.save("Other Park", "1 Other St", "Testville", "WA", "98000", "tp"));
+    }
 
-        // Assert
-        assertEquals("TP", second.propertyCode());
+    @Test
+    void findUsedPropertyCodes_includesDeletedProperties() {
+        PropertyRow first = saveTestProperty();
+        propertyRepository.softDelete(first.uuid());
+
+        assertTrue(propertyRepository.findUsedPropertyCodes().contains("TP"));
     }
 
     @Test

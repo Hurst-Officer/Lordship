@@ -94,13 +94,15 @@ public class AuditRepository {
                 .query(Long.class)
                 .single();
 
+        // Rows written in one transaction share a time, so the id (a uuidv7, in time order) breaks ties.
+        // Without it, rows with the same time come back in any order, and paging could skip or repeat a row.
         List<AuditLogRow> content = jdbc.sql("""
                     SELECT * FROM audit_log
                     WHERE user_id = :agentId
                     AND user_type = 'AGENT'
-                    ORDER BY %s %s
+                    ORDER BY %s %s, uuid %s
                     LIMIT :limit OFFSET :offset
-                    """.formatted(pageRequest.sortBy(), direction))
+                    """.formatted(pageRequest.sortBy(), direction, direction))
                 .param("agentId", agentId)
                 .param("limit", pageRequest.pageSize())
                 .param("offset", pageRequest.offset())
@@ -176,7 +178,31 @@ public class AuditRepository {
                      WHERE a.table_name = :table
                        AND a.record_id IN (:ids)
                        AND a.operation = 'INSERT'
-                     ORDER BY a.record_id, a.changed_at
+                     ORDER BY a.record_id, a.changed_at, a.uuid
+                    """)
+                .param("table", table)
+                .param("ids", recordIds)
+                .query(HistoryRows.MarkRow.class)
+                .list();
+    }
+
+    // Who deleted each record most recently, and when. A record with no delete row is left out.
+    public List<HistoryRows.MarkRow> findDeleted(String table, Collection<String> recordIds) {
+        if (recordIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                    SELECT DISTINCT ON (a.record_id)
+                           a.record_id,
+                           a.changed_at,
+                           COALESCE(p.name_full, 'The server') AS name
+                      FROM audit_log a
+                      LEFT JOIN agent ag ON ag.uuid = a.user_id
+                      LEFT JOIN person p ON p.uuid = ag.person_id
+                     WHERE a.table_name = :table
+                       AND a.record_id IN (:ids)
+                       AND a.operation = 'DELETE'
+                     ORDER BY a.record_id, a.changed_at DESC, a.uuid DESC
                     """)
                 .param("table", table)
                 .param("ids", recordIds)
@@ -198,7 +224,7 @@ public class AuditRepository {
                       LEFT JOIN person p ON p.uuid = ag.person_id
                      WHERE a.table_name = :table
                        AND a.record_id IN (:ids)
-                     ORDER BY a.changed_at DESC
+                     ORDER BY a.changed_at DESC, a.uuid DESC
                      LIMIT 1
                     """)
                 .param("table", table)
@@ -209,6 +235,8 @@ public class AuditRepository {
 
     /**
      * One record's rows that touch any of the given fields, newest first.
+     * Rows written in one save share a time, so the id (a uuidv7, in time order) breaks ties.
+     * Without it, paging could skip or repeat a row.
      * Each field is [name] or [map field, entry], like ["customFields", "Septic"].
      * day, when not null, keeps one day in the viewer's time zone.
      */
@@ -261,7 +289,7 @@ public class AuditRepository {
                        AND a.record_id = :id
                        AND (%s)
                        %s
-                     ORDER BY a.changed_at DESC
+                     ORDER BY a.changed_at DESC, a.uuid DESC
                      LIMIT :limit OFFSET :offset
                     """.formatted(touches, onDay))
                 .params(params)

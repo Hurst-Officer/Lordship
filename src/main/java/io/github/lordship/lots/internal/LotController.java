@@ -1,8 +1,12 @@
 package io.github.lordship.lots.internal;
 
+import io.github.lordship.audit.AuditService;
+import io.github.lordship.audit.History;
+import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.PropertyScope;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
@@ -12,6 +16,7 @@ import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -29,11 +34,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+// A lot in a property outside the agent's scope (see PropertyScope) is treated as if it did not exist:
+// 404 for that lot, left out of lists, and lot.unknown (400) inside a selection.
 @RestController
 @RequestMapping("/api/lots")
 public class LotController {
 
     private final LotService lotService;
+    private final AuditService auditService;
 
     public record LotCreationRequest(
             @NotNull
@@ -86,13 +94,27 @@ public class LotController {
 
     public record SetRentableResult(int updated) { }
 
-    public LotController(LotService lotService) {
+    // A selection of lots to delete or restore
+    public record LotIdsRequest(
+            @NotEmpty
+            @Size(max = 2000)
+            List<UUID> lotIds
+    ) { }
+
+    public record LotCountResult(int updated) { }
+
+    public LotController(LotService lotService, AuditService auditService) {
         this.lotService = lotService;
+        this.auditService = auditService;
     }
 
     @PreAuthorize("hasAuthority('lots:create')")
     @PostMapping
-    public ResponseEntity<LotResponse> createLot(@Valid @RequestBody LotCreationRequest request) {
+    public ResponseEntity<LotResponse> createLot(@Valid @RequestBody LotCreationRequest request,
+                                                 Authentication authentication) {
+        if (!AgentPrincipal.scopeOf(authentication).allows(request.propertyId)) {
+            return ResponseEntity.notFound().build();
+        }
         Lot lot = lotService.createLot(request.propertyId, request.lotNumber);
         return ResponseEntity.status(HttpStatus.CREATED).body(LotResponse.from(lot));
     }
@@ -104,18 +126,26 @@ public class LotController {
     @GetMapping
     public ResponseEntity<List<LotResponse>> listByProperty(
             @RequestParam("propertyCode") String propertyCode,
-            @RequestParam(value = "agreementType", required = false) AgreementType agreementType) {
+            @RequestParam(value = "agreementType", required = false) AgreementType agreementType,
+            Authentication authentication) {
 
         List<Lot> found = (agreementType == null)
                 ? lotService.findByProperty(propertyCode)
                 : lotService.findByPropertyPermitting(propertyCode, agreementType);
 
-        return ResponseEntity.ok(found.stream().map(LotResponse::from).toList());
+        PropertyScope scope = AgentPrincipal.scopeOf(authentication);
+        return ResponseEntity.ok(found.stream()
+                .filter(lot -> scope.allows(lot.propertyId()))
+                .map(LotResponse::from)
+                .toList());
     }
 
     @PreAuthorize("hasAuthority('lots:view')")
     @GetMapping("/{uuid}")
-    public ResponseEntity<LotResponse> getLot(@PathVariable UUID uuid) {
+    public ResponseEntity<LotResponse> getLot(@PathVariable UUID uuid, Authentication authentication) {
+        if (!lotService.inScope(uuid, AgentPrincipal.scopeOf(authentication))) {
+            return ResponseEntity.notFound().build();
+        }
         return lotService.findById(uuid)
                 .map(LotResponse::from)
                 .map(ResponseEntity::ok)
@@ -126,7 +156,12 @@ public class LotController {
     @PatchMapping("/{uuid}")
     public ResponseEntity<LotResponse> patchLot(
             @PathVariable UUID uuid,
-            @RequestBody Map<String, Object> request) {
+            @RequestBody Map<String, Object> request,
+            Authentication authentication) {
+
+        if (!lotService.inScope(uuid, AgentPrincipal.scopeOf(authentication))) {
+            return ResponseEntity.notFound().build();
+        }
 
         Map<String, Object> changes = new HashMap<>();
 
@@ -153,7 +188,12 @@ public class LotController {
     public ResponseEntity<LotResponse> permitAgreementType(
             @PathVariable UUID uuid,
             @PathVariable AgreementType agreementType,
-            @Valid @RequestBody(required = false) PermitAgreementTypeRequest request) {
+            @Valid @RequestBody(required = false) PermitAgreementTypeRequest request,
+            Authentication authentication) {
+
+        if (!lotService.inScope(uuid, AgentPrincipal.scopeOf(authentication))) {
+            return ResponseEntity.notFound().build();
+        }
 
         BigDecimal targetRate = (request == null) ? null : request.targetRate();
         BigDecimal askingRate = (request == null) ? null : request.askingRate();
@@ -170,7 +210,12 @@ public class LotController {
     @DeleteMapping("/{uuid}/agreement-types/{agreementType}")
     public ResponseEntity<LotResponse> revokeAgreementType(
             @PathVariable UUID uuid,
-            @PathVariable AgreementType agreementType) {
+            @PathVariable AgreementType agreementType,
+            Authentication authentication) {
+
+        if (!lotService.inScope(uuid, AgentPrincipal.scopeOf(authentication))) {
+            return ResponseEntity.notFound().build();
+        }
 
         return lotService.revokeAgreementType(uuid, agreementType)
                 .map(LotResponse::from)
@@ -182,7 +227,9 @@ public class LotController {
     // box-selection of a park is a different act from renaming a lot.
     @PreAuthorize("hasAuthority('lots:set_rates')")
     @PutMapping("/rates")
-    public ResponseEntity<SetRatesResult> setRates(@Valid @RequestBody SetRatesRequest request) {
+    public ResponseEntity<SetRatesResult> setRates(@Valid @RequestBody SetRatesRequest request,
+                                                   Authentication authentication) {
+        lotService.requireInScope(request.lotIds(), AgentPrincipal.scopeOf(authentication));
 
         int updated = lotService.setRates(request.lotIds(), request.agreementType(),
                 request.targetRate(), request.askingRate());
@@ -194,17 +241,64 @@ public class LotController {
     // updated counts the lots that actually changed.
     @PreAuthorize("hasAuthority('lots:edit')")
     @PutMapping("/rentable")
-    public ResponseEntity<SetRentableResult> setRentable(@Valid @RequestBody SetRentableRequest request) {
+    public ResponseEntity<SetRentableResult> setRentable(@Valid @RequestBody SetRentableRequest request,
+                                                         Authentication authentication) {
+        lotService.requireInScope(request.lotIds(), AgentPrincipal.scopeOf(authentication));
         int updated = lotService.setRentable(request.lotIds(), request.isRentable(), request.notRentableReason());
         return ResponseEntity.ok(new SetRentableResult(updated));
     }
 
+    // 409 while the lot has an active tenancy
     @PreAuthorize("hasAuthority('lots:delete')")
     @DeleteMapping("/{uuid}")
-    public ResponseEntity<Void> deleteLot(@PathVariable UUID uuid) {
+    public ResponseEntity<Void> deleteLot(@PathVariable UUID uuid, Authentication authentication) {
+        if (!lotService.inScope(uuid, AgentPrincipal.scopeOf(authentication))) {
+            return ResponseEntity.notFound().build();
+        }
         return lotService.deleteLot(uuid)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();
+    }
+
+    // All or nothing. 400 for an unknown lot, 409 for a lot with an active tenancy.
+    // updated counts the lots that were deleted. One a coworker already deleted is skipped.
+    @PreAuthorize("hasAuthority('lots:delete')")
+    @PostMapping("/delete")
+    public ResponseEntity<LotCountResult> deleteLots(@Valid @RequestBody LotIdsRequest request,
+                                                     Authentication authentication) {
+        lotService.requireInScope(request.lotIds(), AgentPrincipal.scopeOf(authentication));
+        return ResponseEntity.ok(new LotCountResult(lotService.deleteLots(request.lotIds())));
+    }
+
+    // All or nothing. 400 for an unknown lot, 409 when the lot's property is deleted.
+    // updated counts the lots that came back. One that is not deleted is skipped.
+    @PreAuthorize("hasAuthority('lots:delete')")
+    @PostMapping("/restore")
+    public ResponseEntity<LotCountResult> restoreLots(@Valid @RequestBody LotIdsRequest request,
+                                                      Authentication authentication) {
+        lotService.requireInScope(request.lotIds(), AgentPrincipal.scopeOf(authentication));
+        return ResponseEntity.ok(new LotCountResult(lotService.restoreLots(request.lotIds())));
+    }
+
+    // A property's deleted lots, the most recently deleted first.
+    // deletedBy is null without audit:view.
+    @PreAuthorize("hasAuthority('lots:delete')")
+    @GetMapping("/deleted")
+    public ResponseEntity<List<DeletedLotResponse>> deletedLots(@RequestParam("propertyId") UUID propertyId,
+                                                                Authentication authentication) {
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
+            return ResponseEntity.notFound().build();
+        }
+        List<Lot> lots = lotService.findDeletedByProperty(propertyId);
+        Map<UUID, History.Mark> who = canViewAudits(authentication)
+                ? auditService.deletions("lot", lots.stream().map(Lot::uuid).toList())
+                : Map.of();
+        return ResponseEntity.ok(lots.stream().map(lot -> DeletedLotResponse.from(lot, who.get(lot.uuid()))).toList());
+    }
+
+    private static boolean canViewAudits(Authentication authentication) {
+        return authentication.getAuthorities().stream()
+                .anyMatch(authority -> "audit:view".equals(authority.getAuthority()));
     }
 
     // No @ExceptionHandler here. A local one would win over ApiExceptionHandler and

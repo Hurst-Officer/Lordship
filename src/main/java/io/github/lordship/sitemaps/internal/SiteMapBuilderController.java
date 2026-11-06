@@ -1,5 +1,6 @@
 package io.github.lordship.sitemaps.internal;
 
+import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.sitemaps.internal.SiteMapBuilderRecords.BuilderResponse;
 import io.github.lordship.sitemaps.internal.SiteMapBuilderRecords.CommitRequest;
 import io.github.lordship.sitemaps.internal.SiteMapBuilderRecords.CommitResponse;
@@ -10,6 +11,7 @@ import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,6 +31,8 @@ import java.util.UUID;
  * <p>Saving a map can add lots: a number on the drawing that the park does not
  * have yet becomes a new lot. That is part of building a park's map, so it needs
  * no separate lots:create.
+ *
+ * <p>A park outside the agent's scope (see PropertyScope) is treated as if it did not exist.
  */
 @RestController
 @RequestMapping("/api/sitemaps")
@@ -45,7 +49,10 @@ public class SiteMapBuilderController {
     // The park, its lots and its last placement. 404 when there is no such property.
     @PreAuthorize("hasAuthority('sitemaps:edit')")
     @GetMapping("/{propertyId}/builder")
-    public ResponseEntity<BuilderResponse> open(@PathVariable UUID propertyId) {
+    public ResponseEntity<BuilderResponse> open(@PathVariable UUID propertyId, Authentication authentication) {
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
+            return ResponseEntity.notFound().build();
+        }
         return builderService.open(propertyId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
@@ -54,7 +61,10 @@ public class SiteMapBuilderController {
     // The drawing kept with the last save. 404 when none was kept.
     @PreAuthorize("hasAuthority('sitemaps:edit')")
     @GetMapping("/{propertyId}/builder/plat")
-    public ResponseEntity<byte[]> plat(@PathVariable UUID propertyId) {
+    public ResponseEntity<byte[]> plat(@PathVariable UUID propertyId, Authentication authentication) {
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
+            return ResponseEntity.notFound().build();
+        }
         return builderService.plat(propertyId)
                 .map(stored -> ResponseEntity.ok()
                         .contentType(MediaType.parseMediaType(stored.file().contentType()))
@@ -72,7 +82,11 @@ public class SiteMapBuilderController {
     @PostMapping(path = "/{propertyId}/builder", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<CommitResponse> commit(@PathVariable UUID propertyId,
                                                  @Valid @RequestPart("commit") CommitRequest request,
-                                                 @RequestPart(value = "plat", required = false) MultipartFile plat) {
+                                                 @RequestPart(value = "plat", required = false) MultipartFile plat,
+                                                 Authentication authentication) {
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
+            return ResponseEntity.notFound().build();
+        }
         PlatUpload upload = null;
         if (plat != null && !plat.isEmpty()) {
             try {

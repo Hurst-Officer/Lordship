@@ -14,6 +14,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -205,6 +206,19 @@ public class AuditService {
         }
 
         return new History.PageHistory(lastEdit, records);
+    }
+
+    /**
+     * Who deleted each record, for the lists of deleted properties and lots.
+     * A record with no delete in the audit log is left out of the map.
+     */
+    public Map<UUID, History.Mark> deletions(String table, Collection<UUID> recordIds) {
+        List<String> ids = recordIds.stream().map(UUID::toString).toList();
+        Map<UUID, History.Mark> found = new HashMap<>();
+        for (HistoryRows.MarkRow row : auditRepository.findDeleted(table, ids)) {
+            found.put(UUID.fromString(row.recordId()), new History.Mark(row.name(), row.changedAt()));
+        }
+        return found;
     }
 
     /**

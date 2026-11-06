@@ -65,9 +65,9 @@ CREATE TABLE property (
                           CONSTRAINT property_location_needs_both_latitude_and_longitude CHECK ((latitude IS NULL) = (longitude IS NULL))
 );
 
--- A code names one live property. A deleted property gives its code back.
-CREATE UNIQUE INDEX uq_property_code_active
-    ON property (LOWER(property_code)) WHERE deleted_at IS NULL;
+-- A code names one property for good. A deleted property keeps its code, so restoring it never collides.
+CREATE UNIQUE INDEX uq_property_code
+    ON property (LOWER(property_code));
 
 CREATE INDEX idx_property_name
     ON property (LOWER(property_name)) WHERE deleted_at IS NULL;

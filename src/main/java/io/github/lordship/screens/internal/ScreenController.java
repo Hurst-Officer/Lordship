@@ -5,6 +5,7 @@ import io.github.lordship.audit.History;
 import io.github.lordship.homes.Home;
 import io.github.lordship.homes.HomeService;
 import io.github.lordship.homes.internal.HomeResponse;
+import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.lots.internal.LotResponse;
@@ -37,6 +38,7 @@ import java.util.stream.Collectors;
  * Each part needs the same permission its own endpoint needs. Without it, that part is null.
  *
  * zone is the viewer's time zone, like America/Los_Angeles. The history's days follow it.
+ * A property outside the agent's scope (see PropertyScope) is treated as if it did not exist: 404.
  */
 @RestController
 @RequestMapping("/api/screens")
@@ -56,14 +58,15 @@ public class ScreenController {
     }
 
     // The property page: the property, its lots, and its history. 404 for an unknown property.
-    // The history's bars are the property's own. Its last edit also counts the lots and their homes.
+    // The history's bars are the property's own. Its last edit also counts the lots and their homes,
+    // each only with the permission to view them.
     @PreAuthorize("hasAuthority('properties:view')")
     @GetMapping("/property/{propertyId}")
     public ResponseEntity<PropertyScreen> property(@PathVariable UUID propertyId,
                                                    @RequestParam(required = false) String zone,
                                                    Authentication authentication) {
         Optional<Property> found = propertyService.findByPropertyId(propertyId);
-        if (found.isEmpty()) {
+        if (found.isEmpty() || !AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
             return ResponseEntity.notFound().build();
         }
         Property property = found.get();
@@ -78,9 +81,10 @@ public class ScreenController {
         History.PageHistory history = null;
         if (can.contains("audit:view")) {
             List<History.Ref> counted = new ArrayList<>();
-            List<Lot> parkLots = lots != null ? lots : (code == null ? List.<Lot>of() : lotService.findByProperty(code));
-            parkLots.forEach(lot -> counted.add(new History.Ref("lot", lot.uuid())));
-            if (code != null) {
+            if (lots != null) {
+                lots.forEach(lot -> counted.add(new History.Ref("lot", lot.uuid())));
+            }
+            if (code != null && can.contains("homes:view")) {
                 homeService.findByProperty(code).forEach(home -> counted.add(new History.Ref("mobile_home", home.uuid())));
             }
             history = auditService.pageHistory(
@@ -95,19 +99,22 @@ public class ScreenController {
 
     // The lot page: the lot, its property (for the header), the homes on it, and its history.
     // 404 for an unknown lot. The lot and each home have their own bars.
+    // property is null without properties:view, like homes without homes:view.
     @PreAuthorize("hasAuthority('lots:view')")
     @GetMapping("/lot/{lotId}")
     public ResponseEntity<LotScreen> lot(@PathVariable UUID lotId,
                                          @RequestParam(required = false) String zone,
                                          Authentication authentication) {
         Optional<Lot> found = lotService.findById(lotId);
-        if (found.isEmpty()) {
+        if (found.isEmpty() || !AgentPrincipal.scopeOf(authentication).allows(found.get().propertyId())) {
             return ResponseEntity.notFound().build();
         }
         Lot lot = found.get();
         Set<String> can = authorities(authentication);
 
-        Property property = propertyService.findByPropertyId(lot.propertyId()).orElse(null);
+        Property property = can.contains("properties:view")
+                ? propertyService.findByPropertyId(lot.propertyId()).orElse(null)
+                : null;
         List<Home> homes = can.contains("homes:view") ? homeService.findByLot(lotId) : null;
 
         History.PageHistory history = null;

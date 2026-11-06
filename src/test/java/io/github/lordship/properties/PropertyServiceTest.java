@@ -2,6 +2,7 @@ package io.github.lordship.properties;
 
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RuleConflict;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -520,5 +521,208 @@ public class PropertyServiceTest {
         propertyService.setFieldLink(created.uuid(), "acres", null);
 
         verify(auditService, never()).recordUpdate(any(), any(), any(), any());
+    }
+
+    // ---- custom fields, one at a time ----
+    // Two workers on the same property: each save changes only its own entry.
+
+    @Test
+    void addingTwoCustomFieldsKeepsBoth() {
+        Property created = createProperty();
+
+        propertyService.addCustomField(created.uuid(), "Septic", "Lagoon");
+        Property after = propertyService.addCustomField(created.uuid(), "Well", "Private").orElseThrow();
+
+        assertEquals(Map.of("Septic", "Lagoon", "Well", "Private"), after.customFields());
+    }
+
+    @Test
+    void addCustomFieldTrimsTheLabel() {
+        Property created = createProperty();
+
+        Property after = propertyService.addCustomField(created.uuid(), "  Septic ", "Lagoon").orElseThrow();
+
+        assertEquals(Map.of("Septic", "Lagoon"), after.customFields());
+    }
+
+    @Test
+    void addCustomFieldRefusesALabelThatIsAlreadyThere() {
+        Property created = createProperty();
+        propertyService.addCustomField(created.uuid(), "Septic", "Lagoon");
+
+        RuleConflict e = assertThrows(RuleConflict.class, () ->
+                propertyService.addCustomField(created.uuid(), "Septic", "Sewer"));
+
+        assertEquals("property.custom_field_exists", e.problem().code());
+        assertEquals(Map.of("Septic", "Lagoon"), propertyService.findByPropertyId(created.uuid()).orElseThrow().customFields());
+    }
+
+    @Test
+    void addCustomFieldRefusesABlankOrBuiltInLabel() {
+        Property created = createProperty();
+
+        InvalidRequest blank = assertThrows(InvalidRequest.class, () ->
+                propertyService.addCustomField(created.uuid(), "  ", "x"));
+        InvalidRequest builtIn = assertThrows(InvalidRequest.class, () ->
+                propertyService.addCustomField(created.uuid(), "acres", "x"));
+
+        assertEquals("property.custom_field_label_blank", blank.problem().code());
+        assertEquals("property.custom_field_label_reserved", builtIn.problem().code());
+        assertEquals("label", builtIn.problem().field());
+    }
+
+    @Test
+    void changeCustomFieldChangesOnlyThatOne() {
+        Property created = createProperty();
+        propertyService.addCustomField(created.uuid(), "Septic", "Lagoon");
+        propertyService.addCustomField(created.uuid(), "Well", "Private");
+
+        Property after = propertyService.changeCustomField(created.uuid(), "Septic", "Sewer").orElseThrow();
+
+        assertEquals(Map.of("Septic", "Sewer", "Well", "Private"), after.customFields());
+    }
+
+    @Test
+    void changeCustomFieldRefusesOneACoworkerRemoved_andDoesNotBringItBack() {
+        Property created = createProperty();
+        propertyService.addCustomField(created.uuid(), "Septic", "Lagoon");
+        propertyService.removeCustomField(created.uuid(), "Septic");
+
+        RuleConflict e = assertThrows(RuleConflict.class, () ->
+                propertyService.changeCustomField(created.uuid(), "Septic", "Sewer"));
+
+        assertEquals("property.custom_field_gone", e.problem().code());
+        assertEquals(Map.of(), propertyService.findByPropertyId(created.uuid()).orElseThrow().customFields());
+    }
+
+    @Test
+    void removeCustomFieldTakesItsLinkAndNote_andLeavesTheOthers() {
+        Property created = createProperty();
+        propertyService.addCustomField(created.uuid(), "Septic", "Lagoon");
+        propertyService.addCustomField(created.uuid(), "Well", "Private");
+        propertyService.setFieldLink(created.uuid(), "Septic", "https://ecy.example.gov");
+        propertyService.setFieldNote(created.uuid(), "Septic", "Pumped in May");
+
+        Property after = propertyService.removeCustomField(created.uuid(), "Septic").orElseThrow();
+
+        assertEquals(Map.of("Well", "Private"), after.customFields());
+        assertEquals(Map.of(), after.fieldLinks());
+        assertEquals(Map.of(), after.fieldNotes());
+    }
+
+    @Test
+    void removeCustomFieldThatIsAlreadyGoneIsFine_andRecordsNothing() {
+        Property created = createProperty();
+
+        assertTrue(propertyService.removeCustomField(created.uuid(), "Septic").isPresent());
+
+        verify(auditService, never()).recordUpdate(any(), any(), any(), any());
+    }
+
+    @Test
+    void customFieldSavesReturnEmpty_whenThePropertyDoesNotExist() {
+        UUID unknown = UUID.randomUUID();
+
+        assertTrue(propertyService.addCustomField(unknown, "Septic", "Lagoon").isEmpty());
+        assertTrue(propertyService.changeCustomField(unknown, "Septic", "Lagoon").isEmpty());
+        assertTrue(propertyService.removeCustomField(unknown, "Septic").isEmpty());
+    }
+
+    // ---- business numbers, one at a time ----
+
+    @Test
+    void addingTwoBusinessNumbersKeepsBoth_andCleansThem() {
+        Property created = createProperty();
+
+        propertyService.addBusinessNumber(created.uuid(), "wa ", " UBI", " 604 280 651 ");
+        Property after = propertyService.addBusinessNumber(created.uuid(), "ID", "SOS", "0006280712").orElseThrow();
+
+        assertEquals(List.of(
+                new BusinessNumber("WA", "UBI", "604 280 651", null, null),
+                new BusinessNumber("ID", "SOS", "0006280712", null, null)), after.businessNumbers());
+    }
+
+    @Test
+    void addBusinessNumberRefusesADuplicate_orABlankNumber() {
+        Property created = createProperty();
+        propertyService.addBusinessNumber(created.uuid(), "WA", "UBI", "604 280 651");
+
+        RuleConflict duplicate = assertThrows(RuleConflict.class, () ->
+                propertyService.addBusinessNumber(created.uuid(), "wa", "UBI", "604 280 651"));
+        InvalidRequest blank = assertThrows(InvalidRequest.class, () ->
+                propertyService.addBusinessNumber(created.uuid(), "WA", "UBI", "  "));
+
+        assertEquals("property.number_exists", duplicate.problem().code());
+        assertEquals("property.number_blank", blank.problem().code());
+        assertEquals("number", blank.problem().field());
+    }
+
+    @Test
+    void changeBusinessNumberChangesOnlyThatOne_andOnlyTheGivenParts() {
+        Property created = createProperty();
+        propertyService.addBusinessNumber(created.uuid(), "WA", "UBI", "604 280 651");
+        propertyService.addBusinessNumber(created.uuid(), "ID", "SOS", "0006280712");
+
+        Property after = propertyService.changeBusinessNumber(created.uuid(), "WA", "UBI", "604 280 651",
+                new HashMap<>(Map.of("note", "Renewed in March", "link", " https://ccfs.sos.wa.gov/ "))).orElseThrow();
+
+        assertEquals(List.of(
+                new BusinessNumber("WA", "UBI", "604 280 651", "https://ccfs.sos.wa.gov/", "Renewed in March"),
+                new BusinessNumber("ID", "SOS", "0006280712", null, null)), after.businessNumbers());
+    }
+
+    @Test
+    void changeBusinessNumberRefusesOneACoworkerChanged() {
+        Property created = createProperty();
+        propertyService.addBusinessNumber(created.uuid(), "WA", "UBI", "111");
+        // a coworker changes the number while this worker still sees 111
+        propertyService.changeBusinessNumber(created.uuid(), "WA", "UBI", "111", new HashMap<>(Map.of("number", "222")));
+
+        RuleConflict e = assertThrows(RuleConflict.class, () ->
+                propertyService.changeBusinessNumber(created.uuid(), "WA", "UBI", "111",
+                        new HashMap<>(Map.of("number", "333"))));
+
+        assertEquals("property.number_changed", e.problem().code());
+        assertEquals(List.of("222"), propertyService.findByPropertyId(created.uuid()).orElseThrow()
+                .businessNumbers().stream().map(BusinessNumber::number).toList());
+    }
+
+    @Test
+    void changeBusinessNumberRefusesToMakeADuplicate() {
+        Property created = createProperty();
+        propertyService.addBusinessNumber(created.uuid(), "WA", "UBI", "111");
+        propertyService.addBusinessNumber(created.uuid(), "WA", "UBI", "222");
+
+        RuleConflict e = assertThrows(RuleConflict.class, () ->
+                propertyService.changeBusinessNumber(created.uuid(), "WA", "UBI", "111",
+                        new HashMap<>(Map.of("number", "222"))));
+
+        assertEquals("property.number_exists", e.problem().code());
+    }
+
+    @Test
+    void changeBusinessNumberRefusesALinkThatIsNotHttp() {
+        Property created = createProperty();
+        propertyService.addBusinessNumber(created.uuid(), "WA", "UBI", "111");
+
+        InvalidRequest e = assertThrows(InvalidRequest.class, () ->
+                propertyService.changeBusinessNumber(created.uuid(), "WA", "UBI", "111",
+                        new HashMap<>(Map.of("link", "ccfs.sos.wa.gov"))));
+
+        assertEquals("property.link_not_a_url", e.problem().code());
+        assertEquals("link", e.problem().field());
+    }
+
+    @Test
+    void removeBusinessNumberRemovesOnlyThatOne_andOneAlreadyGoneIsFine() {
+        Property created = createProperty();
+        propertyService.addBusinessNumber(created.uuid(), "WA", "UBI", "111");
+        propertyService.addBusinessNumber(created.uuid(), "ID", "SOS", "999");
+
+        Property after = propertyService.removeBusinessNumber(created.uuid(), "WA", "UBI", "111").orElseThrow();
+        Property again = propertyService.removeBusinessNumber(created.uuid(), "WA", "UBI", "111").orElseThrow();
+
+        assertEquals(List.of(new BusinessNumber("ID", "SOS", "999", null, null)), after.businessNumbers());
+        assertEquals(after.businessNumbers(), again.businessNumbers());
     }
 }

@@ -102,6 +102,15 @@ public class HomeRepository {
                 .optional();
     }
 
+    // The same as findById, and the row stays locked until the transaction ends.
+    // A save reads its "before" this way, so two saves at once cannot both log the same before.
+    public Optional<HomeRow> findByIdForUpdate(UUID uuid) {
+        return jdbc.sql("SELECT * FROM mobile_home WHERE uuid = :uuid AND deleted_at IS NULL FOR UPDATE")
+                .param("uuid", uuid)
+                .query(HomeRow.class)
+                .optional();
+    }
+
     public Optional<HomeRow> patch(UUID uuid, Map<String, Object> changes) {
         if (changes.isEmpty()) return findById(uuid);
 
@@ -129,5 +138,56 @@ public class HomeRepository {
         return jdbc.sql("UPDATE mobile_home SET deleted_at = now() WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)
                 .update() > 0;
+    }
+
+    // A home whether it is deleted or not
+    public Optional<HomeRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM mobile_home WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(HomeRow.class)
+                .optional();
+    }
+
+    // A lot's deleted homes, the most recently deleted first
+    public List<HomeRow> findDeletedByLot(UUID lotId) {
+        return jdbc.sql("""
+            SELECT * FROM mobile_home
+            WHERE lot_id = :lotId AND deleted_at IS NOT NULL
+            ORDER BY deleted_at DESC
+            """)
+                .param("lotId", lotId)
+                .query(HomeRow.class)
+                .list();
+    }
+
+    // Brings a deleted home back. Empty when it was not deleted.
+    public Optional<HomeRow> restore(UUID uuid) {
+        return jdbc.sql("UPDATE mobile_home SET deleted_at = NULL WHERE uuid = :uuid AND deleted_at IS NOT NULL RETURNING *")
+                .param("uuid", uuid)
+                .query(HomeRow.class)
+                .optional();
+    }
+
+    // The property of a lot, deleted or not. Empty for an unknown lot.
+    public Optional<UUID> findPropertyIdOfLot(UUID lotId) {
+        return jdbc.sql("SELECT property_id FROM lot WHERE uuid = :lotId")
+                .param("lotId", lotId)
+                .query(UUID.class)
+                .optional();
+    }
+
+    // The property with this code, deleted or not
+    public Optional<UUID> findPropertyIdByCode(String propertyCode) {
+        return jdbc.sql("SELECT uuid FROM property WHERE property_code = :propertyCode")
+                .param("propertyCode", propertyCode)
+                .query(UUID.class)
+                .optional();
+    }
+
+    public boolean isLotLive(UUID lotId) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM lot WHERE uuid = :lotId AND deleted_at IS NULL)")
+                .param("lotId", lotId)
+                .query(Boolean.class)
+                .single();
     }
 }
