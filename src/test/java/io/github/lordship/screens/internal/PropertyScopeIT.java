@@ -170,7 +170,7 @@ public class PropertyScopeIT extends IntegrationTest {
 
     @Test
     void historyOfAnUnknownTable_saysWhy() throws Exception {
-        mockMvc.perform(get("/api/auditlogs/record/agent/" + assignedId)
+        mockMvc.perform(get("/api/auditlogs/record/agent_session/" + assignedId)
                         .param("field", "workEmail")
                         .header("Authorization", "Bearer " + token))
                 .andExpect(status().isBadRequest())

@@ -164,42 +164,28 @@ public class RoleDeletionIT extends IntegrationTest {
     }
 
     /**
-     * No role is exempt, Admin included -- root deletes the role it is standing on
-     * and is left holding nothing.
-     *
-     * <p>This is a footgun in production, and this test is where it is written down
-     * rather than guarded. A real Admin deletion -- one that is not rolled back the
-     * way this test is -- does not merely lock everyone out. agent_role.role_name is
-     * UNIQUE across the whole table rather than partial on deleted_at, unlike every
-     * other uniqueness rule in V3, so ensureDefaultRoles cannot put Admin back:
-     * findByName skips the soft-deleted row, the insert collides with it, and the
-     * ApplicationRunner throws. The application stops starting.
-     *
-     * <p>Left unguarded on purpose until the front end shows which roles are really
-     * structural. Whatever guard eventually lands, this test says what it has to
-     * prevent.
+     * Admin is built in (RoleService.BUILT_IN), so it is never deleted: the server finds it by name,
+     * ensureDefaultRoles would put an empty one back at startup, and root would be left holding nothing.
+     * What it can do is still edited like any other role, and AccessKeys keeps the last keys.
      */
     @Test
-    void deletingAdmin_cascadesLikeAnyOtherRole_andStrandsRoot() throws Exception {
+    void deletingAdmin_isRefused_andRootKeepsItsPermissions() throws Exception {
         // Arrange
         String rootToken = rootToken();
         UUID adminRoleId = roleRepository.findByName("Admin")
                 .orElseThrow(() -> new AssertionError("Admin role missing"))
                 .uuid();
 
-        mockMvc.perform(get("/api/tenants/{uuid}", UUID.randomUUID())
-                        .header("Authorization", "Bearer " + rootToken))
-                .andExpect(status().isNotFound());
-
         // Act
         mockMvc.perform(delete("/api/roles/{uuid}", adminRoleId)
                         .header("Authorization", "Bearer " + rootToken))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("role.built_in"));
 
         // Assert
         mockMvc.perform(get("/api/tenants/{uuid}", UUID.randomUUID())
                         .header("Authorization", "Bearer " + rootToken))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isNotFound());
     }
 
     @Test

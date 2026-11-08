@@ -141,10 +141,32 @@ public class AuditService {
         return auditRepository.findAllAgentAuditLogs(agentId, pageRequest);
     }
 
+    // ---- an agent's own activity -----------------------------------------------------------
+
+    /**
+     * The agent's own saves, for "My activity" on their own page. sort is when, kind or record
+     * (anything else is when); a page is limit saves from offset.
+     * The caller hides the saves under properties the agent may no longer see (Save.withoutRecord).
+     */
+    public History.SavePage ownActivity(UUID agentId, String sort, boolean ascending, int offset, int limit) {
+        List<HistoryRows.SaveRow> rows = auditRepository.findOwnSaves(agentId, sort, ascending, limit + 1, Math.max(0, offset));
+        List<History.Save> saves = rows.stream()
+                .limit(limit)
+                .map(row -> new History.Save(
+                        row.saveId(), row.changedAt(), row.tableName(), OperationType.valueOf(row.operation()),
+                        row.records(), row.recordId(),
+                        row.fields() == null || row.fields().isBlank() ? List.of() : List.of(row.fields().split(",")),
+                        row.recordName(), row.propertyId(), row.propertyName(), row.lotId(), false))
+                .toList();
+        return new History.SavePage(saves, rows.size() > limit);
+    }
+
     // ---- history for Glade's screens ----------------------------------------------------
 
-    // The tables whose history the screens may read
-    public static final Set<String> SCREEN_TABLES = Set.of("property", "lot", "mobile_home");
+    // The tables whose history the screens may read. agent_role and agent are the Roles screens
+    // (access RoleHistory writes their "permissions", "holders" and "roles" entries).
+    // person and agent are also the agent's own page (GET /api/screens/self), for their own record only.
+    public static final Set<String> SCREEN_TABLES = Set.of("property", "lot", "mobile_home", "agent_role", "agent", "person");
 
     // The history bars reach back this many years
     public static final int HISTORY_YEARS = 3;
@@ -302,4 +324,4 @@ public class AuditService {
         }
         return objectMapper.writeValueAsString(map);
     }
-}
+}

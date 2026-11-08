@@ -1,5 +1,7 @@
 package io.github.lordship.access;
 
+import io.github.lordship.access.internal.AccessKeys;
+import io.github.lordship.access.internal.RoleHistory;
 import io.github.lordship.access.internal.grantedrole.GrantedRoleRepository;
 import io.github.lordship.access.internal.grantedrole.GrantedRoleRow;
 import io.github.lordship.access.internal.role.RoleRepository;
@@ -7,10 +9,13 @@ import io.github.lordship.access.internal.role.RoleRow;
 import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.identity.AgentAuthorizationCache;
+import io.github.lordship.shared.InvalidRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -24,15 +29,21 @@ public class GrantedRoleService {
     private final RoleRepository roleRepository;
     private final AuditService auditService;
     private final AgentAuthorizationCache authorizationCache;
+    private final AccessKeys accessKeys;
+    private final RoleHistory roleHistory;
 
     public GrantedRoleService(GrantedRoleRepository grantedRoleRepository,
                               RoleRepository roleRepository,
                               AuditService auditService,
-                              AgentAuthorizationCache authorizationCache) {
+                              AgentAuthorizationCache authorizationCache,
+                              AccessKeys accessKeys,
+                              RoleHistory roleHistory) {
         this.grantedRoleRepository = grantedRoleRepository;
         this.roleRepository = roleRepository;
         this.auditService = auditService;
         this.authorizationCache = authorizationCache;
+        this.accessKeys = accessKeys;
+        this.roleHistory = roleHistory;
     }
 
     // granting a role the agent already actively holds is a no-op:
@@ -45,20 +56,54 @@ public class GrantedRoleService {
         if (existing.isPresent()) {
             return existing.get().toGrantedRole();
         }
+        GrantedRoleRow row = save(agentId, roleId, grantedBy);
+        roleHistory.holder(roleId, agentId, true);
+        return row.toGrantedRole();
+    }
 
+    /**
+     * Gives a restored role back to the people who lost it when it was deleted (see agentsToRegrant).
+     * People who already hold it again are skipped. Each person's history gets an entry; the role's
+     * history gets none here, because the restore writes the people into its own entry.
+     * Returns the people given it.
+     */
+    @Transactional
+    public List<UUID> regrant(UUID roleId, List<UUID> agentIds, UUID grantedBy) {
+        Map<UUID, Boolean> given = new LinkedHashMap<>();
+        for (UUID agentId : agentIds) {
+            if (grantedRoleRepository.findActiveGrant(agentId, roleId).isPresent()) continue;
+            save(agentId, roleId, grantedBy);
+            given.put(agentId, true);
+        }
+        roleHistory.holdersOnPeople(roleId, given);
+        return List.copyOf(given.keySet());
+    }
+
+    // The grant itself: the row, the cache, and its own audit row
+    private GrantedRoleRow save(UUID agentId, UUID roleId, UUID grantedBy) {
         GrantedRoleRow row = grantedRoleRepository.save(
                 new GrantedRoleRow(agentId, roleId, grantedBy)
         );
         authorizationCache.invalidate(agentId);
         auditService.recordInsert("granted_role", row.uuid(), AuditMapper.toMap(row));
-        return row.toGrantedRole();
+        return row;
     }
 
     @Transactional
     public GrantedRole grantRoleByName(UUID agentId, String roleName, UUID grantedBy) {
         RoleRow row = roleRepository.findByName(roleName)
-                .orElseThrow(() -> new IllegalArgumentException("Role not found: " + roleName));
+                .orElseThrow(() -> InvalidRequest.onField("roleName", "role.unknown", roleName));
         return grantRole(agentId, row.uuid(), grantedBy);
+    }
+
+    // The same as grantRoleByName, for a client that knows the role by its id (Glade).
+    // A role that is unknown or deleted is a 400 on roleId.
+    @Transactional
+    public GrantedRole grantRoleById(UUID agentId, UUID roleId, UUID grantedBy) {
+        if (roleRepository.findById(roleId).isEmpty()) {
+            throw InvalidRequest.onField("roleId", "role.unknown", roleId);
+        }
+        return grantRole(agentId, roleId, grantedBy);
     }
 
     @Transactional
@@ -79,8 +124,17 @@ public class GrantedRoleService {
     }
 
 
+    /**
+     * Takes a role from a person. Refused (409 access.last_key) when it would leave nobody
+     * who can manage roles (see AccessKeys).
+     */
     @Transactional
     public boolean revokeGrant(UUID grantId, UUID revokedBy) {
+        return accessKeys.keep(() -> revoke(grantId, revokedBy, true));
+    }
+
+    // roleSide false: the role is being deleted, so only the person's history says they lost it
+    private boolean revoke(UUID grantId, UUID revokedBy, boolean roleSide) {
         Optional<GrantedRoleRow> before = grantedRoleRepository.findById(grantId);
         if (before.isEmpty()) return false;
 
@@ -88,6 +142,12 @@ public class GrantedRoleService {
 
         authorizationCache.invalidate(before.get().agentId());
         auditService.recordDelete("granted_role", grantId, AuditMapper.toMap(before.get()));
+        Map<UUID, Boolean> lost = Map.of(before.get().agentId(), false);
+        if (roleSide) {
+            roleHistory.holders(before.get().roleId(), lost);
+        } else {
+            roleHistory.holdersOnPeople(before.get().roleId(), lost);
+        }
         return true;
     }
 
@@ -101,7 +161,7 @@ public class GrantedRoleService {
     @Transactional
     public boolean revokeRoleByName(UUID agentId, String roleName, UUID revokedBy) {
         RoleRow row = roleRepository.findByName(roleName)
-                .orElseThrow(() -> new IllegalArgumentException("Role not found: " + roleName));
+                .orElseThrow(() -> InvalidRequest.onField("roleName", "role.unknown", roleName));
         return revokeRole(agentId, row.uuid(), revokedBy);
     }
 
@@ -110,13 +170,24 @@ public class GrantedRoleService {
     // a role whose permissions are still being handed out.
     @Transactional
     public int revokeAllForRole(UUID roleId, UUID revokedBy) {
-        int revoked = 0;
-        for (GrantedRoleRow row : grantedRoleRepository.findByRoleId(roleId)) {
-            if (revokeGrant(row.uuid(), revokedBy)) {
-                revoked++;
+        return accessKeys.keep(() -> {
+            int revoked = 0;
+            for (GrantedRoleRow row : grantedRoleRepository.findByRoleId(roleId)) {
+                if (revoke(row.uuid(), revokedBy, false)) {
+                    revoked++;
+                }
             }
-        }
-        return revoked;
+            return revoked;
+        });
+    }
+
+    /**
+     * Gives a restored role back to the people who lost it when it was deleted.
+     * Call it before the role is restored: the grants are found by the role's deleted_at.
+     * Returns the agents, for the caller to grant once the role is live again.
+     */
+    public List<UUID> agentsToRegrant(UUID roleId) {
+        return grantedRoleRepository.findAgentsRevokedWithRole(roleId);
     }
 
     // returns revoked grants too, so the caller can tell "never granted" from "revoked"
@@ -155,4 +226,4 @@ public class GrantedRoleService {
                 .map(GrantedRoleRow::toGrantedRole)
                 .toList();
     }
-}
+}

@@ -188,7 +188,7 @@ public class PresenceHub {
         later(() -> {
             for (Map.Entry<UUID, Window> entry : windows.entrySet()) {
                 Window viewer = entry.getValue();
-                if (entry.getKey().equals(client) || !visibleTo(scopeOf(viewer), cleanPlace)) {
+                if (entry.getKey().equals(client) || !visibleTo(viewer.agentId, scopeOf(viewer), cleanPlace)) {
                     continue;
                 }
                 boolean byYou = viewer.agentId.equals(sender.agentId);
@@ -289,7 +289,7 @@ public class PresenceHub {
                 continue;
             }
             synchronized (other) {
-                if (other.place != null && visibleTo(scope, other.place)) {
+                if (other.place != null && visibleTo(viewer.agentId, scope, other.place)) {
                     agents.add(new PresentAgent(other.agentId, other.name, other.place, other.field, other.typing,
                             other.picks));
                 }
@@ -373,14 +373,23 @@ public class PresenceHub {
         }
     }
 
-    // A place under a property the viewer is not assigned to stays hidden from them
-    static boolean visibleTo(PropertyScope scope, String place) {
+    // An agent's own page in Glade: "self/<agentId>". Only that agent's windows see it.
+    static final String SELF = "self";
+
+    // A place under a property the viewer is not assigned to stays hidden from them,
+    // and an agent's own page is hidden from everyone else
+    static boolean visibleTo(UUID viewerAgentId, PropertyScope scope, String place) {
+        String[] parts = place.split("/");
+        if (parts[0].equals(SELF)) {
+            return parts.length >= 2 && parts[1].equals(viewerAgentId.toString());
+        }
         UUID propertyId = propertyOf(place);
         return propertyId == null || scope.allows(propertyId);
     }
 
     // "properties/<propertyId>/lots/<lotId>" gives the property id.
     // The second part of a place is the property for every concern that has one. Null otherwise.
+    // ("self/<agentId>" is not a property; visibleTo deals with it first.)
     static UUID propertyOf(String place) {
         String[] parts = place.split("/");
         if (parts.length < 2) {

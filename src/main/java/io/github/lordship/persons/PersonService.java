@@ -5,10 +5,13 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.persons.internal.PersonRepository;
 import io.github.lordship.persons.internal.PersonRow;
 import io.github.lordship.shared.EncryptionService;
+import io.github.lordship.shared.InvalidRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -109,6 +112,72 @@ public class PersonService {
             auditService.recordUpdate("person", uuid, diff.before(), diff.after());
         }
         return Optional.of(personAfter.toPerson(encryptionService));
+    }
+
+    // What a person may change on their own page: column -> its name in the request, and the longest it may be
+    // (person in V2). The birthday is checked on its own. No social security number, no emergency contact.
+    private static final Map<String, String> OWN_TEXT_FIELDS = Map.of(
+            "name_full", "nameFull",
+            "personal_phone", "personalPhone",
+            "personal_email", "personalEmail",
+            "mailing_address", "mailingAddress");
+    private static final Map<String, Integer> OWN_TEXT_MAX = Map.of(
+            "name_full", 120,
+            "personal_phone", 120,
+            "personal_email", 120,
+            "mailing_address", 1000);
+
+    /**
+     * A person corrects their own details. changes is keyed by column; only the columns in OWN_TEXT_FIELDS
+     * and birthday are taken. Text is stripped and blank text clears the value, except the name, which must
+     * stay. Empty for an unknown or removed person.
+     * Throws InvalidRequest (400) on the field at fault: person.name_blank, person.too_long, person.not_text,
+     * person.email_invalid (no @), person.birthday_invalid (not a date, or not in the past).
+     */
+    @Transactional
+    public Optional<Person> patchOwn(UUID uuid, Map<String, Object> changes) {
+        Map<String, Object> clean = new HashMap<>();
+        for (Map.Entry<String, String> field : OWN_TEXT_FIELDS.entrySet()) {
+            String column = field.getKey();
+            if (!changes.containsKey(column)) continue;
+            Object value = changes.get(column);
+            if (value != null && !(value instanceof String)) {
+                throw InvalidRequest.onField(field.getValue(), "person.not_text");
+            }
+            String text = value == null ? null : ((String) value).strip();
+            if (text != null && text.isEmpty()) text = null;
+            if (text == null && column.equals("name_full")) {
+                throw InvalidRequest.onField(field.getValue(), "person.name_blank");
+            }
+            if (text != null && text.length() > OWN_TEXT_MAX.get(column)) {
+                throw InvalidRequest.onField(field.getValue(), "person.too_long", OWN_TEXT_MAX.get(column));
+            }
+            if (text != null && column.equals("personal_email") && !text.contains("@")) {
+                throw InvalidRequest.onField(field.getValue(), "person.email_invalid");
+            }
+            clean.put(column, text);
+        }
+
+        if (changes.containsKey("birthday")) {
+            Object value = changes.get("birthday");
+            if (value != null && !(value instanceof String)) {
+                throw InvalidRequest.onField("birthday", "person.birthday_invalid");
+            }
+            String text = value == null ? "" : ((String) value).strip();
+            if (!text.isEmpty()) {
+                try {
+                    if (!LocalDate.parse(text).isBefore(LocalDate.now())) {
+                        throw InvalidRequest.onField("birthday", "person.birthday_invalid");
+                    }
+                } catch (DateTimeParseException e) {
+                    throw InvalidRequest.onField("birthday", "person.birthday_invalid");
+                }
+            }
+            // patchPerson turns the text into a date, and blank into null
+            clean.put("birthday", text);
+        }
+
+        return patchPerson(uuid, clean);
     }
 
     @Transactional
