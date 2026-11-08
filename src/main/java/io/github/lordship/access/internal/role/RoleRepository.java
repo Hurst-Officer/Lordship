@@ -37,6 +37,53 @@ public class RoleRepository {
                 .optional();
     }
 
+    // A live role with this name, whatever its case ("office staff" finds "Office Staff")
+    public Optional<RoleRow> findLiveByNameIgnoringCase(String roleName) {
+        return jdbc.sql("""
+                SELECT * FROM agent_role
+                WHERE lower(role_name) = lower(:roleName)
+                AND deleted_at IS NULL
+                """)
+                .param("roleName", roleName)
+                .query(RoleRow.class)
+                .optional();
+    }
+
+    // Live or deleted, for a restore
+    public Optional<RoleRow> findAnyById(UUID uuid) {
+        return jdbc.sql("""
+                SELECT * FROM agent_role
+                WHERE uuid = :uuid
+                """)
+                .param("uuid", uuid)
+                .query(RoleRow.class)
+                .optional();
+    }
+
+    // Deleted roles, the most recently deleted first
+    public List<RoleRow> findDeleted() {
+        return jdbc.sql("""
+                SELECT * FROM agent_role
+                WHERE deleted_at IS NOT NULL
+                ORDER BY deleted_at DESC, uuid DESC
+                """)
+                .query(RoleRow.class)
+                .list();
+    }
+
+    // Brings a deleted role back. Empty when it is not deleted (or unknown).
+    public Optional<RoleRow> restore(UUID uuid) {
+        return jdbc.sql("""
+                UPDATE agent_role
+                SET deleted_at = NULL
+                WHERE uuid = :uuid AND deleted_at IS NOT NULL
+                RETURNING *
+                """)
+                .param("uuid", uuid)
+                .query(RoleRow.class)
+                .optional();
+    }
+
     public RoleRow save(RoleRow row) {
         return jdbc.sql("""
                 INSERT INTO agent_role (role_name, role_description)

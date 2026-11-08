@@ -11,7 +11,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -127,6 +129,29 @@ public class AgentController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+
+    /**
+     * The signed-in agent changes their own work phone and the hours they can be reached.
+     * Body: any of {@code workPhone}, {@code hoursAvailable}; a missing key is left alone, blank or null clears it.
+     * 200 with the agent's own details (AgentOwnResponse). 404 for an agent that is gone.
+     * 400 {@code agent.work_phone_too_long} (field workPhone), {@code agent.hours_too_long} (field hoursAvailable),
+     * {@code agent.not_text}. Audited on the agent table.
+     */
+    @PreAuthorize("hasAuthority('agents:edit_own')")
+    @PatchMapping("/self")
+    public ResponseEntity<AgentOwnResponse> patchSelf(@RequestBody Map<String, Object> request, Authentication authentication) {
+        if (!(authentication.getPrincipal() instanceof AgentPrincipal principal)) {
+            return ResponseEntity.notFound().build();
+        }
+        Map<String, Object> changes = new HashMap<>();
+        if (request.containsKey("workPhone")) changes.put("work_phone", request.get("workPhone"));
+        if (request.containsKey("hoursAvailable")) changes.put("hours_available", request.get("hoursAvailable"));
+
+        return agentService.patchOwn(principal.agentUuid(), changes)
+                .map(AgentOwnResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
 
     /**
      * 204 when set, and every token the agent held stops working (they sign in again).

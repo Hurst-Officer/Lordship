@@ -1,5 +1,8 @@
 package io.github.lordship.screens.internal;
 
+import io.github.lordship.access.Agent;
+import io.github.lordship.access.AgentService;
+import io.github.lordship.access.internal.agents.AgentOwnResponse;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.audit.History;
 import io.github.lordship.homes.Home;
@@ -9,11 +12,14 @@ import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.lots.internal.LotResponse;
+import io.github.lordship.persons.PersonService;
+import io.github.lordship.persons.internal.PersonOwnResponse;
 import io.github.lordship.properties.Property;
 import io.github.lordship.properties.PropertyService;
 import io.github.lordship.properties.internal.PropertyResponse;
 import io.github.lordship.screens.internal.ScreenResponses.LotScreen;
 import io.github.lordship.screens.internal.ScreenResponses.PropertyScreen;
+import io.github.lordship.screens.internal.ScreenResponses.SelfScreen;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -48,13 +54,18 @@ public class ScreenController {
     private final LotService lotService;
     private final HomeService homeService;
     private final AuditService auditService;
+    private final AgentService agentService;
+    private final PersonService personService;
 
     public ScreenController(PropertyService propertyService, LotService lotService,
-                            HomeService homeService, AuditService auditService) {
+                            HomeService homeService, AuditService auditService,
+                            AgentService agentService, PersonService personService) {
         this.propertyService = propertyService;
         this.lotService = lotService;
         this.homeService = homeService;
         this.auditService = auditService;
+        this.agentService = agentService;
+        this.personService = personService;
     }
 
     // The property page: the property, its lots, and its history. 404 for an unknown property.
@@ -132,6 +143,37 @@ public class ScreenController {
                 property == null ? null : PropertyResponse.from(property),
                 homes == null ? null : homes.stream().map(HomeResponse::from).toList(),
                 history));
+    }
+
+    // The signed-in agent's own page: their work details, their personal details, and the history of both.
+    // Any signed-in agent may open it; each part needs its _own permission, otherwise it is null.
+    // 404 when the caller is not an agent (a tenant), or the agent is gone.
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/self")
+    public ResponseEntity<SelfScreen> self(@RequestParam(required = false) String zone, Authentication authentication) {
+        if (!(authentication.getPrincipal() instanceof AgentPrincipal principal)) {
+            return ResponseEntity.notFound().build();
+        }
+        Optional<Agent> found = agentService.findById(principal.agentUuid());
+        if (found.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        Agent agent = found.get();
+        Set<String> can = authorities(authentication);
+
+        AgentOwnResponse agentPart = can.contains("agents:view_own") ? AgentOwnResponse.from(agent) : null;
+        PersonOwnResponse personPart = can.contains("persons:view_own")
+                ? personService.findByID(agent.personId()).map(PersonOwnResponse::from).orElse(null)
+                : null;
+
+        History.PageHistory history = null;
+        if (can.contains("audit:view_own") || can.contains("audit:view")) {
+            history = auditService.pageHistory(
+                    List.of(new History.Ref("person", agent.personId()), new History.Ref("agent", agent.uuid())),
+                    List.of(), AuditService.zoneOf(zone));
+        }
+
+        return ResponseEntity.ok(new SelfScreen(agent.uuid(), agent.personId(), agentPart, personPart, history));
     }
 
     // The permissions this request was checked with

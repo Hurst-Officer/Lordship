@@ -10,6 +10,7 @@ public record Agent(
     String workPhone,
     String workEmail,
     String title,
+    String hoursAvailable,
     OffsetDateTime tokensValidFrom,
     OffsetDateTime createdAt,
     OffsetDateTime deletedAt

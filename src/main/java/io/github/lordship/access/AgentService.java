@@ -37,6 +37,7 @@ public class AgentService {
     private final AgentAuthorizationCache authorizationCache;
     private final LoginThrottle loginThrottle;
     private final AgentSessionService sessionService;
+    private final AccessKeys accessKeys;
 
     private static final Logger log = LoggerFactory.getLogger(AgentService.class);
 
@@ -54,7 +55,8 @@ public class AgentService {
             AuditService auditService,
             AgentAuthorizationCache authorizationCache,
             LoginThrottle loginThrottle,
-            AgentSessionService sessionService
+            AgentSessionService sessionService,
+            AccessKeys accessKeys
     ) {
         this.agentRepository = agentRepository;
         this.personService = personService;
@@ -67,6 +69,7 @@ public class AgentService {
         this.authorizationCache = authorizationCache;
         this.loginThrottle = loginThrottle;
         this.sessionService = sessionService;
+        this.accessKeys = accessKeys;
     }
 
     @Transactional
@@ -160,11 +163,72 @@ public class AgentService {
         return true;
     }
 
+    // Longest values the agent table holds (V3, V16)
+    private static final int WORK_PHONE_MAX = 20;
+    private static final int HOURS_MAX = 200;
+
+    /**
+     * The agent changes their own work phone and the hours they can be reached, from their own page.
+     * changes is keyed by column (work_phone, hours_available); a missing key is left alone.
+     * Spaces at either end are dropped, and blank text clears the value.
+     * Empty (404) for an unknown or removed agent, and for the SYSTEM agent.
+     * Throws InvalidRequest (400) agent.work_phone_too_long on workPhone, agent.hours_too_long on hoursAvailable,
+     * or agent.not_text when a value is not text.
+     */
+    @Transactional
+    public Optional<Agent> patchOwn(UUID agentId, Map<String, Object> changes) {
+        Map<String, Object> clean = new HashMap<>();
+        if (changes.containsKey("work_phone")) {
+            clean.put("work_phone", ownText(changes.get("work_phone"), "workPhone", WORK_PHONE_MAX, "agent.work_phone_too_long"));
+        }
+        if (changes.containsKey("hours_available")) {
+            clean.put("hours_available", ownText(changes.get("hours_available"), "hoursAvailable", HOURS_MAX, "agent.hours_too_long"));
+        }
+        if (SystemPrincipal.AGENT_UUID.equals(agentId)) {
+            return Optional.empty();
+        }
+
+        Optional<AgentRow> before = agentRepository.findById(agentId);
+        if (before.isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<AgentRow> after = agentRepository.patchOwn(agentId, clean);
+        if (after.isEmpty()) {
+            return Optional.empty();
+        }
+
+        // Agent, not AgentRow, so the password hash never reaches the audit log
+        var diff = AuditMapper.diff(before.get().toAgent(), after.get().toAgent());
+        if (!diff.before().isEmpty()) {
+            auditService.recordUpdate("agent", agentId, diff.before(), diff.after());
+        }
+        return Optional.of(after.get().toAgent());
+    }
+
+    // Text from the agent's own page: stripped, blank is null, and no longer than max
+    private static String ownText(Object value, String field, int max, String tooLongCode) {
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof String text)) {
+            throw InvalidRequest.onField(field, "agent.not_text");
+        }
+        String stripped = text.strip();
+        if (stripped.isEmpty()) {
+            return null;
+        }
+        if (stripped.length() > max) {
+            throw InvalidRequest.onField(field, tooLongCode, max);
+        }
+        return stripped;
+    }
+
     /**
      * Soft delete. Also ends every session the agent holds, the same as a password reset.
      * False (404) for an unknown or already removed agent, and for the SYSTEM agent.
      * Throws RuleConflict (409) when an agent tries to remove themself,
-     * or to remove the last agent who holds the Admin role.
+     * or to remove the last agent who holds the Admin role,
+     * or (access.last_key) when it would leave nobody who can manage roles (see AccessKeys).
      */
     @Transactional
     public boolean removeAgent(UUID agentId, UUID removedBy) {
@@ -185,14 +249,17 @@ public class AgentService {
             throw RuleConflict.of("agent.last_admin");
         }
 
-        if (!agentRepository.softDelete(agentId)) {
-            return false;
-        }
-        sessionService.endAll(agentId);
+        // a removed agent holds nothing, so removing the last one with the keys is refused like any other loss of them
+        return accessKeys.keep(() -> {
+            if (!agentRepository.softDelete(agentId)) {
+                return false;
+            }
+            sessionService.endAll(agentId);
 
-        authorizationCache.invalidate(agentId);
-        auditService.recordDelete("agent", agentId, AuditMapper.toMap(before.get().toAgent()));
-        return true;
+            authorizationCache.invalidate(agentId);
+            auditService.recordDelete("agent", agentId, AuditMapper.toMap(before.get().toAgent()));
+            return true;
+        });
     }
 
     /**
@@ -383,4 +450,4 @@ public class AgentService {
     public List<LoginEventRow> getLoginEventsByAgentId(UUID agentId) {
         return loginEventRepository.getLoginEventsByAgentId(agentId);
     }
-}
+}

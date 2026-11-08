@@ -151,7 +151,7 @@ public class AgentControllerIT extends IntegrationTest {
         String testRoleDesc = "A role to know you're a loser";
         String rootUserToken = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
 
-        RoleController.RoleCreationRequest rcr = new RoleController.RoleCreationRequest(testRoleName, testRoleDesc);
+        RoleController.RoleCreationRequest rcr = new RoleController.RoleCreationRequest(testRoleName, testRoleDesc, null);
 
         // first make sure the role can't be created if we're not logged in
         mockMvc.perform(post("/api/roles")

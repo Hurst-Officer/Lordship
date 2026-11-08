@@ -63,6 +63,31 @@ public class PersonController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    /**
+     * The signed-in person corrects their own details from their own page.
+     * Body: any of nameFull, birthday (YYYY-MM-DD), personalPhone, personalEmail, mailingAddress.
+     * A missing key is left alone; blank or null clears it (except the name). The social security number and the
+     * emergency contact cannot be changed here.
+     * 200 with PersonOwnResponse. 400 person.name_blank, person.too_long, person.birthday_invalid,
+     * person.email_invalid or person.not_text, each on its field. Audited on the person table.
+     */
+    @PreAuthorize("hasAuthority('persons:edit_own')")
+    @PatchMapping("/self")
+    public ResponseEntity<PersonOwnResponse> editSelf(@RequestBody Map<String, Object> request, Authentication authentication) {
+        LordshipPrincipal principal = (LordshipPrincipal) authentication.getPrincipal();
+        Map<String, Object> changes = new HashMap<>();
+
+        if (request.containsKey("nameFull")) changes.put("name_full", request.get("nameFull"));
+        if (request.containsKey("birthday")) changes.put("birthday", request.get("birthday"));
+        if (request.containsKey("personalPhone")) changes.put("personal_phone", request.get("personalPhone"));
+        if (request.containsKey("personalEmail")) changes.put("personal_email", request.get("personalEmail"));
+        if (request.containsKey("mailingAddress")) changes.put("mailing_address", request.get("mailingAddress"));
+
+        return personService.patchOwn(principal.personUuid(), changes)
+                .map(person -> ResponseEntity.ok(PersonOwnResponse.from(person)))
+                .orElse(ResponseEntity.notFound().build());
+    }
+
     @PreAuthorize("hasAuthority('persons:edit')")
     @PatchMapping("/{uuid}")
     public ResponseEntity<PersonResponse> editPerson(

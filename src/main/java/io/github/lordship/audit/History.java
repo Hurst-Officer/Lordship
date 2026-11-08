@@ -42,4 +42,25 @@ public final class History {
 
     // A page of entries, newest first. more is true when older ones remain.
     public record EntryPage(List<Entry> entries, boolean more) { }
+
+    /**
+     * One save the agent made, for "My activity" on their own page: one request's changes to one kind of record.
+     * table is the audit table ("lot"); records counts the records it touched, recordId is the first of them.
+     * fields are the fields an update changed (empty for an add or a delete). recordName, propertyId,
+     * propertyName and lotId say what the record is, where the server knows the kind; null otherwise.
+     * hidden is true when the record is under a property the agent may no longer see: then everything that
+     * would say which record it was is left out.
+     */
+    public record Save(UUID id, OffsetDateTime at, String table, OperationType operation, int records,
+                       String recordId, List<String> fields, String recordName,
+                       UUID propertyId, String propertyName, UUID lotId, boolean hidden) {
+
+        // The same save with nothing that names its record
+        public Save withoutRecord() {
+            return new Save(id, at, table, operation, records, null, List.of(), null, null, null, null, true);
+        }
+    }
+
+    // A page of saves. more is true when more remain after them.
+    public record SavePage(List<Save> saves, boolean more) { }
 }

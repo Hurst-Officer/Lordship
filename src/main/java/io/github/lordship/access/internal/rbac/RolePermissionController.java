@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,6 +32,22 @@ public class RolePermissionController {
             String permissionName
     ) { }
 
+    // Several permissions of one role at once: given (granted true) or taken away
+    public record SetPermissionsRequest(
+            @NotNull
+            UUID roleId,
+
+            @NotNull
+            List<String> permissionNames,
+
+            // required: a body without it is a 400, never read as "take them away"
+            @NotNull
+            Boolean granted
+    ) { }
+
+    // updated: how many changed. changed: their names (those already that way are left out)
+    public record SetPermissionsResponse(int updated, List<String> changed) { }
+
     private final RolePermissionService rolePermissionService;
 
     public RolePermissionController(RolePermissionService rolePermissionService) {
@@ -46,6 +63,27 @@ public class RolePermissionController {
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(rolePermission.toResponse());
+    }
+
+    /**
+     * Gives or takes several permissions of one role at once, like a whole group in Glade's role editor.
+     * Giving needs role_permissions:edit, taking needs role_permissions:delete (403 otherwise).
+     * All or nothing. Answers { updated, changed }: how many changed and which (those already that way are skipped).
+     * 404 for an unknown or deleted role. 400 permission.unknown. 409 access.last_key.
+     */
+    @PreAuthorize("hasAuthority('role_permissions:edit') or hasAuthority('role_permissions:delete')")
+    @PostMapping("/set")
+    public ResponseEntity<SetPermissionsResponse> setPermissions(@Valid @RequestBody SetPermissionsRequest request,
+                                                                 Authentication authentication) {
+        String needed = request.granted() ? "role_permissions:edit" : "role_permissions:delete";
+        boolean allowed = authentication.getAuthorities().stream()
+                .anyMatch(authority -> needed.equals(authority.getAuthority()));
+        if (!allowed) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        return rolePermissionService.setPermissions(request.roleId(), request.permissionNames(), request.granted())
+                .map(changed -> ResponseEntity.ok(new SetPermissionsResponse(changed.size(), changed)))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     // the mirror image of /append - same body, so the client does not have to
@@ -79,14 +117,13 @@ public class RolePermissionController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
+    // 404 for an unknown or deleted role
     @PreAuthorize("hasAuthority('role_permissions:view')")
     @GetMapping("/role/{roleId}")
     public ResponseEntity<List<RolePermissionResponse>> findPermissionsForRole(@PathVariable UUID roleId) {
-        List<RolePermissionResponse> permissions = rolePermissionService.findPermissionsForRole(roleId)
-                .stream()
-                .map(RolePermission::toResponse)
-                .toList();
-        return ResponseEntity.ok(permissions);
+        return rolePermissionService.findLivePermissionsForRole(roleId)
+                .map(found -> ResponseEntity.ok(found.stream().map(RolePermission::toResponse).toList()))
+                .orElse(ResponseEntity.notFound().build());
     }
 
     @PreAuthorize("hasAuthority('role_permissions:view')")
@@ -98,4 +135,4 @@ public class RolePermissionController {
                 .toList();
         return ResponseEntity.ok(roles);
     }
-}
+}

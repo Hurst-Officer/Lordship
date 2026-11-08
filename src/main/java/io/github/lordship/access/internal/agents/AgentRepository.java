@@ -3,7 +3,10 @@ package io.github.lordship.access.internal.agents;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Repository
@@ -46,6 +49,31 @@ public class AgentRepository {
                 .param("title", title)
                 .param("agentId", agentId)
                 .update();
+    }
+
+    // The columns an agent may change on their own page
+    private static final Set<String> OWN_COLUMNS = Set.of("work_phone", "hours_available");
+
+    // Changes the agent's own contact columns, keyed by column name. Empty for an unknown or removed agent.
+    public Optional<AgentRow> patchOwn(UUID agentId, Map<String, Object> changes) {
+        if (changes.isEmpty()) return findById(agentId);
+        for (String col : changes.keySet()) {
+            if (!OWN_COLUMNS.contains(col)) {
+                throw new IllegalArgumentException("Invalid column: " + col);
+            }
+        }
+
+        StringBuilder sql = new StringBuilder("UPDATE agent SET ");
+        changes.keySet().forEach(col -> sql.append(col).append(" = :").append(col).append(", "));
+        sql.setLength(sql.length() - 2);
+        sql.append(" WHERE uuid = :agentId AND deleted_at IS NULL RETURNING *");
+
+        Map<String, Object> params = new HashMap<>(changes);
+        params.put("agentId", agentId);
+        return jdbc.sql(sql.toString())
+                .params(params)
+                .query(AgentRow.class)
+                .optional();
     }
 
     // logs the agent out

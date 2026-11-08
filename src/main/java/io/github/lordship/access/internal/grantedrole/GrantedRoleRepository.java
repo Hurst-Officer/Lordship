@@ -103,6 +103,26 @@ public class GrantedRoleRepository {
                 .list();
     }
 
+    /**
+     * The people who lost this role when it was deleted, for a restore to give it back.
+     * Deleting a role revokes its grants in the same transaction, so they share the role's deleted_at.
+     * Leaves out removed agents. One row per agent. Empty while the role is live.
+     */
+    public List<UUID> findAgentsRevokedWithRole(UUID roleId) {
+        return jdbc.sql("""
+                SELECT DISTINCT gr.agent_id
+                FROM granted_role gr
+                JOIN agent_role r ON r.uuid = gr.role_id
+                JOIN agent a ON a.uuid = gr.agent_id AND a.deleted_at IS NULL
+                WHERE gr.role_id = :roleId
+                AND r.deleted_at IS NOT NULL
+                AND gr.deleted_at = r.deleted_at
+                """)
+                .param("roleId", roleId)
+                .query(UUID.class)
+                .list();
+    }
+
     public Optional<GrantedRoleRow> findActiveGrant(UUID agentId, UUID roleId) {
         return jdbc.sql("""
                 SELECT * FROM granted_role

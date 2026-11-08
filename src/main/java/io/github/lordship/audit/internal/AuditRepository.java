@@ -116,6 +116,69 @@ public class AuditRepository {
         return PageResult.of(auditLogs, pageRequest, total);
     }
 
+    // ---- an agent's own activity (Glade: My information) ---------------------------------
+
+    // What "My activity" may sort by, to the column it sorts on. Anything else sorts by time.
+    private static final Map<String, String> OWN_SAVE_SORTS = Map.of(
+            "when", "changed_at",
+            "kind", "operation",
+            "record", "lower(record_name)");
+
+    /**
+     * The agent's saves, one row per request and table and operation, so a bulk change of 30 lots is one row.
+     * Each is named from its record where the kind is known (property, lot, home, person, agent, role);
+     * a lot or a home also gives its property. Deleted records keep their names.
+     * Ties (and the time sort) fall back to newest first. limit is one more than a page, to know whether more remain.
+     */
+    public List<HistoryRows.SaveRow> findOwnSaves(UUID agentId, String sort, boolean ascending, int limit, int offset) {
+        String column = OWN_SAVE_SORTS.getOrDefault(sort, "changed_at");
+        String direction = ascending ? "ASC" : "DESC";
+        return jdbc.sql("""
+                    WITH saves AS (
+                        SELECT COALESCE(a.correlation_id, a.uuid) AS save_id,
+                               a.table_name,
+                               a.operation::text AS operation,
+                               max(a.changed_at) AS changed_at,
+                               max(a.uuid::text) AS last_id,
+                               count(DISTINCT a.uuid)::int AS records,
+                               (array_agg(a.record_id ORDER BY a.uuid))[1] AS record_id,
+                               string_agg(DISTINCT k.key, ',' ORDER BY k.key) AS fields
+                          FROM audit_log a
+                          LEFT JOIN LATERAL jsonb_object_keys(
+                                CASE WHEN a.operation = 'UPDATE' AND jsonb_typeof(a.value_after::jsonb) = 'object'
+                                     THEN a.value_after::jsonb ELSE '{}'::jsonb END) AS k(key) ON true
+                         WHERE a.user_id = :agentId
+                           AND a.user_type = 'AGENT'
+                         GROUP BY save_id, a.table_name, a.operation
+                    ), named AS (
+                        SELECT s.*,
+                               COALESCE(pr.property_name, l.lot_number, h.name, h.vin, pe.name_full, ap.name_full, r.role_name)
+                                   AS record_name,
+                               COALESCE(pr.uuid, lp.uuid) AS property_id,
+                               COALESCE(pr.property_name, lp.property_name) AS property_name,
+                               COALESCE(l.uuid, hl.uuid) AS lot_id
+                          FROM saves s
+                          LEFT JOIN property pr ON s.table_name = 'property' AND pr.uuid::text = s.record_id
+                          LEFT JOIN lot l ON s.table_name = 'lot' AND l.uuid::text = s.record_id
+                          LEFT JOIN mobile_home h ON s.table_name = 'mobile_home' AND h.uuid::text = s.record_id
+                          LEFT JOIN lot hl ON hl.uuid = h.lot_id
+                          LEFT JOIN property lp ON lp.uuid = COALESCE(l.property_id, hl.property_id)
+                          LEFT JOIN person pe ON s.table_name = 'person' AND pe.uuid::text = s.record_id
+                          LEFT JOIN agent ag ON s.table_name = 'agent' AND ag.uuid::text = s.record_id
+                          LEFT JOIN person ap ON ap.uuid = ag.person_id
+                          LEFT JOIN agent_role r ON s.table_name = 'agent_role' AND r.uuid::text = s.record_id
+                    )
+                    SELECT * FROM named
+                     ORDER BY %s %s NULLS LAST, changed_at DESC, last_id DESC
+                     LIMIT :limit OFFSET :offset
+                    """.formatted(column, direction))
+                .param("agentId", agentId)
+                .param("limit", limit)
+                .param("offset", offset)
+                .query(HistoryRows.SaveRow.class)
+                .list();
+    }
+
     // ---- history for Glade's screens ----------------------------------------------------
     // A change's author is the agent's person. System rows have no agent, so they read "The server".
 
