@@ -48,6 +48,15 @@ public final class LeaseDocument {
      *               Any that fails {@link StyleRules} is dropped.
      */
     public static String render(LeasePreview lease, String serial, List<DocumentStyle> styles) {
+        return render(lease, serial, styles, true);
+    }
+
+    /**
+     * @param stampDraft false leaves out the "DRAFT -- NOT FOR SIGNATURE" stamp: for an author looking at a
+     *                   document template on paper, where every figure is a token by nature and no tenant
+     *                   will ever be handed the page.
+     */
+    public static String render(LeasePreview lease, String serial, List<DocumentStyle> styles, boolean stampDraft) {
         StringBuilder out = new StringBuilder(8192);
 
         out.append("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n")
@@ -58,7 +67,9 @@ public final class LeaseDocument {
                 .append("</head>\n<body>\n");
 
         provenance(out, lease, serial);
-        draftNotice(out, lease);
+        if (stampDraft) {
+            draftNotice(out, lease);
+        }
 
         boolean first = true;
         for (DocumentFreeze.FrozenSection section : lease.frozen().sections()) {

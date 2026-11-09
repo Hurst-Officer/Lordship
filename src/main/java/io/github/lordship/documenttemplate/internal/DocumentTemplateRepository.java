@@ -141,4 +141,37 @@ public class DocumentTemplateRepository {
                 .param("uuid", uuid)
                 .update() > 0;
     }
+
+    // ---- deleted documents ---------------------------------------------------
+
+    /** A document live or deleted, for a restore. */
+    public Optional<DocumentTemplateRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM document_template WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    /** Deleted documents, the most recently deleted first. */
+    public List<DocumentTemplateRow> findDeleted() {
+        return jdbc.sql("""
+                        SELECT * FROM document_template
+                         WHERE deleted_at IS NOT NULL
+                         ORDER BY deleted_at DESC
+                        """)
+                .query(rowMapper)
+                .list();
+    }
+
+    /** Empty when it was not deleted (a coworker restored it a moment earlier). */
+    public Optional<DocumentTemplateRow> restore(UUID uuid) {
+        return jdbc.sql("""
+                        UPDATE document_template SET deleted_at = NULL
+                         WHERE uuid = :uuid AND deleted_at IS NOT NULL
+                         RETURNING *
+                        """)
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
 }

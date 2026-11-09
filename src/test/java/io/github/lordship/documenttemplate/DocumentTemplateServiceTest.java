@@ -2,6 +2,7 @@ package io.github.lordship.documenttemplate;
 
 import io.github.lordship.audit.AuditContext;
 import io.github.lordship.audit.AuditService;
+import io.github.lordship.documenttemplate.internal.DocumentCopyRepository;
 import io.github.lordship.documenttemplate.internal.DocumentSectionRepository;
 import io.github.lordship.documenttemplate.internal.DocumentSectionRow;
 import io.github.lordship.documenttemplate.internal.DocumentStyleRepository;
@@ -73,6 +74,7 @@ public class DocumentTemplateServiceTest {
                 templateClauseRepository,
                 documentStyleRepository,
                 customizationRepository,
+                mock(DocumentCopyRepository.class),
                 tenancyChargeTermService,
                 auditService,
                 auditContext);

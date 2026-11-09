@@ -146,4 +146,37 @@ public class PropertyDocumentAssignmentRepository {
                 .param("uuid", uuid)
                 .update() > 0;
     }
+
+    // ---- every park, and restoring -------------------------------------------
+
+    /** Every live assignment of every park, for the list of documents. Few rows: parks times kinds of paper. */
+    public List<PropertyDocumentAssignmentRow> findAllLive() {
+        return jdbc.sql("""
+                        SELECT * FROM property_document_assignment
+                         WHERE deleted_at IS NULL
+                         ORDER BY property, agreement_type, instrument_type
+                        """)
+                .query(rowMapper)
+                .list();
+    }
+
+    /** An assignment live or ended, for a restore. */
+    public Optional<PropertyDocumentAssignmentRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM property_document_assignment WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    /** Empty when it was not ended. Its customizations were never touched, so they come back with it. */
+    public Optional<PropertyDocumentAssignmentRow> restore(UUID uuid) {
+        return jdbc.sql("""
+                        UPDATE property_document_assignment SET deleted_at = NULL
+                         WHERE uuid = :uuid AND deleted_at IS NOT NULL
+                         RETURNING *
+                        """)
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
 }

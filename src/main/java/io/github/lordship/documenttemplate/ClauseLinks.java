@@ -97,6 +97,24 @@ public final class ClauseLinks {
     }
 
     /**
+     * What is wrong with this clause, its variants and everything under them -- run after a clause gets a new
+     * parent. Its sub-clauses go down a level with it, so one of them may now be too deep, and a variant left
+     * under the old parent no longer sits beside the clause it stands in for.
+     */
+    public static List<Problem> problemsWithTree(DocumentTemplate doc, UUID clauseUuid) {
+        Set<UUID> roots = new LinkedHashSet<>();
+        roots.add(clauseUuid);
+        doc.sectionOf(clauseUuid).ifPresent(section -> live(section).stream()
+                .filter(other -> clauseUuid.equals(other.variantOf()))
+                .forEach(other -> roots.add(other.uuid())));
+        List<Problem> problems = new ArrayList<>();
+        for (UUID uuid : withDescendants(doc, roots)) {
+            problems.addAll(problemsWith(doc, uuid));
+        }
+        return List.copyOf(problems);
+    }
+
+    /**
      * Every pair in this section that some edit may have broken -- run after a
      * clause moves, since a move can land it between two clauses that are not it.
      */

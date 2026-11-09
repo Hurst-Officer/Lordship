@@ -137,7 +137,7 @@ public class TemplateClauseRepositoryTest extends IntegrationTest {
     }
 
     @Test
-    void save_shouldIgnoreSoftDeletedSiblings_whenComputingTheOrdinal() {
+    void save_shouldCountSoftDeletedSiblings_whenComputingTheOrdinal() {
         // Arrange
         UUID sectionId = section("Clause reuse", "Lease");
         clause(sectionId);
@@ -147,8 +147,8 @@ public class TemplateClauseRepositoryTest extends IntegrationTest {
         // Act
         TemplateClauseRow replacement = clause(sectionId);
 
-        // Assert
-        assertEquals(0, doomed.ordinal().compareTo(replacement.ordinal()));
+        // Assert: past the deleted one, which keeps its number for a restore
+        assertTrue(replacement.ordinal().compareTo(doomed.ordinal()) > 0);
     }
 
     // ---- condition_values ----------------------------------------------------

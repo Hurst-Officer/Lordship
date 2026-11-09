@@ -128,7 +128,7 @@ public class PropertyDocumentCustomizationRepository {
         return jdbc.sql("""
                         SELECT * FROM property_document_customization
                          WHERE assignment = :assignment AND deleted_at IS NULL
-                         ORDER BY action, ordinal
+                         ORDER BY action, ordinal, uuid
                         """)
                 .param("assignment", assignment)
                 .query(rowMapper)
@@ -143,7 +143,7 @@ public class PropertyDocumentCustomizationRepository {
         return jdbc.sql("""
                         SELECT * FROM property_document_customization
                          WHERE assignment IN (:assignmentIds) AND deleted_at IS NULL
-                         ORDER BY assignment, action, ordinal
+                         ORDER BY assignment, action, ordinal, uuid
                         """)
                 .param("assignmentIds", assignmentIds)
                 .query(rowMapper)
@@ -237,6 +237,21 @@ public class PropertyDocumentCustomizationRepository {
                 .single();
     }
 
+    /** Whether a park added a clause of its own to this section, which deleting the section would drop. */
+    public boolean existsInSection(UUID section) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1 FROM property_document_customization
+                             WHERE deleted_at IS NULL
+                               AND action = 'ADD_CLAUSE'
+                               AND section = :section
+                        )
+                        """)
+                .param("section", section)
+                .query(Boolean.class)
+                .single();
+    }
+
     /** Undoing a customization puts the document back the way the template wrote it. */
     public boolean softDelete(UUID uuid) {
         return jdbc.sql("""
@@ -264,5 +279,27 @@ public class PropertyDocumentCustomizationRepository {
             return array.length == 0 ? null : array;
         }
         throw new IllegalArgumentException("conditionValues must be a list of strings");
+    }
+
+    // ---- restoring -----------------------------------------------------------
+
+    /** A customization live or removed, for a restore. */
+    public Optional<PropertyDocumentCustomizationRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM property_document_customization WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    /** Empty when it was not removed. */
+    public Optional<PropertyDocumentCustomizationRow> restore(UUID uuid) {
+        return jdbc.sql("""
+                        UPDATE property_document_customization SET deleted_at = NULL
+                         WHERE uuid = :uuid AND deleted_at IS NOT NULL
+                         RETURNING *
+                        """)
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
     }
 }

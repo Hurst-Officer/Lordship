@@ -32,15 +32,21 @@ public class TemplateClauseRepository {
      * A clause needs a section and nothing else -- every other column is
      * nullable, so "add clause" is a button rather than a form. Ordinal lands
      * it at the end of the section, assigned here rather than by the client.
+     *
+     * <p>Past every template clause of the section, deleted ones included: a
+     * deleted clause keeps its number for a restore, and counting only the live
+     * ones put a new clause on that number, leaving two clauses with no order to
+     * move between. A park's own clause may share the number; the template's
+     * prints first on a tie, as it always has (renumberSection keeps that order).
      */
     public TemplateClauseRow save(UUID sectionId, UUID createdBy) {
         return jdbc.sql("""
                         INSERT INTO template_clause (section, ordinal, created_by)
                         VALUES (
                             :sectionId,
-                            (SELECT COALESCE(MAX(ordinal), 0) + 1
+                            (SELECT FLOOR(COALESCE(MAX(ordinal), 0)) + 1
                                FROM template_clause
-                              WHERE section = :sectionId AND deleted_at IS NULL),
+                              WHERE section = :sectionId),
                             :createdBy
                         )
                         RETURNING *
@@ -62,7 +68,7 @@ public class TemplateClauseRepository {
         return jdbc.sql("""
                         SELECT * FROM template_clause
                          WHERE section = :sectionId AND deleted_at IS NULL
-                         ORDER BY ordinal
+                         ORDER BY ordinal, uuid
                         """)
                 .param("sectionId", sectionId)
                 .query(rowMapper)
@@ -77,7 +83,7 @@ public class TemplateClauseRepository {
         return jdbc.sql("""
                         SELECT * FROM template_clause
                          WHERE section IN (:sectionIds) AND deleted_at IS NULL
-                         ORDER BY section, ordinal
+                         ORDER BY section, ordinal, uuid
                         """)
                 .param("sectionIds", sectionIds)
                 .query(rowMapper)
@@ -161,5 +167,82 @@ public class TemplateClauseRepository {
             return array.length == 0 ? null : array;
         }
         throw new IllegalArgumentException("conditionValues must be a list of strings");
+    }
+
+    // ---- deleted clauses and order -------------------------------------------
+
+    /** A clause live or deleted, for a restore. */
+    public Optional<TemplateClauseRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM template_clause WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    /** One section's deleted clauses, the most recently deleted first. */
+    public List<TemplateClauseRow> findDeletedBySection(UUID sectionId) {
+        return jdbc.sql("""
+                        SELECT * FROM template_clause
+                         WHERE section = :sectionId AND deleted_at IS NOT NULL
+                         ORDER BY deleted_at DESC
+                        """)
+                .param("sectionId", sectionId)
+                .query(rowMapper)
+                .list();
+    }
+
+    /** Empty when it was not deleted. It comes back at its old place, under its old parent. */
+    public Optional<TemplateClauseRow> restore(UUID uuid) {
+        return jdbc.sql("""
+                        UPDATE template_clause SET deleted_at = NULL
+                         WHERE uuid = :uuid AND deleted_at IS NOT NULL
+                         RETURNING *
+                        """)
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    /**
+     * Spreads one section's ordinals out to 10, 20, 30... when a move finds no room left between two
+     * neighbours (ordinals keep four decimals), or two clauses share a number.
+     *
+     * <p>A section's ordinals are shared by three tables: the template's clauses, the clauses parks added
+     * (property_document_customization ADD_CLAUSE) and the clauses typed onto one draft
+     * (instrument_addition). Every row of the three gets its own number, in print order: by ordinal, and on
+     * a tie the template's clause first, then a park's, then a draft's (the order the freeze prints a tie in),
+     * then by uuid. So a park's clause at 12.5 still sits between the template's 12 and 13 afterwards, and two
+     * clauses that shared a number come apart in the order they printed. Deleted rows are included, so a
+     * restore lands where it was. Only the order is bookkeeping, so this is not written to the audit log.
+     */
+    public void renumberSection(UUID sectionId) {
+        jdbc.sql("""
+                        WITH taken AS (
+                            SELECT 0 AS source, uuid, ordinal FROM template_clause WHERE section = :sectionId
+                            UNION ALL
+                            SELECT 1, uuid, ordinal FROM property_document_customization
+                             WHERE section = :sectionId AND action = 'ADD_CLAUSE' AND ordinal IS NOT NULL
+                            UNION ALL
+                            SELECT 2, uuid, ordinal FROM instrument_addition WHERE section = :sectionId
+                        ), ranked AS (
+                            SELECT source, uuid, ROW_NUMBER() OVER (ORDER BY ordinal, source, uuid) * 10 AS new
+                              FROM taken
+                        ), clauses AS (
+                            UPDATE template_clause c SET ordinal = r.new
+                              FROM ranked r
+                             WHERE r.source = 0 AND c.uuid = r.uuid
+                            RETURNING 1
+                        ), parks AS (
+                            UPDATE property_document_customization p SET ordinal = r.new
+                              FROM ranked r
+                             WHERE r.source = 1 AND p.uuid = r.uuid
+                            RETURNING 1
+                        )
+                        UPDATE instrument_addition i SET ordinal = r.new
+                          FROM ranked r
+                         WHERE r.source = 2 AND i.uuid = r.uuid
+                        """)
+                .param("sectionId", sectionId)
+                .update();
     }
 }

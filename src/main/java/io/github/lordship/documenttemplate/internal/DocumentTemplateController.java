@@ -1,7 +1,12 @@
 package io.github.lordship.documenttemplate.internal;
 
+import io.github.lordship.audit.AuditService;
+import io.github.lordship.audit.History;
+import io.github.lordship.documenttemplate.DocumentSection;
+import io.github.lordship.documenttemplate.DocumentStyle;
 import io.github.lordship.documenttemplate.DocumentTemplate;
 import io.github.lordship.documenttemplate.DocumentTemplateService;
+import io.github.lordship.documenttemplate.TemplateClause;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.DocumentToken;
@@ -11,6 +16,7 @@ import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -21,12 +27,14 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Function;
 
 /**
  * The global document pool: templates, their sections, and the clauses inside
@@ -91,16 +99,20 @@ public class DocumentTemplateController {
             Map.entry("note", "note"));
 
     private final DocumentTemplateService documentTemplateService;
+    private final AuditService auditService;
 
-    public DocumentTemplateController(DocumentTemplateService documentTemplateService) {
+    public DocumentTemplateController(DocumentTemplateService documentTemplateService, AuditService auditService) {
         this.documentTemplateService = documentTemplateService;
+        this.auditService = auditService;
     }
 
     // All three are NOT NULL with no default, so all three are the minimum.
+    // copyFromId (optional) starts the new document from another one's wording: its styles, sections and clauses.
     public record CreateTemplateRequest(
             @NotBlank String name,
             @NotNull AgreementType agreementType,
-            @NotNull InstrumentType instrumentType) { }
+            @NotNull InstrumentType instrumentType,
+            UUID copyFromId) { }
 
     // A section has to be called something. Everything else -- the signature
     // block, the addenda checkbox, whether a park may drop it -- is PATCH.
@@ -139,7 +151,7 @@ public class DocumentTemplateController {
             @Valid @RequestBody CreateTemplateRequest request) {
 
         DocumentTemplate created = documentTemplateService.createTemplate(
-                request.name(), request.agreementType(), request.instrumentType());
+                request.name(), request.agreementType(), request.instrumentType(), request.copyFromId());
 
         return ResponseEntity.status(HttpStatus.CREATED).body(DocumentTemplateResponse.from(created));
     }
@@ -344,43 +356,147 @@ public class DocumentTemplateController {
         return ResponseEntity.ok(tokens);
     }
 
-    /**
-     * What the clause editor's token picker shows. Grouped by namespace,
-     * because seventy tokens in one alphabetical list is unusable.
-     *
-     * <p>{@code allowedValues} is populated only for tokens a clause may branch
-     * on, so the condition editor can offer a checklist instead of a free-text
-     * box someone can typo into.
-     *
-     * <p>{@code governedBy} and {@code populatedWhen} appear on amount tokens,
-     * and are what let the editor propose the condition at the moment a token
-     * is inserted -- "this only has a value when term.late_fee_method is FLAT;
-     * condition the clause on that?" -- instead of leaving the author to work
-     * out which of nine methods applies.
-     */
-    public record TokenResponse(
-            String placeholder,
-            String namespace,
-            String source,
-            String format,
-            String description,
-            boolean canCondition,
-            List<String> allowedValues,
-            String governedBy,
-            List<String> populatedWhen) {
+    // ---- deleted parts, and bringing them back -------------------------------
+    // Every delete here only marks the row deleted. A restore of a live row is answered as it is, so an undo
+    // whose answer was lost can be sent again. deletedBy is the agent's name, or null without audit:view.
 
-        static TokenResponse from(DocumentToken token) {
-            return new TokenResponse(
-                    token.placeholder(),
-                    token.namespace(),
-                    token.source().name(),
-                    token.format().name(),
-                    token.description(),
-                    token.canCondition(),
-                    token.allowedValues().stream().sorted().toList(),
-                    token.governedBy().map(DocumentToken::token).orElse(null),
-                    token.populatedWhen().stream().sorted().toList());
-        }
+    /** One deleted document, section, clause or style. Fields that mean nothing for the kind are null. */
+    public record DeletedPart(
+            UUID id,
+            String name,
+            String clauseKey,
+            String body,
+            AgreementType agreementType,
+            InstrumentType instrumentType,
+            Integer version,
+            OffsetDateTime deletedAt,
+            String deletedBy) { }
+
+    public record MoveSectionRequest(UUID afterId) { }
+
+    public record MoveClauseRequest(UUID parentId, UUID afterId) { }
+
+    @PreAuthorize("hasAuthority('document_template:delete')")
+    @GetMapping("/deleted")
+    public ResponseEntity<List<DeletedPart>> deletedTemplates(Authentication authentication) {
+        List<DocumentTemplate> templates = documentTemplateService.findDeleted();
+        Map<UUID, History.Mark> who = deleters("document_template", templates, DocumentTemplate::uuid, authentication);
+        return ResponseEntity.ok(templates.stream()
+                .map(t -> new DeletedPart(t.uuid(), t.name(), null, null, t.agreementType(), t.instrumentType(),
+                        t.version(), t.deletedAt(), nameOf(who.get(t.uuid()))))
+                .toList());
+    }
+
+    // 404 for an unknown document
+    @PreAuthorize("hasAuthority('document_template:delete')")
+    @PostMapping("/{uuid}/restore")
+    public ResponseEntity<DocumentTemplateResponse> restoreTemplate(@PathVariable UUID uuid) {
+        return documentTemplateService.restoreTemplate(uuid)
+                .map(DocumentTemplateResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @GetMapping("/{uuid}/sections/deleted")
+    public ResponseEntity<List<DeletedPart>> deletedSections(@PathVariable UUID uuid, Authentication authentication) {
+        List<DocumentSection> sections = documentTemplateService.findDeletedSections(uuid);
+        Map<UUID, History.Mark> who = deleters("document_section", sections, DocumentSection::uuid, authentication);
+        return ResponseEntity.ok(sections.stream()
+                .map(s -> new DeletedPart(s.uuid(), s.name(), s.sectionKey(), null, null, null, null,
+                        s.deletedAt(), nameOf(who.get(s.uuid()))))
+                .toList());
+    }
+
+    // 404 for an unknown section; 409 section.document_deleted
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @PostMapping("/sections/{sectionUuid}/restore")
+    public ResponseEntity<DocumentTemplateResponse> restoreSection(@PathVariable UUID sectionUuid) {
+        return documentTemplateService.restoreSection(sectionUuid)
+                .map(DocumentTemplateResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @GetMapping("/sections/{sectionUuid}/clauses/deleted")
+    public ResponseEntity<List<DeletedPart>> deletedClauses(@PathVariable UUID sectionUuid, Authentication authentication) {
+        List<TemplateClause> clauses = documentTemplateService.findDeletedClauses(sectionUuid);
+        Map<UUID, History.Mark> who = deleters("template_clause", clauses, TemplateClause::uuid, authentication);
+        return ResponseEntity.ok(clauses.stream()
+                .map(c -> new DeletedPart(c.uuid(), c.title(), c.clauseKey(), c.body(), null, null, null,
+                        c.deletedAt(), nameOf(who.get(c.uuid()))))
+                .toList());
+    }
+
+    // 404 for an unknown clause; 409 clause.section_deleted; 400 clause.not_saved when it would come back broken
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @PostMapping("/clauses/{clauseUuid}/restore")
+    public ResponseEntity<DocumentTemplateResponse> restoreClause(@PathVariable UUID clauseUuid) {
+        return documentTemplateService.restoreClause(clauseUuid)
+                .map(DocumentTemplateResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @GetMapping("/{uuid}/styles/deleted")
+    public ResponseEntity<List<DeletedPart>> deletedStyles(@PathVariable UUID uuid, Authentication authentication) {
+        List<DocumentStyle> styles = documentTemplateService.findDeletedStyles(uuid);
+        Map<UUID, History.Mark> who = deleters("document_style", styles, DocumentStyle::uuid, authentication);
+        return ResponseEntity.ok(styles.stream()
+                .map(s -> new DeletedPart(s.uuid(), s.name(), null, s.css(), null, null, null,
+                        s.deletedAt(), nameOf(who.get(s.uuid()))))
+                .toList());
+    }
+
+    // 404 for an unknown style; 409 style.document_deleted, style.target_taken
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @PostMapping("/styles/{styleUuid}/restore")
+    public ResponseEntity<DocumentTemplateResponse> restoreStyle(@PathVariable UUID styleUuid) {
+        return documentTemplateService.restoreStyle(styleUuid)
+                .map(DocumentTemplateResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // ---- moving --------------------------------------------------------------
+
+    /** The section directly after afterId, or first when it is null. 400 section.move_after_unknown. */
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @PostMapping("/sections/{sectionUuid}/move")
+    public ResponseEntity<DocumentTemplateResponse> moveSection(@PathVariable UUID sectionUuid,
+                                                                @RequestBody MoveSectionRequest request) {
+        return documentTemplateService.moveSection(sectionUuid, request.afterId())
+                .map(DocumentTemplateResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * The clause under parentId (null: the top level), directly after afterId (null: first there).
+     * 400 clause.move_after_unknown, clause.parent_not_in_section, or clause.not_saved naming what would break.
+     */
+    @PreAuthorize("hasAuthority('document_template:edit')")
+    @PostMapping("/clauses/{clauseUuid}/move")
+    public ResponseEntity<DocumentTemplateResponse> moveClause(@PathVariable UUID clauseUuid,
+                                                               @RequestBody MoveClauseRequest request) {
+        return documentTemplateService.moveClause(clauseUuid, request.parentId(), request.afterId())
+                .map(DocumentTemplateResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // Who deleted each one, from the audit log, for someone who may read it
+    private <T> Map<UUID, History.Mark> deleters(String table, List<T> rows, Function<T, UUID> id,
+                                                 Authentication authentication) {
+        boolean canViewAudits = authentication.getAuthorities().stream()
+                .anyMatch(authority -> "audit:view".equals(authority.getAuthority()));
+        return canViewAudits ? auditService.deletions(table, rows.stream().map(id).toList()) : Map.of();
+    }
+
+    private static String nameOf(History.Mark mark) {
+        return mark == null ? null : mark.name();
     }
 
     // ---- internals -----------------------------------------------------------

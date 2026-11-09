@@ -100,4 +100,38 @@ public class DocumentStyleRepository {
                 .param("uuid", uuid)
                 .update() > 0;
     }
+
+    // ---- deleted styles ------------------------------------------------------
+
+    /** A style live or deleted, for a restore. */
+    public Optional<DocumentStyleRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM document_style WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(DocumentStyleRow.class)
+                .optional();
+    }
+
+    /** One document's deleted styles, the most recently deleted first. */
+    public List<DocumentStyleRow> findDeletedByTemplate(UUID templateId) {
+        return jdbc.sql("""
+                        SELECT * FROM document_style
+                         WHERE template = :templateId AND deleted_at IS NOT NULL
+                         ORDER BY deleted_at DESC
+                        """)
+                .param("templateId", templateId)
+                .query(DocumentStyleRow.class)
+                .list();
+    }
+
+    /** Empty when it was not deleted. */
+    public Optional<DocumentStyleRow> restore(UUID uuid) {
+        return jdbc.sql("""
+                        UPDATE document_style SET deleted_at = NULL
+                         WHERE uuid = :uuid AND deleted_at IS NOT NULL
+                         RETURNING *
+                        """)
+                .param("uuid", uuid)
+                .query(DocumentStyleRow.class)
+                .optional();
+    }
 }
