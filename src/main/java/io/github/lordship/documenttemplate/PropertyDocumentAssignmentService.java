@@ -484,4 +484,124 @@ public class PropertyDocumentAssignmentService {
                 List.of(),
                 List.of());
     }
+
+    // ---- every park, and bringing things back ---------------------------------
+
+    /** Every live assignment of every park, each with its customizations and its document as a summary. */
+    public List<PropertyDocumentAssignment> findAll() {
+        List<PropertyDocumentAssignmentRow> rows = assignmentRepository.findAllLive();
+        if (rows.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, List<PropertyDocumentCustomization>> byAssignment =
+                customizationsFor(rows.stream().map(PropertyDocumentAssignmentRow::uuid).toList());
+        // one document is used by many parks: read each once
+        Map<UUID, DocumentTemplate> summaries = new HashMap<>();
+        return rows.stream()
+                .map(row -> row.toPropertyDocumentAssignment(
+                        summaries.computeIfAbsent(row.documentTemplate(), id -> summaryFor(row)),
+                        byAssignment.getOrDefault(row.uuid(), List.of())))
+                .toList();
+    }
+
+    /** The park a customization belongs to, live or removed, for the history's scope check. */
+    public Optional<UUID> propertyOfCustomization(UUID customizationUuid) {
+        return customizationRepository.findAnyById(customizationUuid)
+                .flatMap(row -> assignmentRepository.findAnyById(row.assignment()))
+                .map(PropertyDocumentAssignmentRow::property);
+    }
+
+    /** The park an assignment belongs to, live or ended, for the history's scope check. */
+    public Optional<UUID> propertyOfAssignment(UUID assignmentUuid) {
+        return assignmentRepository.findAnyById(assignmentUuid).map(PropertyDocumentAssignmentRow::property);
+    }
+
+    /**
+     * The park uses the document again, with every change it had made to it (they were never removed).
+     * A live assignment is answered as it is. Empty for an unknown one.
+     * 409 assignment.document_deleted when the document was deleted since, and assignment.already_in_use when
+     * the park took another document for the same kind of paper meanwhile.
+     */
+    @Transactional
+    public Optional<PropertyDocumentAssignment> restoreAssignment(UUID uuid) {
+        Optional<PropertyDocumentAssignmentRow> found = assignmentRepository.findAnyById(uuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        PropertyDocumentAssignmentRow before = found.get();
+        if (before.deletedAt() == null) {
+            return Optional.of(hydrate(before));
+        }
+        DocumentTemplate template = documentTemplateService.findById(before.documentTemplate())
+                .orElseThrow(() -> RuleConflict.of("assignment.document_deleted"));
+        assignmentRepository
+                .findByPropertyAndKind(before.property(), before.agreementType(), before.instrumentType())
+                .ifPresent(existing -> {
+                    String inUse = documentTemplateService.findById(existing.documentTemplate())
+                            .map(DocumentTemplate::name)
+                            .orElse(existing.documentTemplate().toString());
+                    throw RuleConflict.of("assignment.already_in_use",
+                            inUse, template.agreementType(), template.instrumentType());
+                });
+        Optional<PropertyDocumentAssignmentRow> after = assignmentRepository.restore(uuid);
+        if (after.isEmpty()) {
+            return findById(uuid);
+        }
+        AuditMapper.Diff diff = AuditMapper.diff(before, after.get());
+        if (!diff.before().isEmpty()) {
+            auditService.recordUpdate("property_document_assignment", uuid, diff.before(), diff.after());
+        }
+        return Optional.of(hydrate(after.get()));
+    }
+
+    /**
+     * Brings back one change a park had made: an exclusion, or a clause of its own. Held to the rules the
+     * change was first made under -- a required section or clause cannot be excluded, the same thing is not
+     * excluded twice, nothing the park keeps may cite what it drops, and a park clause must still fit.
+     * A live customization is answered as it is. Empty for an unknown one, or one whose park no longer uses
+     * the document.
+     */
+    @Transactional
+    public Optional<PropertyDocumentAssignment> restoreCustomization(UUID customizationUuid) {
+        Optional<PropertyDocumentCustomizationRow> found = customizationRepository.findAnyById(customizationUuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        PropertyDocumentCustomizationRow before = found.get();
+        if (before.deletedAt() == null) {
+            return findById(before.assignment());
+        }
+        return withAssignment(before.assignment(), (row, document) -> {
+            PropertyDocumentCustomization change = before.toPropertyDocumentCustomization();
+            if (change.excludedSection() != null) {
+                DocumentSection section = sectionIn(document, change.excludedSection());
+                if (!section.canBeExcludedByAProperty()) {
+                    throw RuleConflict.of("section.is_required", section.name());
+                }
+                refuseDuplicateExclusion(before.assignment(), section.uuid());
+                refuseIfNeeded(document, before.assignment(), ClauseLinks.clausesOf(document, section.uuid()), "section");
+            } else if (change.excludedClause() != null) {
+                TemplateClause clause = clauseIn(document, change.excludedClause());
+                if (clause.required()) {
+                    throw RuleConflict.of("clause.is_required");
+                }
+                refuseDuplicateExclusion(before.assignment(), clause.uuid());
+                refuseIfNeeded(document, before.assignment(), Set.of(clause.uuid()), "clause");
+            } else {
+                sectionIn(document, change.section());
+                List<DomainProblem.Problem> problems = ClauseLinks.problemsWithParkClause(document, change);
+                if (!problems.isEmpty()) {
+                    throw InvalidRequest.withDetails("customization.not_saved", problems);
+                }
+            }
+            customizationRepository.restore(customizationUuid).ifPresent(after -> {
+                AuditMapper.Diff diff = AuditMapper.diff(before, after);
+                if (!diff.before().isEmpty()) {
+                    auditService.recordUpdate("property_document_customization", customizationUuid,
+                            diff.before(), diff.after());
+                }
+            });
+            return null;
+        });
+    }
 }

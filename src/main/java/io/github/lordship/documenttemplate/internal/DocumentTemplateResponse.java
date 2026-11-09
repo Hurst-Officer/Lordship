@@ -8,6 +8,8 @@ import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.StyleTarget;
 
+import org.springframework.modulith.NamedInterface;
+
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -20,7 +22,11 @@ import java.util.UUID;
  * documents an admin picks from, where sixty clause bodies per row would be
  * noise. {@link #from} is the editor view. Both come through here so a list row
  * and a detail row can never disagree about a field.
+ *
+ * <p>Shared with the screens module, so the document pages' one call sends a
+ * document in this same shape.
  */
+@NamedInterface("responses")
 public record DocumentTemplateResponse(
         UUID id,
         String name,
@@ -35,6 +41,7 @@ public record DocumentTemplateResponse(
 ) {
 
     /** With a target it restyles that part of every page; without one a clause or section picks it. */
+    @NamedInterface("responses")
     public record StyleResponse(UUID id, String name, String css, StyleTarget target, String note) {
         public static StyleResponse from(DocumentStyle style) {
             return new StyleResponse(style.uuid(), style.name(), style.css(), style.target(), style.note());
@@ -42,6 +49,7 @@ public record DocumentTemplateResponse(
     }
 
     /** One sub-document within the packet: signed on its own, listed on its own. */
+    @NamedInterface("responses")
     public record SectionResponse(
             UUID id,
             BigDecimal ordinal,
@@ -93,6 +101,7 @@ public record DocumentTemplateResponse(
      * really there -- computed on every read, not only after an edit, which is
      * what lets it surface on clauses that were seeded rather than authored.
      */
+    @NamedInterface("responses")
     public record ClauseResponse(
             UUID id,
             BigDecimal ordinal,

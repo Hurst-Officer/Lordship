@@ -19,12 +19,16 @@ import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -49,6 +53,7 @@ public class DocumentTemplateService {
     private final TemplateClauseRepository templateClauseRepository;
     private final DocumentStyleRepository documentStyleRepository;
     private final PropertyDocumentCustomizationRepository customizationRepository;
+    private final DocumentCopyRepository documentCopyRepository;
     private final TenancyChargeTermService tenancyChargeTermService;
     private final AuditService auditService;
     private final AuditContext auditContext;
@@ -58,6 +63,7 @@ public class DocumentTemplateService {
                                    TemplateClauseRepository templateClauseRepository,
                                    DocumentStyleRepository documentStyleRepository,
                                    PropertyDocumentCustomizationRepository customizationRepository,
+                                   DocumentCopyRepository documentCopyRepository,
                                    TenancyChargeTermService tenancyChargeTermService,
                                    AuditService auditService,
                                    AuditContext auditContext) {
@@ -66,6 +72,7 @@ public class DocumentTemplateService {
         this.templateClauseRepository = templateClauseRepository;
         this.documentStyleRepository = documentStyleRepository;
         this.customizationRepository = customizationRepository;
+        this.documentCopyRepository = documentCopyRepository;
         this.tenancyChargeTermService = tenancyChargeTermService;
         this.auditService = auditService;
         this.auditContext = auditContext;
@@ -156,10 +163,41 @@ public class DocumentTemplateService {
     public DocumentTemplate createTemplate(String name,
                                            AgreementType agreementType,
                                            InstrumentType instrumentType) {
-        DocumentTemplateRow saved = documentTemplateRepository.save(
-                name, agreementType, instrumentType, ActingAgent.resolve(auditContext));
+        return createTemplate(name, agreementType, instrumentType, null);
+    }
 
+    /**
+     * A new document, empty or starting from another document's wording (copyFrom): its styles, its
+     * sections and their clauses, with every link inside pointed at the copies (DocumentCopyRepository).
+     * Parks are not copied; each moves to the new document by being assigned it.
+     * 400 template.copy_from_unknown when copyFrom names no live document.
+     */
+    @Transactional
+    public DocumentTemplate createTemplate(String name,
+                                           AgreementType agreementType,
+                                           InstrumentType instrumentType,
+                                           UUID copyFrom) {
+        if (copyFrom != null && documentTemplateRepository.findById(copyFrom).isEmpty()) {
+            throw InvalidRequest.onField("copyFromId", "template.copy_from_unknown");
+        }
+        UUID agent = ActingAgent.resolve(auditContext);
+        DocumentTemplateRow saved = documentTemplateRepository.save(name, agreementType, instrumentType, agent);
         auditService.recordInsert("document_template", saved.uuid(), AuditMapper.toMap(saved));
+
+        if (copyFrom != null) {
+            documentCopyRepository.copyWording(copyFrom, saved.uuid(), agent);
+            // each copied row is an insert in the audit log, like one added by hand
+            DocumentTemplate copy = hydrate(saved);
+            copy.styles().forEach(style -> documentStyleRepository.findById(style.uuid())
+                    .ifPresent(row -> auditService.recordInsert("document_style", row.uuid(), AuditMapper.toMap(row))));
+            for (DocumentSection section : copy.sections()) {
+                documentSectionRepository.findById(section.uuid())
+                        .ifPresent(row -> auditService.recordInsert("document_section", row.uuid(), AuditMapper.toMap(row)));
+                templateClauseRepository.findBySection(section.uuid())
+                        .forEach(row -> auditService.recordInsert("template_clause", row.uuid(), AuditMapper.toMap(row)));
+            }
+            return copy;
+        }
         return hydrate(saved);
     }
 
@@ -250,6 +288,23 @@ public class DocumentTemplateService {
                         : RuleConflict.of("section.is_required_by_statute",
                         existing.name(), existing.statuteRef());
             }
+            // A clause elsewhere in the document that cites one of this section's clauses, or must sit
+            // directly above one, would come out broken on every lease.
+            documentTemplateRepository.findById(existing.template()).map(this::hydrate).ifPresent(doc -> {
+                ClauseLinks.exclusionBlocker(doc, ClauseLinks.clausesOf(doc, sectionUuid), Set.of(), "section")
+                        .ifPresent(problem -> {
+                            throw RuleConflict.of(problem.code(), problem.args().toArray());
+                        });
+                // A park's own rules would quietly drop off that park's paper, or cite a clause no longer there
+                for (UUID clause : ClauseLinks.clausesOf(doc, sectionUuid)) {
+                    if (customizationRepository.existsLeaningOn(clause)) {
+                        throw RuleConflict.of("section.used_by_property");
+                    }
+                }
+            });
+            if (customizationRepository.existsInSection(sectionUuid)) {
+                throw RuleConflict.of("section.has_park_clauses");
+            }
             if (!documentSectionRepository.softDelete(sectionUuid)) {
                 return false;
             }
@@ -307,9 +362,9 @@ public class DocumentTemplateService {
         // a refusal rolls the write back. Only problems this edit introduced are
         // refused, so a clause seeded with a broken link can still have its note fixed.
         DocumentTemplate afterDoc = hydrateById(templateId);
-        List<Problem> was = new ArrayList<>(ClauseLinks.problemsWith(beforeDoc, clauseUuid));
+        List<Problem> was = new ArrayList<>(ClauseLinks.problemsWithTree(beforeDoc, clauseUuid));
         was.addAll(ClauseLinks.brokenPairsIn(beforeDoc, before.section()));
-        List<Problem> now = new ArrayList<>(ClauseLinks.problemsWith(afterDoc, clauseUuid));
+        List<Problem> now = new ArrayList<>(ClauseLinks.problemsWithTree(afterDoc, clauseUuid));
         now.addAll(ClauseLinks.brokenPairsIn(afterDoc, before.section()));
         refuseNew("clause.not_saved", was, now);
 
@@ -545,4 +600,346 @@ public class DocumentTemplateService {
         return changedFields.stream().anyMatch(field -> !NON_PRINTING_FIELDS.contains(field));
     }
 
+    // ---- deleted documents, sections, clauses and styles ---------------------
+    // Everything here is only marked deleted, so it can come back. A restore of something live is answered
+    // as it is (a coworker restored it a moment earlier, or an undo whose answer was lost is sent again),
+    // and is written to the audit log as an update of deletedAt back to empty.
+
+    /** Deleted documents, the most recently deleted first. */
+    public List<DocumentTemplate> findDeleted() {
+        return documentTemplateRepository.findDeleted().stream()
+                .map(DocumentTemplateRow::toDocumentTemplate)
+                .toList();
+    }
+
+    /** Empty for an unknown document. Its sections, clauses and styles were never touched, so they come back with it. */
+    @Transactional
+    public Optional<DocumentTemplate> restoreTemplate(UUID uuid) {
+        Optional<DocumentTemplateRow> found = documentTemplateRepository.findAnyById(uuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        DocumentTemplateRow before = found.get();
+        if (before.deletedAt() != null) {
+            documentTemplateRepository.restore(uuid).ifPresent(after -> recordUpdate("document_template", uuid, before, after));
+        }
+        return findById(uuid);
+    }
+
+    /** One document's deleted sections, the most recently deleted first. Empty for an unknown or deleted document. */
+    public List<DocumentSection> findDeletedSections(UUID templateId) {
+        if (documentTemplateRepository.findById(templateId).isEmpty()) {
+            return List.of();
+        }
+        return documentSectionRepository.findDeletedByTemplate(templateId).stream()
+                .map(DocumentSectionRow::toDocumentSection)
+                .toList();
+    }
+
+    /**
+     * The document with the section back in it, at its old place and with its clauses. Empty for an unknown
+     * section. 409 section.document_deleted when its document is deleted (restore that first), and 400
+     * section.not_saved when one of its clauses would come back citing, or kept with, a clause deleted since.
+     */
+    @Transactional
+    public Optional<DocumentTemplate> restoreSection(UUID sectionUuid) {
+        Optional<DocumentSectionRow> found = documentSectionRepository.findAnyById(sectionUuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        DocumentSectionRow before = found.get();
+        if (documentTemplateRepository.findById(before.template()).isEmpty()) {
+            throw RuleConflict.of("section.document_deleted", before.name());
+        }
+        if (before.deletedAt() == null) {
+            return Optional.of(reload(before.template(), false));
+        }
+        Optional<DocumentSectionRow> after = documentSectionRepository.restore(sectionUuid);
+        if (after.isEmpty()) {
+            return Optional.of(reload(before.template(), false));
+        }
+        // Its clauses come back as they were, so one of them may now cite or sit above a clause deleted since
+        DocumentTemplate afterDoc = hydrateById(before.template());
+        List<Problem> now = new ArrayList<>();
+        for (UUID clause : ClauseLinks.clausesOf(afterDoc, sectionUuid)) {
+            now.addAll(ClauseLinks.problemsWith(afterDoc, clause));
+        }
+        now.addAll(ClauseLinks.brokenPairsIn(afterDoc, sectionUuid));
+        refuseNew("section.not_saved", List.of(), now);
+        recordUpdate("document_section", sectionUuid, before, after.get());
+        return Optional.of(reloadAndBump(before.template()));
+    }
+
+    /** One section's deleted clauses, the most recently deleted first. Empty for an unknown or deleted section. */
+    public List<TemplateClause> findDeletedClauses(UUID sectionUuid) {
+        if (documentSectionRepository.findById(sectionUuid).isEmpty()) {
+            return List.of();
+        }
+        return templateClauseRepository.findDeletedBySection(sectionUuid).stream()
+                .map(TemplateClauseRow::toTemplateClause)
+                .toList();
+    }
+
+    /**
+     * The document with the clause back in it, at its old place and under its old parent. Empty for an
+     * unknown clause. 409 clause.section_deleted when its section is deleted, and 400 clause.not_saved when it
+     * would come back broken (its parent, its variant or the clause it sits above was deleted since).
+     */
+    @Transactional
+    public Optional<DocumentTemplate> restoreClause(UUID clauseUuid) {
+        Optional<TemplateClauseRow> found = templateClauseRepository.findAnyById(clauseUuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        TemplateClauseRow before = found.get();
+        Optional<DocumentSectionRow> section = documentSectionRepository.findById(before.section());
+        if (section.isEmpty()) {
+            throw RuleConflict.of("clause.section_deleted");
+        }
+        UUID templateId = section.get().template();
+        if (documentTemplateRepository.findById(templateId).isEmpty()) {
+            throw RuleConflict.of("clause.section_deleted");
+        }
+        if (before.deletedAt() == null) {
+            return Optional.of(reload(templateId, false));
+        }
+        DocumentTemplate beforeDoc = hydrateById(templateId);
+        Optional<TemplateClauseRow> after = templateClauseRepository.restore(clauseUuid);
+        if (after.isEmpty()) {
+            return Optional.of(reload(templateId, false));
+        }
+        DocumentTemplate afterDoc = hydrateById(templateId);
+        List<Problem> now = new ArrayList<>(ClauseLinks.problemsWith(afterDoc, clauseUuid));
+        now.addAll(ClauseLinks.brokenPairsIn(afterDoc, before.section()));
+        refuseNew("clause.not_saved", ClauseLinks.brokenPairsIn(beforeDoc, before.section()), now);
+
+        recordUpdate("template_clause", clauseUuid, before, after.get());
+        return Optional.of(reloadAndBump(templateId));
+    }
+
+    /** One document's deleted styles, the most recently deleted first. */
+    public List<DocumentStyle> findDeletedStyles(UUID templateId) {
+        if (documentTemplateRepository.findById(templateId).isEmpty()) {
+            return List.of();
+        }
+        return documentStyleRepository.findDeletedByTemplate(templateId).stream()
+                .map(DocumentStyleRow::toDocumentStyle)
+                .toList();
+    }
+
+    /**
+     * The document with the style back. Empty for an unknown style. 409 style.document_deleted when its document
+     * is deleted, and style.target_taken when another style restyles the same part of the page since.
+     */
+    @Transactional
+    public Optional<DocumentTemplate> restoreStyle(UUID styleUuid) {
+        Optional<DocumentStyleRow> found = documentStyleRepository.findAnyById(styleUuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        DocumentStyleRow before = found.get();
+        if (documentTemplateRepository.findById(before.template()).isEmpty()) {
+            throw RuleConflict.of("style.document_deleted", before.name());
+        }
+        if (before.deletedAt() == null) {
+            return Optional.of(reload(before.template(), false));
+        }
+        ClauseLinks.duplicateTarget(hydrateById(before.template()), before.toDocumentStyle()).ifPresent(problem -> {
+            throw RuleConflict.of(problem.code(), problem.args().toArray());
+        });
+        documentStyleRepository.restore(styleUuid)
+                .ifPresent(after -> recordUpdate("document_style", styleUuid, before, after));
+        return Optional.of(reload(before.template(), false));
+    }
+
+    // ---- moving --------------------------------------------------------------
+    // Ordinals are sparse decimals, so a move puts one number between two neighbours and nothing else moves.
+    // When there is no room left between them (four decimals), the section or the document is spread out
+    // to 10, 20, 30... first (renumber), keeping every row's order.
+
+    // Less than this between two neighbours is no room: a midpoint needs a fifth decimal
+    private static final BigDecimal NO_ROOM = new BigDecimal("0.0002");
+
+    // Print order, as the repositories read it: by ordinal, and by uuid on a tie. The uuid is compared as text,
+    // which is Postgres's order (UUID.compareTo compares signed numbers, which is not)
+    private static final Comparator<DocumentSectionRow> SECTION_ORDER =
+            Comparator.comparing(DocumentSectionRow::ordinal).thenComparing(row -> row.uuid().toString());
+    private static final Comparator<TemplateClauseRow> CLAUSE_ORDER =
+            Comparator.comparing(TemplateClauseRow::ordinal).thenComparing(row -> row.uuid().toString());
+
+    /**
+     * Puts a section directly after another section of its document, or first when afterId is null.
+     * Empty for an unknown section. 400 section.move_after_unknown when afterId is not another live section
+     * of the same document. Moving it where it already is changes nothing.
+     */
+    @Transactional
+    public Optional<DocumentTemplate> moveSection(UUID sectionUuid, UUID afterId) {
+        Optional<DocumentSectionRow> found = documentSectionRepository.findById(sectionUuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        DocumentSectionRow before = found.get();
+        UUID templateId = before.template();
+
+        BigDecimal ordinal = sectionPlace(templateId, sectionUuid, afterId);
+        if (ordinal == null) {
+            documentSectionRepository.renumber(templateId);
+            ordinal = sectionPlace(templateId, sectionUuid, afterId);
+            if (ordinal == null) {
+                throw RuleConflict.of("section.move_no_room");
+            }
+        }
+        DocumentSectionRow moving = documentSectionRepository.findById(sectionUuid).orElse(before);
+        if (ordinal.compareTo(moving.ordinal()) == 0) {
+            return Optional.of(reload(templateId, false));
+        }
+        Optional<DocumentSectionRow> after = documentSectionRepository.patch(sectionUuid, Map.of("ordinal", ordinal));
+        if (after.isEmpty()) {
+            return Optional.empty();
+        }
+        recordUpdate("document_section", sectionUuid, before, after.get());
+        return Optional.of(reloadAndBump(templateId));
+    }
+
+    // The ordinal that puts the section after afterId, its own ordinal when it is already there,
+    // or null when there is no room between the two neighbours
+    private BigDecimal sectionPlace(UUID templateId, UUID sectionUuid, UUID afterId) {
+        List<DocumentSectionRow> all = documentSectionRepository.findByTemplate(templateId);
+        DocumentSectionRow self = all.stream().filter(s -> s.uuid().equals(sectionUuid)).findFirst().orElseThrow();
+        List<BigDecimal> others = all.stream()
+                .filter(s -> !s.uuid().equals(sectionUuid))
+                .sorted(SECTION_ORDER)
+                .map(DocumentSectionRow::ordinal)
+                .toList();
+        List<UUID> otherIds = all.stream()
+                .filter(s -> !s.uuid().equals(sectionUuid))
+                .sorted(SECTION_ORDER)
+                .map(DocumentSectionRow::uuid)
+                .toList();
+        int at = afterId == null ? -1 : otherIds.indexOf(afterId);
+        if (afterId != null && at < 0) {
+            throw InvalidRequest.onField("afterId", "section.move_after_unknown");
+        }
+        return between(at < 0 ? null : others.get(at), at + 1 < others.size() ? others.get(at + 1) : null, self.ordinal());
+    }
+
+    /**
+     * Puts a clause under parentId (null: the top level of its section), directly after its sibling afterId
+     * (null: first under that parent). Held to the same rules as a PATCH of its parent: no cycles, at most
+     * three levels, a variant under the same parent as its clause, and a pair kept together (400 clause.not_saved
+     * names what broke). Empty for an unknown clause. 400 clause.move_after_unknown when afterId is not another
+     * clause under that parent.
+     */
+    @Transactional
+    public Optional<DocumentTemplate> moveClause(UUID clauseUuid, UUID parentId, UUID afterId) {
+        Optional<TemplateClauseRow> found = templateClauseRepository.findById(clauseUuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        TemplateClauseRow before = found.get();
+        UUID sectionId = before.section();
+        UUID templateId = documentSectionRepository.findById(sectionId)
+                .map(DocumentSectionRow::template)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Clause " + clauseUuid + " points at a section that no longer exists"));
+
+        BigDecimal ordinal = clausePlace(sectionId, clauseUuid, parentId, afterId);
+        if (ordinal == null) {
+            templateClauseRepository.renumberSection(sectionId);
+            ordinal = clausePlace(sectionId, clauseUuid, parentId, afterId);
+            if (ordinal == null) {
+                throw RuleConflict.of("clause.move_no_room");
+            }
+        }
+        TemplateClauseRow moving = templateClauseRepository.findById(clauseUuid).orElse(before);
+        if (ordinal.compareTo(moving.ordinal()) == 0 && Objects.equals(parentId, moving.parent())) {
+            return Optional.of(reload(templateId, false));
+        }
+
+        DocumentTemplate beforeDoc = hydrateById(templateId);
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("parent", parentId);
+        changes.put("ordinal", ordinal);
+        Optional<TemplateClauseRow> after = templateClauseRepository.patch(clauseUuid, changes);
+        if (after.isEmpty()) {
+            return Optional.empty();
+        }
+        DocumentTemplate afterDoc = hydrateById(templateId);
+        List<Problem> was = new ArrayList<>(ClauseLinks.problemsWithTree(beforeDoc, clauseUuid));
+        was.addAll(ClauseLinks.brokenPairsIn(beforeDoc, sectionId));
+        List<Problem> now = new ArrayList<>(ClauseLinks.problemsWithTree(afterDoc, clauseUuid));
+        now.addAll(ClauseLinks.brokenPairsIn(afterDoc, sectionId));
+        refuseNew("clause.not_saved", was, now);
+
+        recordUpdate("template_clause", clauseUuid, before, after.get());
+        return Optional.of(reloadAndBump(templateId));
+    }
+
+    // The ordinal that puts the clause after afterId under parentId, or null when there is no room
+    private BigDecimal clausePlace(UUID sectionId, UUID clauseUuid, UUID parentId, UUID afterId) {
+        List<TemplateClauseRow> all = templateClauseRepository.findBySection(sectionId);
+        TemplateClauseRow self = all.stream().filter(c -> c.uuid().equals(clauseUuid)).findFirst().orElseThrow();
+        if (parentId != null && all.stream().noneMatch(c -> c.uuid().equals(parentId))) {
+            throw InvalidRequest.onField("parentId", "clause.parent_not_in_section", sectionName(sectionId));
+        }
+        List<TemplateClauseRow> siblings = all.stream()
+                .filter(c -> !c.uuid().equals(clauseUuid) && Objects.equals(c.parent(), parentId))
+                .sorted(CLAUSE_ORDER)
+                .toList();
+        int at = -1;
+        if (afterId != null) {
+            for (int i = 0; i < siblings.size(); i++) {
+                if (siblings.get(i).uuid().equals(afterId)) {
+                    at = i;
+                }
+            }
+            if (at < 0) {
+                throw InvalidRequest.onField("afterId", "clause.move_after_unknown");
+            }
+        }
+        BigDecimal low = at < 0 ? null : siblings.get(at).ordinal();
+        BigDecimal high = at + 1 < siblings.size() ? siblings.get(at + 1).ordinal() : null;
+        if (high == null) {
+            // last under its parent: after every other clause of the section, because the clauses parks added
+            // and the ones typed onto a draft share these numbers, and the last one should stay last for them too
+            BigDecimal last = all.stream()
+                    .filter(c -> !c.uuid().equals(clauseUuid))
+                    .map(TemplateClauseRow::ordinal)
+                    .max(Comparator.naturalOrder())
+                    .orElse(null);
+            if (last != null && (low == null || last.compareTo(low) > 0)) {
+                low = last;
+            }
+        }
+        return between(low, high, self.ordinal());
+    }
+
+    private String sectionName(UUID sectionId) {
+        return documentSectionRepository.findById(sectionId).map(DocumentSectionRow::name).orElse("");
+    }
+
+    /**
+     * A number between low and high (either may be null: before everything, after everything).
+     * Its own number when it is already between them; null when there is no room.
+     */
+    private static BigDecimal between(BigDecimal low, BigDecimal high, BigDecimal own) {
+        boolean afterLow = low == null || own.compareTo(low) > 0;
+        boolean beforeHigh = high == null || own.compareTo(high) < 0;
+        if (afterLow && beforeHigh) {
+            return own;
+        }
+        if (low == null && high == null) {
+            return BigDecimal.ONE;
+        }
+        if (low == null) {
+            return high.subtract(BigDecimal.ONE);
+        }
+        if (high == null) {
+            return low.add(BigDecimal.ONE).setScale(0, RoundingMode.FLOOR);
+        }
+        if (high.subtract(low).compareTo(NO_ROOM) < 0) {
+            return null;
+        }
+        return low.add(high).divide(BigDecimal.TWO, 4, RoundingMode.HALF_UP);
+    }
 }

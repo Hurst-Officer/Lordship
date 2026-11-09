@@ -31,16 +31,17 @@ public class DocumentSectionRepository {
      * A section needs a name and nothing else. Ordinal lands it at the end of
      * the packet, assigned here rather than by the client -- the same shape as
      * lot.sort_order. Reordering is a PATCH with a decimal, since ordinals are
-     * sparse: 12.5 sits between 12 and 13 and nothing else moves.
+     * sparse: 12.5 sits between 12 and 13 and nothing else moves. Deleted
+     * sections count, so a restore never lands on a new section's number.
      */
     public DocumentSectionRow save(UUID templateId, String name, UUID createdBy) {
         return jdbc.sql("""
                         INSERT INTO document_section (template, ordinal, name, created_by)
                         VALUES (
                             :templateId,
-                            (SELECT COALESCE(MAX(ordinal), 0) + 1
+                            (SELECT FLOOR(COALESCE(MAX(ordinal), 0)) + 1
                                FROM document_section
-                              WHERE template = :templateId AND deleted_at IS NULL),
+                              WHERE template = :templateId),
                             :name,
                             :createdBy
                         )
@@ -64,7 +65,7 @@ public class DocumentSectionRepository {
         return jdbc.sql("""
                         SELECT * FROM document_section
                          WHERE template = :templateId AND deleted_at IS NULL
-                         ORDER BY ordinal
+                         ORDER BY ordinal, uuid
                         """)
                 .param("templateId", templateId)
                 .query(rowMapper)
@@ -108,5 +109,56 @@ public class DocumentSectionRepository {
                         """)
                 .param("uuid", uuid)
                 .update() > 0;
+    }
+
+    // ---- deleted sections and order ------------------------------------------
+
+    /** A section live or deleted, for a restore. */
+    public Optional<DocumentSectionRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM document_section WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    /** One document's deleted sections, the most recently deleted first. */
+    public List<DocumentSectionRow> findDeletedByTemplate(UUID templateId) {
+        return jdbc.sql("""
+                        SELECT * FROM document_section
+                         WHERE template = :templateId AND deleted_at IS NOT NULL
+                         ORDER BY deleted_at DESC
+                        """)
+                .param("templateId", templateId)
+                .query(rowMapper)
+                .list();
+    }
+
+    /** Empty when it was not deleted. It comes back at its old place in the packet. */
+    public Optional<DocumentSectionRow> restore(UUID uuid) {
+        return jdbc.sql("""
+                        UPDATE document_section SET deleted_at = NULL
+                         WHERE uuid = :uuid AND deleted_at IS NOT NULL
+                         RETURNING *
+                        """)
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    /**
+     * Spreads one document's sections out to 10, 20, 30... in the order they are in, when a move finds no
+     * room left between two neighbours (ordinals keep four decimals). Deleted sections keep their place
+     * in the order too, so a restore still lands where it was. Only the order is bookkeeping, so this is
+     * not written to the audit log; the move that needed it is.
+     */
+    public void renumber(UUID templateId) {
+        jdbc.sql("""
+                        UPDATE document_section s SET ordinal = r.n * 10
+                          FROM (SELECT uuid, ROW_NUMBER() OVER (ORDER BY ordinal, uuid) AS n
+                                  FROM document_section WHERE template = :templateId) r
+                         WHERE s.uuid = r.uuid
+                        """)
+                .param("templateId", templateId)
+                .update();
     }
 }

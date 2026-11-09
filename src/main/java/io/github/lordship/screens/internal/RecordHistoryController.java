@@ -2,6 +2,7 @@ package io.github.lordship.screens.internal;
 
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.audit.History;
+import io.github.lordship.documenttemplate.PropertyDocumentAssignmentService;
 import io.github.lordship.homes.HomeService;
 import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.lots.LotService;
@@ -39,12 +40,18 @@ public class RecordHistoryController {
     private static final int HISTORY_PAGE_SIZE = 10;
 
     // The history shows a record's values, so it needs the permission to view that record too
-    private static final Map<String, String> VIEW_PERMISSION = Map.of(
-            "property", "properties:view",
-            "lot", "lots:view",
-            "mobile_home", "homes:view",
-            "agent_role", "agent_roles:view",
-            "agent", "agent_roles:view");
+    private static final Map<String, String> VIEW_PERMISSION = Map.ofEntries(
+            Map.entry("property", "properties:view"),
+            Map.entry("lot", "lots:view"),
+            Map.entry("mobile_home", "homes:view"),
+            Map.entry("agent_role", "agent_roles:view"),
+            Map.entry("agent", "agent_roles:view"),
+            Map.entry("document_template", "document_template:view"),
+            Map.entry("document_section", "document_template:view"),
+            Map.entry("template_clause", "document_template:view"),
+            Map.entry("document_style", "document_template:view"),
+            Map.entry("property_document_assignment", "property_document:view"),
+            Map.entry("property_document_customization", "property_document:view"));
 
     // An agent's history is read for the roles they were given and lost, and nothing else of theirs
     private static final String AGENT_FIELDS = "roles.";
@@ -57,16 +64,21 @@ public class RecordHistoryController {
     private final AuditService auditService;
     private final LotService lotService;
     private final HomeService homeService;
+    private final PropertyDocumentAssignmentService assignmentService;
 
-    public RecordHistoryController(AuditService auditService, LotService lotService, HomeService homeService) {
+    public RecordHistoryController(AuditService auditService, LotService lotService, HomeService homeService,
+                                   PropertyDocumentAssignmentService assignmentService) {
         this.auditService = auditService;
         this.lotService = lotService;
         this.homeService = homeService;
+        this.assignmentService = assignmentService;
     }
 
     /**
      * One record's changes to some of its fields, newest first, ten at a time.
-     * table is property, lot, mobile_home, agent_role or agent. Anything else is a 400 (audit.table_unknown).
+     * table is property, lot, mobile_home, agent_role, agent, or a Documents table (document_template, document_section,
+     * template_clause, document_style, property_document_assignment, property_document_customization).
+     * Anything else is a 400 (audit.table_unknown).
      * For agent, every field must be a role ("roles.<roleId>"); anything else is a 400 (audit.field_not_shown).
      * Repeat field once for each field to include: ?field=propertyZoning&field=fieldLinks.property_zoning
      * (repeated, not comma-separated, because a custom field's name can hold a comma). None is a 400.
@@ -132,8 +144,11 @@ public class RecordHistoryController {
             case "property" -> scope.allows(id);
             case "lot" -> lotService.inScope(id, scope);
             case "mobile_home" -> homeService.inScope(id, scope);
-            // roles and people are not tied to a property
-            case "agent_role", "agent" -> true;
+            // roles, people and documents are not tied to a property
+            case "agent_role", "agent", "document_template", "document_section", "template_clause", "document_style" -> true;
+            // a park's use of a document is that park's
+            case "property_document_assignment" -> assignmentService.propertyOfAssignment(id).map(scope::allows).orElse(false);
+            case "property_document_customization" -> assignmentService.propertyOfCustomization(id).map(scope::allows).orElse(false);
             default -> false;
         };
     }

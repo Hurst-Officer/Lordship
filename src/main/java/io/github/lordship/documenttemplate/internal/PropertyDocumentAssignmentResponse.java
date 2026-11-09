@@ -4,6 +4,8 @@ import io.github.lordship.documenttemplate.PropertyDocumentAssignment;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 
+import org.springframework.modulith.NamedInterface;
+
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -20,7 +22,11 @@ import java.util.UUID;
  * template plus its changes, and a list that showed only the name would tell an
  * admin the five parks use the same document when one of them has dropped a
  * section.
+ *
+ * <p>Shared with the screens module, so the park page's one call sends the park's
+ * use in this same shape.
  */
+@NamedInterface("responses")
 public record PropertyDocumentAssignmentResponse(
         UUID id,
         UUID propertyId,

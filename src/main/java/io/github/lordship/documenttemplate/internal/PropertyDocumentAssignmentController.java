@@ -2,6 +2,7 @@ package io.github.lordship.documenttemplate.internal;
 
 import io.github.lordship.documenttemplate.DocumentAuditService;
 import io.github.lordship.documenttemplate.PropertyDocumentAssignmentService;
+import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import jakarta.validation.Valid;
@@ -9,6 +10,7 @@ import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -23,6 +25,7 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -255,6 +258,51 @@ public class PropertyDocumentAssignmentController {
         return assignmentService.removeCustomization(customizationUuid)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();
+    }
+
+    // ---- bringing things back ------------------------------------------------
+    // Ending an assignment and removing a change only mark the row deleted, so an undo can bring it back.
+    // A restore of a live row is answered as it is.
+
+    /**
+     * The park uses the document again, with its changes. Needs assign (it lets the park generate the paper again).
+     * 404 for an unknown assignment. 409 assignment.document_deleted, assignment.already_in_use.
+     */
+    @PreAuthorize("hasAuthority('property_document:assign')")
+    @PostMapping("/{uuid}/restore")
+    public ResponseEntity<PropertyDocumentAssignmentResponse> restoreAssignment(@PathVariable UUID uuid,
+                                                                                Authentication authentication) {
+        if (!inScope(assignmentService.propertyOfAssignment(uuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
+        return assignmentService.restoreAssignment(uuid)
+                .map(PropertyDocumentAssignmentResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * Brings back one change: an exclusion or a park's own clause, under the rules it was first made under
+     * (409 section.is_required, clause.is_required, customization.already_excluded, customization.*_is_cited;
+     * 400 customization.not_saved). 404 for an unknown change, or one whose park no longer uses the document.
+     */
+    @PreAuthorize("hasAuthority('property_document:assign')")
+    @PostMapping("/customizations/{customizationUuid}/restore")
+    public ResponseEntity<PropertyDocumentAssignmentResponse> restoreCustomization(@PathVariable UUID customizationUuid,
+                                                                                   Authentication authentication) {
+        if (!inScope(assignmentService.propertyOfCustomization(customizationUuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
+        return assignmentService.restoreCustomization(customizationUuid)
+                .map(PropertyDocumentAssignmentResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // A park outside the agent's properties is a 404, like an unknown row (an unknown row passes here and is
+    // answered 404 by the restore)
+    private static boolean inScope(Optional<UUID> property, Authentication authentication) {
+        return property.isEmpty() || AgentPrincipal.scopeOf(authentication).allows(property.get());
     }
 
     // JSON hands us a Double or an Integer; the column is NUMERIC(10,4). Going

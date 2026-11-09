@@ -38,13 +38,19 @@ public class AuditController {
 
     // The values in "My activity" follow the history bars (screens RecordHistoryController): a kind of record's
     // values need the permission to view that kind. Without it the line still says which fields changed.
-    private static final Map<String, Set<String>> VALUE_PERMISSIONS = Map.of(
-            "property", Set.of("properties:view"),
-            "lot", Set.of("lots:view"),
-            "mobile_home", Set.of("homes:view"),
-            "agent_role", Set.of("agent_roles:view"),
-            "agent", Set.of("agent_roles:view", "agents:view"),
-            "person", Set.of("persons:view"));
+    private static final Map<String, Set<String>> VALUE_PERMISSIONS = Map.ofEntries(
+            Map.entry("property", Set.of("properties:view")),
+            Map.entry("lot", Set.of("lots:view")),
+            Map.entry("mobile_home", Set.of("homes:view")),
+            Map.entry("agent_role", Set.of("agent_roles:view")),
+            Map.entry("agent", Set.of("agent_roles:view", "agents:view")),
+            Map.entry("person", Set.of("persons:view")),
+            Map.entry("document_template", Set.of("document_template:view")),
+            Map.entry("document_section", Set.of("document_template:view")),
+            Map.entry("template_clause", Set.of("document_template:view")),
+            Map.entry("document_style", Set.of("document_template:view")),
+            Map.entry("property_document_assignment", Set.of("property_document:view")),
+            Map.entry("property_document_customization", Set.of("property_document:view")));
 
     /**
      * The signed-in agent's own saves, for "My activity" on their own page in Glade: one per save (a bulk change
