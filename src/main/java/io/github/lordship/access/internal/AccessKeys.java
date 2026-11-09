@@ -37,16 +37,36 @@ public class AccessKeys {
      * Runs a change that may take permissions away, inside the caller's transaction.
      * Two such changes take turns (a transaction-wide advisory lock), so two admins removing
      * each other's keys at the same moment cannot both get through.
+     * The change runs after a savepoint, so a refused change is undone right here, even when the
+     * caller's transaction goes on (a test sending several requests in one transaction, or a caller
+     * that catches the 409). Plain SQL, not a nested Spring transaction: the app's transaction
+     * manager does not allow those. Must be called inside a transaction.
      */
     public <T> T keep(Supplier<T> change) {
         jdbc.sql("SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtext('lordship.access.keys'))) locked")
                 .query(Integer.class)
                 .single();
         boolean heldBefore = anyoneHolds();
-        T result = change.get();
-        if (heldBefore && !anyoneHolds()) {
-            throw RuleConflict.of("access.last_key");
+
+        jdbc.sql("SAVEPOINT access_keys").update();
+        T result;
+        try {
+            result = change.get();
+            if (heldBefore && !anyoneHolds()) {
+                throw RuleConflict.of("access.last_key");
+            }
+        } catch (RuntimeException | Error e) {
+            try {
+                // back to the savepoint, then drop it: ROLLBACK TO keeps it, and a keep() around this one
+                // must roll back to its own savepoint, not this one (they share the name)
+                jdbc.sql("ROLLBACK TO SAVEPOINT access_keys").update();
+                jdbc.sql("RELEASE SAVEPOINT access_keys").update();
+            } catch (RuntimeException undo) {
+                e.addSuppressed(undo);
+            }
+            throw e;
         }
+        jdbc.sql("RELEASE SAVEPOINT access_keys").update();
         return result;
     }
 

@@ -21,8 +21,9 @@ public final class HistoryRows {
 
     // One save by one agent: the rows one request wrote to one table with one operation.
     // recordId is the first record it touched; records counts them. fields lists the changed fields of an
-    // update, comma-separated. The names and ids after it say what the record is, when it is a known kind.
+    // update, comma-separated. valueBefore and valueAfter are the first record's logged values; sameForAll is true
+    // when every record got the same values. The names and ids after it say what the record is, when it is a known kind.
     public record SaveRow(UUID saveId, String tableName, String operation, OffsetDateTime changedAt, String lastId,
-                          int records, String recordId, String fields, String recordName,
-                          UUID propertyId, String propertyName, UUID lotId) { }
+                          int records, String recordId, String fields, String valueBefore, String valueAfter,
+                          boolean sameForAll, String recordName, UUID propertyId, String propertyName, UUID lotId) { }
 }

@@ -10,6 +10,7 @@ CREATE TABLE agent (
                        title          VARCHAR(80) NOT NULL DEFAULT 'Agent', -- job title shown in Personnel. Not a role
                        agent_password VARCHAR(255),
                        tokens_valid_from TIMESTAMPTZ, -- null until a password change or revoke ends this agent's sessions
+                       hours_available VARCHAR(200),
                        created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
                        deleted_at     TIMESTAMPTZ,
                        FOREIGN KEY (person_id) REFERENCES person(uuid),

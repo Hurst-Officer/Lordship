@@ -16,7 +16,9 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -146,19 +148,90 @@ public class AuditService {
     /**
      * The agent's own saves, for "My activity" on their own page. sort is when, kind or record
      * (anything else is when); a page is limit saves from offset.
-     * The caller hides the saves under properties the agent may no longer see (Save.withoutRecord).
+     * Each save of a table the screens show carries its first record's values, field by field.
+     * The caller hides the saves under properties the agent may no longer see (Save.withoutRecord),
+     * and the values of kinds of record the agent may no longer view (Save.withValuesHidden).
      */
     public History.SavePage ownActivity(UUID agentId, String sort, boolean ascending, int offset, int limit) {
         List<HistoryRows.SaveRow> rows = auditRepository.findOwnSaves(agentId, sort, ascending, limit + 1, Math.max(0, offset));
-        List<History.Save> saves = rows.stream()
-                .limit(limit)
+        List<HistoryRows.SaveRow> shown = rows.stream().limit(limit).toList();
+        Map<String, String> roleNames = roleNamesIn(shown);
+        List<History.Save> saves = shown.stream()
                 .map(row -> new History.Save(
                         row.saveId(), row.changedAt(), row.tableName(), OperationType.valueOf(row.operation()),
                         row.records(), row.recordId(),
                         row.fields() == null || row.fields().isBlank() ? List.of() : List.of(row.fields().split(",")),
+                        changesOf(row, roleNames), row.sameForAll(),
                         row.recordName(), row.propertyId(), row.propertyName(), row.lotId(), false))
                 .toList();
         return new History.SavePage(saves, rows.size() > limit);
+    }
+
+    // Fields "My activity" leaves out: ids and bookkeeping the worker never sees on a screen
+    private static final Set<String> NOT_IN_ACTIVITY = Set.of(
+            "uuid", "createdAt", "createdBy", "propertyId", "lotId", "personId", "propertyManager",
+            "tokensValidFrom", "sortOrder", "permissibleAgreementTypes");
+
+    // Fields "My activity" names without their values: secret, a link to another record, or too big for a line
+    private static final Set<String> WITHHELD_IN_ACTIVITY = Set.of(
+            "social", "agent_password", "emergencyContact", "shapeData");
+
+    // One save's first record, field by field. A map field gives one change per entry ("customFields.Septic").
+    // Empty for a table the screens do not show: its line keeps only its field names.
+    private List<History.Edit> changesOf(HistoryRows.SaveRow row, Map<String, String> roleNames) {
+        if (!SCREEN_TABLES.contains(row.tableName())) {
+            return List.of();
+        }
+        Map<String, Object> before = readMap(row.valueBefore());
+        Map<String, Object> after = readMap(row.valueAfter());
+        Set<String> keys = new LinkedHashSet<>(after.keySet());
+        keys.addAll(before.keySet());
+
+        List<History.Edit> changes = new ArrayList<>();
+        for (String key : keys) {
+            if (NOT_IN_ACTIVITY.contains(key)) {
+                continue;
+            }
+            if (WITHHELD_IN_ACTIVITY.contains(key)) {
+                changes.add(new History.Edit(key, null, null, true));
+                continue;
+            }
+            Object was = before.get(key);
+            Object now = after.get(key);
+            if (was instanceof Map<?, ?> || now instanceof Map<?, ?>) {
+                Map<?, ?> wasEntries = was instanceof Map<?, ?> map ? map : Map.of();
+                Map<?, ?> nowEntries = now instanceof Map<?, ?> map ? map : Map.of();
+                Set<Object> entries = new LinkedHashSet<>(nowEntries.keySet());
+                entries.addAll(wasEntries.keySet());
+                for (Object entry : entries) {
+                    String name = String.valueOf(entry);
+                    // a role given to a person is logged by the role's id; the worker knows it by its name
+                    if ("agent".equals(row.tableName()) && "roles".equals(key)) {
+                        name = roleNames.getOrDefault(name, name);
+                    }
+                    changes.add(new History.Edit(key + "." + name, wasEntries.get(entry), nowEntries.get(entry), false));
+                }
+            } else {
+                changes.add(new History.Edit(key, was, now, false));
+            }
+        }
+        return changes;
+    }
+
+    // The names of the roles given or taken in these saves (agent rows keep "roles" by role id)
+    private Map<String, String> roleNamesIn(List<HistoryRows.SaveRow> rows) {
+        Set<String> ids = new HashSet<>();
+        for (HistoryRows.SaveRow row : rows) {
+            if (!"agent".equals(row.tableName())) {
+                continue;
+            }
+            for (String json : new String[] { row.valueBefore(), row.valueAfter() }) {
+                if (readMap(json).get("roles") instanceof Map<?, ?> roles) {
+                    roles.keySet().forEach(id -> ids.add(String.valueOf(id)));
+                }
+            }
+        }
+        return auditRepository.findRoleNames(ids);
     }
 
     // ---- history for Glade's screens ----------------------------------------------------

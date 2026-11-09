@@ -126,6 +126,7 @@ public class AuditRepository {
 
     /**
      * The agent's saves, one row per request and table and operation, so a bulk change of 30 lots is one row.
+     * Each carries its first record's logged values, and whether every record got the same ones.
      * Each is named from its record where the kind is known (property, lot, home, person, agent, role);
      * a lot or a home also gives its property. Deleted records keep their names.
      * Ties (and the time sort) fall back to newest first. limit is one more than a page, to know whether more remain.
@@ -142,7 +143,10 @@ public class AuditRepository {
                                max(a.uuid::text) AS last_id,
                                count(DISTINCT a.uuid)::int AS records,
                                (array_agg(a.record_id ORDER BY a.uuid))[1] AS record_id,
-                               string_agg(DISTINCT k.key, ',' ORDER BY k.key) AS fields
+                               string_agg(DISTINCT k.key, ',' ORDER BY k.key) AS fields,
+                               (array_agg(a.value_before::text ORDER BY a.uuid))[1] AS value_before,
+                               (array_agg(a.value_after::text ORDER BY a.uuid))[1] AS value_after,
+                               count(DISTINCT a.value_after::jsonb) <= 1 AS same_for_all
                           FROM audit_log a
                           LEFT JOIN LATERAL jsonb_object_keys(
                                 CASE WHEN a.operation = 'UPDATE' AND jsonb_typeof(a.value_after::jsonb) = 'object'
@@ -177,6 +181,28 @@ public class AuditRepository {
                 .param("offset", offset)
                 .query(HistoryRows.SaveRow.class)
                 .list();
+    }
+
+    // Role names by id, for the roles a person was given or lost ("roles.<roleId>" on agent). Deleted roles keep theirs.
+    public Map<String, String> findRoleNames(Collection<String> roleIds) {
+        if (roleIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> names = new HashMap<>();
+        jdbc.sql("""
+                    SELECT uuid::text AS id, role_name
+                      FROM agent_role
+                     WHERE uuid::text IN (:ids)
+                    """)
+                .param("ids", roleIds)
+                .query((rs, _) -> new String[] { rs.getString("id"), rs.getString("role_name") })
+                .list()
+                .forEach(row -> {
+                    if (row[1] != null && !row[1].isBlank()) {
+                        names.put(row[0], row[1]);
+                    }
+                });
+        return names;
     }
 
     // ---- history for Glade's screens ----------------------------------------------------
