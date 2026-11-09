@@ -2,9 +2,13 @@ package io.github.lordship.audit;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 /**
  * What Glade's screens show about who changed what, built from audit_log by AuditService.
@@ -44,20 +48,53 @@ public final class History {
     public record EntryPage(List<Entry> entries, boolean more) { }
 
     /**
+     * One field of one save in "My activity", with what it was and what it became.
+     * before is null for an add, after is null for a delete. A changed entry of a map field has its own field,
+     * like "customFields.Septic" or "permissions.lots:edit".
+     * withheld is true when the field changed but its values are not shown (a social security number, a lot's
+     * shape, or a kind of record the agent may no longer view); before and after are then null.
+     */
+    public record Edit(String field, Object before, Object after, boolean withheld) { }
+
+    /**
      * One save the agent made, for "My activity" on their own page: one request's changes to one kind of record.
      * table is the audit table ("lot"); records counts the records it touched, recordId is the first of them.
-     * fields are the fields an update changed (empty for an add or a delete). recordName, propertyId,
-     * propertyName and lotId say what the record is, where the server knows the kind; null otherwise.
+     * fields are the fields an update changed (empty for an add or a delete). changes are the values of the first
+     * record, for the tables the screens show (empty for others); sameForAll is true when every record of the
+     * save got the same values. recordName, propertyId, propertyName and lotId say what the record is, where the
+     * server knows the kind; null otherwise.
      * hidden is true when the record is under a property the agent may no longer see: then everything that
      * would say which record it was is left out.
      */
     public record Save(UUID id, OffsetDateTime at, String table, OperationType operation, int records,
-                       String recordId, List<String> fields, String recordName,
-                       UUID propertyId, String propertyName, UUID lotId, boolean hidden) {
+                       String recordId, List<String> fields, List<Edit> changes, boolean sameForAll,
+                       String recordName, UUID propertyId, String propertyName, UUID lotId, boolean hidden) {
 
         // The same save with nothing that names its record
         public Save withoutRecord() {
-            return new Save(id, at, table, operation, records, null, List.of(), null, null, null, null, true);
+            return new Save(id, at, table, operation, records, null, List.of(), List.of(), false,
+                    null, null, null, null, true);
+        }
+
+        /**
+         * The same save with the values of some fields withheld. A withheld entry of a map field
+         * ("permissions.lots:edit") becomes its map field ("permissions"), once, since the entry's name is a value too.
+         */
+        public Save withValuesHidden(Predicate<String> hide) {
+            List<Edit> kept = new ArrayList<>();
+            Set<String> withheld = new HashSet<>();
+            for (Edit edit : changes) {
+                if (!hide.test(edit.field())) {
+                    kept.add(edit);
+                    continue;
+                }
+                String field = edit.field().split("\\.", 2)[0];
+                if (withheld.add(field)) {
+                    kept.add(new Edit(field, null, null, true));
+                }
+            }
+            return new Save(id, at, table, operation, records, recordId, fields, kept, sameForAll,
+                    recordName, propertyId, propertyName, lotId, hidden);
         }
     }
 
