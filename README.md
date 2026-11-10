@@ -41,13 +41,3 @@ Data model philosophy
 Lordship makes a hard distinction between canonical records and historical shards.
 Canonical records are current, relational, and the operational source of truth. Historical shards are legacy data — imported from old spreadsheets, tagged with their source, and treated as immutable. They are not force-merged with canonical records. Ambiguous linkage is flagged, not assumed.
 When companies adopt Lordship, they don't lose their historical data. They also don't corrupt their clean data trying to reconcile it.
-
-Contributing
-Pull requests are welcome. This project is intentionally generic — it is a platform and engine first and foremost. If you want to contribute logic that is specific to a single operator's workflow, that belongs in a private fork, not here.
-If you work in property management, affordable housing, or mobile home park compliance and you want to contribute domain knowledge, that is especially welcome. Open an issue and start a conversation.
-
-License
-MIT. Use it, fork it, build on it.
-
-Status
-Early
