@@ -3,29 +3,22 @@ package io.github.lordship.meterbilling.internal;
 import com.jayway.jsonpath.JsonPath;
 import io.github.lordship.IntegrationTest;
 import io.github.lordship.TestAuthSupport;
-import io.github.lordship.meterbills.internal.MeterBillsCreateRequest;
-import io.github.lordship.meters.MeterMeasurement;
-import io.github.lordship.meters.MeterType;
-import io.github.lordship.meters.internal.*;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 import java.util.UUID;
 
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
 
 @Transactional
 public class MeterBillsControllerIT extends IntegrationTest {
@@ -42,281 +35,172 @@ public class MeterBillsControllerIT extends IntegrationTest {
     @Autowired
     ObjectMapper objectMapper;
 
+    private String root() throws Exception {
+        return TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+    }
 
-    private UUID createMeter(String token, UUID lotId, boolean isMaster) throws Exception {
-        MeterCreateRequest req = new MeterCreateRequest(
-                lotId,
-                0.0,
-                0.0,
-                MeterType.WATER,
-                MeterMeasurement.GAL,
-                isMaster,
-                99999,
-                1.0,
-                15,
-                false
-        );
+    private ResultActions send(String token, String url, String json) throws Exception {
+        return mockMvc.perform(post(url)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json));
+    }
 
-
-
-        MvcResult result = mockMvc.perform(post("/meters/create")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(req)))
+    private UUID newBill(String token, UUID propertyId, String periodStart, String periodEnd) throws Exception {
+        String body = send(token, "/api/utility-bills", """
+                { "propertyId": "%s", "provider": "City", "periodStart": "%s", "periodEnd": "%s", "printedTotal": "1848.44" }
+                """.formatted(propertyId, periodStart, periodEnd))
                 .andExpect(status().isCreated())
-                .andReturn();
-
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
-    }
-
-    private UUID createSecondMeter(String token, UUID lotId, boolean isMaster) throws Exception {
-        MeterCreateRequest req = new MeterCreateRequest(
-                lotId,
-                0.0,
-                0.0,
-                MeterType.WATER,
-                MeterMeasurement.GAL,
-                isMaster,
-                99999,
-                1.0,
-                15,
-                true
-        );
-
-
-
-        MvcResult result = mockMvc.perform(post("/meters/create")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isCreated())
-                .andReturn();
-
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
-    }
-
-    private void recordRead(String token, UUID meterUuid, int amount, OffsetDateTime readAt) throws Exception {
-        MeterReadCreateRequest req = new MeterReadCreateRequest(
-                amount,
-                readAt,
-                false,
-                0
-        );
-
-        mockMvc.perform(post("/meters/{uuid}/reads", meterUuid)
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isCreated());
-    }
-
-    private void linkMeters(String token, UUID parentUuid, UUID childUuid, LocalDate effectiveFrom) throws Exception {
-        MeterRelationCreateRequest req = new MeterRelationCreateRequest(
-                parentUuid,
-                childUuid,
-                false,
-                effectiveFrom
-        );
-
-        mockMvc.perform(post("/meters/relationships")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isCreated());
-    }
-
-    private UUID createMeterBill(String token, UUID meterUuid, int billedAmount, double rateAmount,
-                                 LocalDate periodStart, LocalDate periodEnd) throws Exception {
-
-        MeterBillsCreateRequest req = new MeterBillsCreateRequest(
-                meterUuid,
-                BigDecimal.valueOf(billedAmount),
-                BigDecimal.valueOf(rateAmount),
-                MeterMeasurement.GAL,
-                periodStart,
-                periodEnd
-        );
-
-        MvcResult result = mockMvc.perform(post("/meterbills/create")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isCreated())
-                .andReturn();
-
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
-    }
-
-
-
-    @Test
-    void createMeterBill_shouldReturn201_withCorrectFields() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID propertyId = testData.insertProperty("AB").uuid();
-        UUID lotId = testData.insertLot(propertyId, "5A").uuid();
-        UUID meterUuid = createMeter(token, lotId, true);
-
-        MeterBillsCreateRequest req = new MeterBillsCreateRequest(
-                meterUuid,
-                new BigDecimal("500"),
-                new BigDecimal("0.0148"),
-                MeterMeasurement.GAL,
-                LocalDate.now().minusMonths(1),
-                LocalDate.now()
-        );
-
-        mockMvc.perform(post("/meterbills/create")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isCreated());
+                .andReturn().getResponse().getContentAsString();
+        return UUID.fromString(JsonPath.read(body, "$.bill.uuid"));
     }
 
     @Test
-    void createMeterBill_shouldReturn401_whenNoTokenProvided() throws Exception {
-        String body = """
-                {
-                    "billedMeterId": "%s", "billedAmount": 500, "rateAmount": 0.0148,
-                    "rateUnit": "GAL", "periodStart": "2026-01-01", "periodEnd": "2026-02-01"
-                }
-                """.formatted(UUID.randomUUID());
-
-        mockMvc.perform(post("/meterbills/create")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+    void bills_needASignIn() throws Exception {
+        mockMvc.perform(get("/api/utility-bills").param("propertyId", UUID.randomUUID().toString()))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void getById_shouldReturn200_afterCreate() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID propertyId = testData.insertProperty("AB").uuid();
-        UUID lotId = testData.insertLot(propertyId, "5A").uuid();
-        UUID meterUuid = createMeter(token, lotId, true);
-        UUID billUuid = createMeterBill(token, meterUuid, 500, 0.0148,
-                LocalDate.now().minusMonths(1), LocalDate.now());
+    void aBillsReadsBecomeTheMainsReads_andItsLinesAreCheckedAgainstTheTotal() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB1").uuid();
+        UUID mainId = testData.insertMain(propertyId).uuid();
+        UUID billId = newBill(token, propertyId, "2026-08-01", "2026-10-01");
 
-        mockMvc.perform(get("/meterbills/{uuid}", billUuid)
+        // 412 CCF between the reads, and 412 printed: they agree
+        send(token, "/api/utility-bills/" + billId + "/meters", """
+                { "mainId": "%s", "priorReadOn": "2026-08-01", "priorReading": 4410,
+                  "currentReadOn": "2026-10-01", "currentReading": 4822, "printedUsage": "412", "printedUnit": "CCF" }
+                """.formatted(mainId))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.meters[0].usageMatches").value(true))
+                .andExpect(jsonPath("$.meters[0].priorRead.source").value("PROVIDER"));
+
+        send(token, "/api/utility-bills/" + billId + "/lines", """
+                { "service": "WATER", "description": "Water usage", "amount": "1810.44", "printedRate": "4.394272",
+                  "rateUnit": "CCF", "billingMonth": "2026-11-01" }
+                """).andExpect(status().isCreated());
+        send(token, "/api/utility-bills/" + billId + "/lines", """
+                { "service": "WATER", "description": "Ambulance fee", "amount": "25.00", "billingMonth": "2026-11-01" }
+                """).andExpect(status().isCreated());
+        send(token, "/api/utility-bills/" + billId + "/lines", """
+                { "service": "WATER", "description": "Late fee", "amount": "13.00", "passedOn": false, "billingMonth": "2026-11-20" }
+                """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.lines[2].billingMonth").value("2026-11-01"))
+                .andExpect(jsonPath("$.linesTotal").value("1848.44"))
+                .andExpect(jsonPath("$.passedOnTotal").value("1835.44"))
+                .andExpect(jsonPath("$.totalMatches").value(true));
+
+        mockMvc.perform(get("/api/utility-bills").param("propertyId", propertyId.toString())
+                        .param("billingMonth", "2026-11-01")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
     }
 
     @Test
-    void getById_shouldReturn404_whenBillDoesNotExist() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+    void aBillsReads_andTheDaysBetweenThem_stayAsTheBillCountedThem() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB4").uuid();
+        UUID mainId = testData.insertMain(propertyId).uuid();
+        String body = send(token, "/api/utility-bills/" + newBill(token, propertyId, "2026-08-01", "2026-10-01") + "/meters", """
+                { "mainId": "%s", "priorReadOn": "2026-08-01", "priorReading": 4410,
+                  "currentReadOn": "2026-10-01", "currentReading": 4822 }
+                """.formatted(mainId))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String currentRead = JsonPath.read(body, "$.meters[0].currentRead.uuid");
 
-        mockMvc.perform(get("/meterbills/{uuid}", UUID.randomUUID())
-                        .header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound());
-    }
-
-
-    @Test
-    void patchMeterBill_shouldUpdateBilledAmount() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID propertyId = testData.insertProperty("AB").uuid();
-        UUID lotId = testData.insertLot(propertyId, "5A").uuid();
-        UUID meterUuid = createMeter(token, lotId, true);
-        UUID billUuid = createMeterBill(token, meterUuid, 500, 0.0148,
-                LocalDate.now().minusMonths(1), LocalDate.now());
-
-        mockMvc.perform(patch("/meterbills/{uuid}", billUuid)
+        mockMvc.perform(patch("/api/meter-reads/" + currentRead)
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{ \"billedAmount\": 650 }"))
-                .andExpect(status().isOk());
+                        .content("{ \"reading\": 5822 }"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("meter_read.fixed_by_bill"));
+
+        // a staff read between the bill's two reads would change its usage too
+        send(token, "/api/meter-reads", """
+                { "mainId": "%s", "readOn": "2026-09-01", "reading": 4400 }
+                """.formatted(mainId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("meter_read.inside_bill"));
     }
 
     @Test
-    void patchMeterBill_shouldReturn404_whenBillDoesNotExist() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+    void theNextBill_reusesTheLastBillsNewRead_butRefusesADifferentNumberForTheSameDay() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB2").uuid();
+        UUID mainId = testData.insertMain(propertyId).uuid();
 
-        mockMvc.perform(patch("/meterbills/{uuid}", UUID.randomUUID())
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{ \"billedAmount\": 650 }"))
-                .andExpect(status().isNotFound());
+        send(token, "/api/utility-bills/" + newBill(token, propertyId, "2026-08-01", "2026-10-01") + "/meters", """
+                { "mainId": "%s", "priorReadOn": "2026-08-01", "priorReading": 4410,
+                  "currentReadOn": "2026-10-01", "currentReading": 4822 }
+                """.formatted(mainId)).andExpect(status().isCreated());
+
+        send(token, "/api/utility-bills/" + newBill(token, propertyId, "2026-10-01", "2026-11-01") + "/meters", """
+                { "mainId": "%s", "priorReadOn": "2026-10-01", "priorReading": 4800,
+                  "currentReadOn": "2026-11-01", "currentReading": 4990 }
+                """.formatted(mainId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("meter_read.provider_differs"));
     }
 
-
     @Test
-    void deleteMeterBill_shouldReturn204_andSubsequentGetReturns404() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID propertyId = testData.insertProperty("AB").uuid();
-        UUID lotId = testData.insertLot(propertyId, "5A").uuid();
-        UUID meterUuid = createMeter(token, lotId, true);
-        UUID billUuid = createMeterBill(token, meterUuid, 500, 0.0148,
-                LocalDate.now().minusMonths(1), LocalDate.now());
+    void theSameBillEnteredTwice_isRefused_untilThePersonConfirms() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB5").uuid();
+        newBill(token, propertyId, "2026-08-01", "2026-10-01");
+        String again = """
+                { "propertyId": "%s", "provider": "city ", "periodStart": "2026-08-01", "periodEnd": "2026-10-01"%s }
+                """;
 
-        mockMvc.perform(delete("/meterbills/{uuid}", billUuid)
+        send(token, "/api/utility-bills", again.formatted(propertyId, ""))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("utility_bill.possible_duplicate"));
+        mockMvc.perform(get("/api/utility-bills/look-alikes")
+                        .param("propertyId", propertyId.toString())
+                        .param("periodStart", "2026-08-01").param("periodEnd", "2026-10-01").param("provider", "City")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isNoContent());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1));
+        send(token, "/api/utility-bills", again.formatted(propertyId, ", \"allowDuplicate\": true"))
+                .andExpect(status().isCreated());
+    }
 
-        mockMvc.perform(get("/meterbills/{uuid}", billUuid)
+    @Test
+    void theParksCycle_proposesEachLinesBillingMonth() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB3").uuid();
+
+        // every 2 months, in even months, 1 month after the period ends
+        send(token, "/api/utility-cycles", """
+                { "propertyId": "%s", "service": "WATER", "cycleMonths": 2, "anchorMonth": 2, "lagMonths": 1,
+                  "effectiveFrom": "2026-01-15" }
+                """.formatted(propertyId))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.effectiveFrom").value("2026-01-01"));
+
+        mockMvc.perform(get("/api/utility-cycles/proposed-month")
+                        .param("propertyId", propertyId.toString())
+                        .param("service", "WATER")
+                        .param("periodEnd", "2026-08-20")
                         .header("Authorization", "Bearer " + token))
-                .andExpect(status().isNotFound());
-    }
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.billingMonth").value("2026-10-01"));
 
-
-    @Test
-    void calculateCharge_shouldReturn200_withCorrectCalculatedAmount() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID propertyId = testData.insertProperty("AB").uuid();
-        UUID lotId = testData.insertLot(propertyId, "5A").uuid();
-        UUID lotId2 = testData.insertLot(propertyId, "5B").uuid();
-        UUID parentUuid = createMeter(token, lotId, true);
-        UUID childUuid = createSecondMeter(token, lotId2, false);
-
-        LocalDate periodStart = LocalDate.now().minusMonths(1);
-        LocalDate periodEnd = LocalDate.now();
-
-        linkMeters(token, parentUuid, childUuid, periodStart);
-        recordRead(token, childUuid, 1000, periodStart.atStartOfDay().atOffset(ZoneOffset.UTC));
-        recordRead(token, childUuid, 1450, periodEnd.atStartOfDay().atOffset(ZoneOffset.UTC));
-        createMeterBill(token, parentUuid, 500, 0.0148, periodStart, periodEnd);
-
-        mockMvc.perform(get("/meterbills/{lotMeterId}/charge", childUuid)
-                        .header("Authorization", "Bearer " + token)
-                        .param("periodStart", periodStart.toString())
-                        .param("periodEnd", periodEnd.toString()))
-                .andExpect(status().isOk());
-    }
-
-    @Test
-    void calculateCharge_shouldReturn422_whenNoParentLinked() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID propertyId = testData.insertProperty("AB").uuid();
-        UUID lotId = testData.insertLot(propertyId, "5A").uuid();
-        UUID orphanChild = createMeter(token, lotId, false);
-
-        mockMvc.perform(get("/meterbills/{lotMeterId}/charge", orphanChild)
-                        .header("Authorization", "Bearer " + token)
-                        .param("periodStart", LocalDate.now().minusMonths(1).toString())
-                        .param("periodEnd", LocalDate.now().toString()))
-                .andExpect(status().isUnprocessableEntity());
-    }
-
-    @Test
-    void calculateCharge_shouldReturn404_whenNoRateOnFileForParent() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID propertyId = testData.insertProperty("AB").uuid();
-        UUID lotId = testData.insertLot(propertyId, "5A").uuid();
-        UUID lotId2 = testData.insertLot(propertyId, "5B").uuid();
-        UUID parentUuid = createMeter(token, lotId, true);
-        UUID childUuid = createSecondMeter(token, lotId2, false);
-
-        LocalDate periodStart = LocalDate.now().minusMonths(1);
-        LocalDate periodEnd = LocalDate.now();
-
-        linkMeters(token, parentUuid, childUuid, periodStart);
-        recordRead(token, childUuid, 1000, periodStart.atStartOfDay().atOffset(ZoneOffset.UTC));
-        recordRead(token, childUuid, 1450, periodEnd.atStartOfDay().atOffset(ZoneOffset.UTC));
-        // meter-bill invoice will not be created as there is no rate
-
-        mockMvc.perform(get("/meterbills/{lotMeterId}/charge", childUuid)
-                        .header("Authorization", "Bearer " + token)
-                        .param("periodStart", periodStart.toString())
-                        .param("periodEnd", periodEnd.toString()))
-                .andExpect(status().isNotFound());
+        // a line with no month takes the cycle's; sewer has no cycle here, so its month must be given
+        UUID billId = newBill(token, propertyId, "2026-07-20", "2026-08-20");
+        send(token, "/api/utility-bills/" + billId + "/lines", """
+                { "service": "WATER", "description": "Water", "amount": "100.00" }
+                """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.lines[0].billingMonth").value("2026-10-01"));
+        send(token, "/api/utility-bills/" + billId + "/lines", """
+                { "service": "SEWER", "description": "Sewer", "amount": "100.00" }
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("utility_bill.no_cycle"));
     }
 }

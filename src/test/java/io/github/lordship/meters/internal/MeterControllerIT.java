@@ -3,8 +3,6 @@ package io.github.lordship.meters.internal;
 import com.jayway.jsonpath.JsonPath;
 import io.github.lordship.IntegrationTest;
 import io.github.lordship.TestAuthSupport;
-import io.github.lordship.meters.MeterMeasurement;
-import io.github.lordship.meters.MeterType;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,19 +12,11 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
-import java.time.LocalDate;
-import java.time.OffsetDateTime;
-import java.time.temporal.ChronoUnit;
-import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
 
 @Transactional
 public class MeterControllerIT extends IntegrationTest {
@@ -43,284 +33,175 @@ public class MeterControllerIT extends IntegrationTest {
     @Autowired
     ObjectMapper objectMapper;
 
-    @Autowired
-    MeterRepository meterRepository;
-
-    private MeterRow buildRow(UUID lotId) {
-        return MeterRow.forInsert(
-                lotId,
-                1.0,
-                2.0,
-                MeterType.WATER,
-                MeterMeasurement.KWH,
-                true,
-                99999,
-                1.0,
-                15,
-                false
-        );
+    private String root() throws Exception {
+        return TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
     }
 
-    private UUID insertLot() {
-        return testData.insertChainToLot().uuid();
-    }
-
-    // Two lots on one property, for the tests that link a parent meter to a child meter.
-    private UUID[] insertTwoLots() {
-        UUID propertyId = testData.insertProperty("TP").uuid();
-        return new UUID[]{
-                testData.insertLot(propertyId, "1").uuid(),
-                testData.insertLot(propertyId, "2").uuid()
-        };
-    }
-
-    private UUID createTestMeter(String token, UUID lotId) throws Exception {
-        MvcResult result = mockMvc.perform(
-                        post("/meters/create")
-                                .header("Authorization", "Bearer " + token)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(new MeterCreateRequest(lotId, 1.0, 1.0, MeterType.WATER, MeterMeasurement.GAL, true, 99999,                 1.0,
-                                        15,
-                                        false)))
-                )
+    private UUID create(String token, String url, String json) throws Exception {
+        MvcResult result = mockMvc.perform(post(url)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json))
                 .andExpect(status().isCreated())
                 .andReturn();
-
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
+        String body = result.getResponse().getContentAsString();
+        // a read answers with its interval, everything else with the record itself
+        return UUID.fromString(body.contains("\"read\"") ? JsonPath.read(body, "$.read.uuid") : JsonPath.read(body, "$.uuid"));
     }
 
-    private UUID createChildMeter(String token, UUID lotId) throws Exception {
-        MvcResult result = mockMvc.perform(
-                        post("/meters/create")
-                                .header("Authorization", "Bearer " + token)
-                                .contentType(MediaType.APPLICATION_JSON)
-                                .content(objectMapper.writeValueAsString(new MeterCreateRequest(lotId, 1.0, 1.0, MeterType.WATER, MeterMeasurement.GAL, false, 99999,                 1.0,
-                                        15,
-                                        false)))
-                )
-                .andExpect(status().isCreated())
-                .andReturn();
-
-        return UUID.fromString(JsonPath.read(result.getResponse().getContentAsString(), "$.id"));
-    }
-
-
-    // REPOSITORY TESTS
-    @Test
-    void findAMeterById() {
-        MeterRow saved = testData.insertChainToMeters();
-
-        Optional<MeterRow> found = meterRepository.findById(saved.uuid());
-
-        assertTrue(found.isPresent());
-        assertEquals(saved.uuid(), found.get().uuid());
+    private UUID waterSubmeter(String token, UUID propertyId) throws Exception {
+        return create(token, "/api/meters/submeters", """
+                { "propertyId": "%s", "utilityType": "WATER", "unit": "GAL", "multiplier": "10" }
+                """.formatted(propertyId));
     }
 
     @Test
-    void softDeleteRemovesFromTable() {
-        UUID lotId = insertLot();
-        MeterRow saved = meterRepository.save(buildRow(lotId));
-
-        meterRepository.softDelete(saved.uuid());
-
-        assertTrue(meterRepository.findById(saved.uuid()).isEmpty());
-        assertTrue(meterRepository.findMeterByLot(saved.meterId()).isEmpty());
-    }
-
-    @Test
-    void patchUpdatesAllowedFields() {
-        UUID lotId = insertLot();
-        MeterRow saved = meterRepository.save(buildRow(lotId));
-
-        Map<String, Object> mutable = Map.of(
-                "title", "Updated Title"
-        );
-
-        Optional<MeterRow> patched = meterRepository.patch(saved.uuid(), mutable);
-
-        assertTrue(patched.isPresent());
-        assertEquals("Updated Title", patched.get().title());
-    }
-
-    // CONTROLLER TESTS
-    @Test
-    void getMeter_shouldReturn401_whenNoTokenProvided() throws Exception {
-        mockMvc.perform(get("/meters/{uuid}", UUID.randomUUID()))
+    void theTree_needsASignIn() throws Exception {
+        mockMvc.perform(get("/api/meters").param("propertyId", UUID.randomUUID().toString()))
                 .andExpect(status().isUnauthorized());
     }
 
     @Test
-    void createMeter_shouldReturn401_whenNoTokenProvided() throws Exception {
-        var request = new MeterCreateRequest(UUID.randomUUID(), 1.0, 1.0, MeterType.WATER, MeterMeasurement.GAL, false, 99999,                 1.0,
-                15,
-                false);
+    void aMainSitsOnTheProperty_andASubmeterCanFeedTwoLots() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("MT1").uuid();
+        UUID lot1 = testData.insertLot(propertyId, "1").uuid();
+        UUID lot2 = testData.insertLot(propertyId, "2").uuid();
 
-        mockMvc.perform(post("/meters/create")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isUnauthorized());
+        UUID main = create(token, "/api/meters/mains", """
+                { "propertyId": "%s", "utilityType": "WATER", "unit": "CCF", "title": "City main", "provider": "City" }
+                """.formatted(propertyId));
+        UUID sub = waterSubmeter(token, propertyId);
+        create(token, "/api/meters/submeters/" + sub + "/main", """
+                { "mainId": "%s", "effectiveFrom": "2026-01-01" }
+                """.formatted(main));
+        create(token, "/api/meters/submeters/" + sub + "/lots", """
+                { "lotId": "%s", "effectiveFrom": "2026-01-01" }
+                """.formatted(lot1));
+        create(token, "/api/meters/submeters/" + sub + "/lots", """
+                { "lotId": "%s", "effectiveFrom": "2026-01-01" }
+                """.formatted(lot2));
+
+        mockMvc.perform(get("/api/meters").param("propertyId", propertyId.toString())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mains[0].title").value("City main"))
+                .andExpect(jsonPath("$.settings.length()").value(2))
+                .andExpect(jsonPath("$.submeters.length()").value(1))
+                .andExpect(jsonPath("$.mainLinks.length()").value(1))
+                .andExpect(jsonPath("$.lotLinks.length()").value(2));
     }
 
     @Test
-    void createMeter_shouldReturn400_whenMeterIdIsMissing() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        var invalidJson = """
-                    { "meterId": null }
-                """;
+    void aLot_hasOneWaterSubmeterAtATime_soLinkingAnotherMovesIt() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("MT7").uuid();
+        UUID lot = testData.insertLot(propertyId, "1").uuid();
+        UUID first = waterSubmeter(token, propertyId);
+        UUID second = waterSubmeter(token, propertyId);
+        create(token, "/api/meters/submeters/" + first + "/lots", """
+                { "lotId": "%s", "effectiveFrom": "2026-01-01" }
+                """.formatted(lot));
+        create(token, "/api/meters/submeters/" + second + "/lots", """
+                { "lotId": "%s", "effectiveFrom": "2026-06-01" }
+                """.formatted(lot));
 
-        mockMvc.perform(post("/meters/create")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(invalidJson))
-                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/meters").param("propertyId", propertyId.toString())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lotLinks.length()").value(2))
+                .andExpect(jsonPath("$.lotLinks[0].effectiveTo").value("2026-06-01"));
     }
 
+    @Test
+    void aPowerUnitOnAWaterMeter_isRefused() throws Exception {
+        UUID propertyId = testData.insertProperty("MT2").uuid();
+        mockMvc.perform(post("/api/meters/submeters")
+                        .header("Authorization", "Bearer " + root())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "propertyId": "%s", "utilityType": "WATER", "unit": "KWH" }
+                                """.formatted(propertyId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("meter.unit_does_not_suit"));
+    }
 
     @Test
-    void patchMeter_shouldReturn400_whenInvalidDateProvided() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID lotId = insertLot();
+    void aLotFromAnotherPark_isRefused() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("MT3").uuid();
+        UUID otherLot = testData.insertChainToLot().uuid();
+        UUID sub = waterSubmeter(token, propertyId);
 
-        UUID meterId = createTestMeter(token, lotId);
-
-        // Invalid date
-        mockMvc.perform(patch("/meters/{uuid}", meterId)
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"installedAt\": \"not-a-date\"}"))
-                .andExpect(status().isBadRequest());
-
-        // Checks installedAt
-        mockMvc.perform(patch("/meters/{uuid}", meterId)
+        mockMvc.perform(post("/api/meters/submeters/" + sub + "/lots")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                        {
-                            "installedAt": "not-a-date"
-                        }
-                    """))
-                .andExpect(status().isBadRequest());
+                                { "lotId": "%s", "effectiveFrom": "2026-01-01" }
+                                """.formatted(otherLot)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("submeter.lot_not_in_property"));
     }
 
     @Test
-    void patchMeter_shouldReturn200_whenValidDateProvided() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID lotId = insertLot();
-        UUID meterUuid = createTestMeter(token, lotId);
+    void aReadThatRanBackwards_isSavedAndFlagged_andASecondReadThatDay_isRefused() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("MT4").uuid();
+        UUID sub = waterSubmeter(token, propertyId);
 
-        mockMvc.perform(patch("/meters/{uuid}", meterUuid)
+        create(token, "/api/meter-reads", """
+                { "submeterId": "%s", "readOn": "2026-09-15", "reading": 1200 }
+                """.formatted(sub));
+        mockMvc.perform(post("/api/meter-reads")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"installedAt\": \"2026-01-01\"}"))
-                .andExpect(status().isOk())
-                .andExpect(status().isOk());
+                        .content("""
+                                { "submeterId": "%s", "readOn": "2026-10-15", "reading": 1100 }
+                                """.formatted(sub)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.flags[0]").value("BACKWARDS"))
+                .andExpect(jsonPath("$.usage").isEmpty());
+
+        mockMvc.perform(post("/api/meter-reads")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "submeterId": "%s", "readOn": "2026-10-15", "reading": 1300 }
+                                """.formatted(sub)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("meter_read.day_taken"));
     }
 
     @Test
-    void recordRead_shouldReturn201_withCorrectFields() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+    void aParkOutsideTheAgentsScope_looksLikeNothing() throws Exception {
+        String rootToken = root();
+        UUID propertyId = testData.insertProperty("MT5").uuid();
+        UUID sub = waterSubmeter(rootToken, propertyId);
+        var agent = TestAuthSupport.agentWithPermissions(mockMvc, objectMapper, rootToken, "meters:view", "meters:edit");
 
-        UUID lotId = insertLot();
-        UUID meterUuid = createTestMeter(token, lotId);
-
-        String body = """
-            { "meterAmount": 1000.00, "readAt": "%s", "isEstimated": false, "rolloverCount": 0 }
-            """.formatted(OffsetDateTime.now());
-
-        mockMvc.perform(post("/meters/{uuid}/reads", meterUuid)
-                        .header("Authorization", "Bearer " + token)
+        mockMvc.perform(get("/api/meters").param("propertyId", propertyId.toString())
+                        .header("Authorization", "Bearer " + agent.token()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(patch("/api/meters/submeters/" + sub)
+                        .header("Authorization", "Bearer " + agent.token())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isCreated());
-    }
-
-    @Test
-    void recordRead_shouldReturn404_whenMeterDoesNotExist() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        String body = """
-            { "meterAmount": 1000, "readAt": "%s", "isEstimated": false, "rolloverCount": 0 }
-            """.formatted(OffsetDateTime.now());
-
-        mockMvc.perform(post("/meters/{uuid}/reads", UUID.randomUUID())
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+                        .content("{ \"title\": \"Moved\" }"))
                 .andExpect(status().isNotFound());
     }
 
     @Test
-    void linkMeters_shouldReturn201_whenParentIsMasterAndTypesMatch() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID[] lots = insertTwoLots();
-        UUID lotId = lots[0];
-        UUID lotId2 = lots[1];
-        UUID parentUuid = createTestMeter(token, lotId);
-        UUID childUuid = createTestMeter(token, lotId2);
+    void enteringReads_needsItsOwnPermission() throws Exception {
+        String rootToken = root();
+        UUID propertyId = testData.insertProperty("MT6").uuid();
+        UUID sub = waterSubmeter(rootToken, propertyId);
+        var agent = TestAuthSupport.agentWithPermissions(mockMvc, objectMapper, rootToken, "meters:view", "meters:edit");
 
-        String body = String.format("""
-            { "parentMeterId": "%s", "childMeterId": "%s", "hasUnmeteredRemainder": false, "effectiveFrom": "%s" }
-            """, parentUuid, childUuid, LocalDate.now());
-
-        mockMvc.perform(post("/meters/relationships")
-                        .header("Authorization", "Bearer " + token)
+        mockMvc.perform(post("/api/meter-reads")
+                        .header("Authorization", "Bearer " + agent.token())
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isCreated());
-    }
-
-    @Test
-    void linkMeters_shouldReturn400_whenParentIsNotMasterMeter() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID[] lots = insertTwoLots();
-        UUID lotId = lots[0];
-        UUID lotId2 = lots[1];
-        UUID notMaster = createChildMeter(token, lotId);
-        UUID child = createChildMeter(token, lotId2);
-
-        String body = String.format("""
-            { "parentMeterId": "%s", "childMeterId": "%s", "hasUnmeteredRemainder": false, "effectiveFrom": "%s" }
-            """, notMaster, child, LocalDate.now());
-
-        mockMvc.perform(post("/meters/relationships")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    void resolveParentMeter_shouldReturn200_afterLinking() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID[] lots = insertTwoLots();
-        UUID lotId = lots[0];
-        UUID lotId2 = lots[1];
-        UUID parentUuid = createTestMeter(token, lotId);
-        UUID childUuid = createTestMeter(token, lotId2);
-
-        String linkBody = String.format("""
-            { "parentMeterId": "%s", "childMeterId": "%s", "hasUnmeteredRemainder": false, "effectiveFrom": "%s" }
-            """, parentUuid, childUuid, LocalDate.now());
-        mockMvc.perform(post("/meters/relationships")
-                        .header("Authorization", "Bearer " + token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(linkBody))
-                .andExpect(status().isCreated());
-
-        mockMvc.perform(get("/meters/relationships/{childMeterId}/parent", childUuid)
-                        .header("Authorization", "Bearer " + token)
-                        .param("asOf", LocalDate.now().toString()))
-                .andExpect(status().isOk());
-    }
-
-    @Test
-    void resolveParentMeter_shouldReturn404_whenNoRelationshipExists() throws Exception {
-        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
-        UUID lotId = insertLot();
-        UUID childUuid = createTestMeter(token, lotId);
-
-        mockMvc.perform(get("/meters/relationships/{childMeterId}/parent", childUuid)
-                        .header("Authorization", "Bearer " + token)
-                        .param("asOf", LocalDate.now().toString()))
-                .andExpect(status().isNotFound());
+                        .content("""
+                                { "submeterId": "%s", "readOn": "2026-10-15", "reading": 1 }
+                                """.formatted(sub)))
+                .andExpect(status().isForbidden());
     }
 }

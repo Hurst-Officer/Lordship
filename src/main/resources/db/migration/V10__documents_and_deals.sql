@@ -37,6 +37,10 @@ CREATE UNIQUE INDEX document_file_storage_key_uq ON document_file (storage_key);
 -- note: the same PDF can legitimately be connected to two different tenancies. Indexed so duplicates can be found
 CREATE INDEX document_file_sha256_idx ON document_file (sha256);
 
+-- A utility bill (V9) can carry its scanned copy
+ALTER TABLE utility_bill
+    ADD CONSTRAINT utility_bill_document_file_fk FOREIGN KEY (document_file) REFERENCES document_file(uuid);
+
 
 -- ── Document templates ───────────────────────────────────────────────────────
 -- Global and admin-only, and not coupled to terms_template: a document is the

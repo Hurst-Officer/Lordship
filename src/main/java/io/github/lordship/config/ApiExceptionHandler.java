@@ -211,6 +211,10 @@ public class ApiExceptionHandler {
         if ("23503".equals(state)) {
             return of(HttpStatus.BAD_REQUEST, text("data.missing_reference"));
         }
+        // An exclusion constraint: two dated rows that may not overlap, such as a submeter under two mains at once
+        if ("23P01".equals(state)) {
+            return of(HttpStatus.CONFLICT, ruleText(detail, text("data.overlaps")));
+        }
         return of(HttpStatus.CONFLICT, text("data.conflict"));
     }
 
