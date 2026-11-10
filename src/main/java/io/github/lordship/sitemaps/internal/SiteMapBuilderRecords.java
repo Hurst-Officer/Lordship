@@ -104,15 +104,20 @@ public final class SiteMapBuilderRecords {
     /**
      * What the save did.
      *
-     * @param created  lot numbers that were new to the park and were added
-     * @param unplaced live lots of the park that are not on the map after this save
+     * @param created     lot numbers that were new to the park and were added
+     * @param unplaced    live lots of the park that are not on the map after this save
+     * @param locationSet the property's new latitude and longitude, when it had none and this save set it
+     *                    to the middle of the map. Null when the property already had a location.
      */
     public record CommitResponse(
             int placed,
             List<String> created,
             List<String> unplaced,
-            long totalSquareFeet
+            long totalSquareFeet,
+            Location locationSet
     ) { }
+
+    public record Location(double latitude, double longitude) { }
 
     // ---- GET /api/sitemaps/geocode ------------------------------------------------
 

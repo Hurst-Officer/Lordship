@@ -8,8 +8,11 @@ import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.PermissibleAgreementType;
 import io.github.lordship.lots.internal.LotRepository;
 import io.github.lordship.lots.internal.LotRow;
+import io.github.lordship.meters.MeterMain;
+import io.github.lordship.meters.MeterType;
+import io.github.lordship.meters.MeterUnit;
 import io.github.lordship.meters.internal.MeterRepository;
-import io.github.lordship.meters.internal.MeterRow;
+import io.github.lordship.meters.internal.MeterSettingRepository;
 import io.github.lordship.persons.internal.PersonRepository;
 import io.github.lordship.persons.internal.PersonRow;
 import io.github.lordship.properties.Property;
@@ -23,6 +26,7 @@ import io.github.lordship.tenants.internal.TenantRepository;
 import io.github.lordship.tenants.internal.TenantRow;
 import org.springframework.beans.factory.annotation.Value;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -37,6 +41,7 @@ public final class TestDataSupport {
     private final TenancyRepository tenancyRepository;
     private final AccountRepository accountRepository;
     private final MeterRepository meterRepository;
+    private final MeterSettingRepository meterSettingRepository;
     private final PersonRepository personRepository;
     private final TenantRepository tenantRepository;
     private final InterestedPartyRepository interestedPartyRepository;
@@ -48,6 +53,7 @@ public final class TestDataSupport {
                             TenancyRepository tenancyRepository,
                             AccountRepository accountRepository,
                             MeterRepository meterRepository,
+                            MeterSettingRepository meterSettingRepository,
                             PersonRepository personRepository,
                             TenantRepository tenantRepository,
                             InterestedPartyRepository interestedPartyRepository,
@@ -58,6 +64,7 @@ public final class TestDataSupport {
         this.tenancyRepository = tenancyRepository;
         this.accountRepository = accountRepository;
         this.meterRepository = meterRepository;
+        this.meterSettingRepository = meterSettingRepository;
         this.personRepository = personRepository;
         this.tenantRepository = tenantRepository;
         this.interestedPartyRepository = interestedPartyRepository;
@@ -94,12 +101,12 @@ public final class TestDataSupport {
         return insertTenancy(insertChainToLot().uuid());
     }
 
-    public MeterRow insertMeter(UUID lotId) {
-        return meterRepository.createDefault(lotId);
-    }
-
-    public MeterRow insertChainToMeters() {
-        return insertMeter(insertChainToLot().uuid());
+    // A water main read in hundreds of cubic feet (its first setting, no start day)
+    public MeterMain insertMain(UUID propertyId) {
+        MeterMain main = meterRepository.insertMain(propertyId, MeterType.WATER, null, "Test main", null, null, null);
+        meterSettingRepository.insert(main.uuid(), null, propertyId, MeterType.WATER, null, MeterUnit.CCF,
+                BigDecimal.ONE, 99999, null);
+        return main;
     }
 
     public InterestedParty insertInterestedParty(UUID tenancyId, UUID personId, LocalDate startDate){
@@ -170,4 +177,4 @@ public final class TestDataSupport {
                 OffsetDateTime.now(ZoneOffset.UTC), null,
                 List.of(permissible));
     }
-}
+}

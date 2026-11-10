@@ -142,6 +142,25 @@ public class SiteMapBuilderRepository {
                 .update();
     }
 
+    /** A point on the ground. */
+    public record Middle(Double latitude, Double longitude) { }
+
+    // The middle of all the park's lot outlines together, weighted by area. Empty when no lot is on the map.
+    public Optional<Middle> middleOfOutlines(UUID propertyId) {
+        return db.sql("""
+                        SELECT postgis.ST_Y(m.middle) AS latitude,
+                               postgis.ST_X(m.middle) AS longitude
+                          FROM (SELECT postgis.ST_Centroid(postgis.ST_Collect(outline)) AS middle
+                                  FROM lot_outline
+                                 WHERE property_id = :property) m
+                         WHERE m.middle IS NOT NULL
+                        """)
+                .param("property", propertyId)
+                .query(Middle.class)
+                .optional()
+                .filter(m -> m.latitude() != null && m.longitude() != null);
+    }
+
     // Square feet of all the park's lot outlines together
     public long totalSquareFeet(UUID propertyId) {
         return db.sql("""

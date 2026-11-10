@@ -19,6 +19,7 @@ import io.github.lordship.sitemaps.internal.SiteMapBuilderRecords.CommitLot;
 import io.github.lordship.sitemaps.internal.SiteMapBuilderRecords.CommitRequest;
 import io.github.lordship.sitemaps.internal.SiteMapBuilderRecords.CommitResponse;
 import io.github.lordship.sitemaps.internal.SiteMapBuilderRecords.Imagery;
+import io.github.lordship.sitemaps.internal.SiteMapBuilderRecords.Location;
 import io.github.lordship.sitemaps.internal.SiteMapBuilderRecords.Placement;
 import io.github.lordship.sitemaps.internal.SiteMapBuilderRepository.PlacementRow;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,6 +50,7 @@ import java.util.stream.Collectors;
  *   <li>keeps each lot's corners on the drawing, so the park can be reopened</li>
  *   <li>keeps the drawing itself and how it was pinned to the globe</li>
  *   <li>writes one audit entry for the whole map</li>
+ *   <li>gives a property with no latitude and longitude the middle of its lots, so it has a location from then on</li>
  *   <li>once the save is in the database, pulls the park's surroundings in the background:
  *       roads, water, buildings, property lines and ground heights</li>
  * </ol>
@@ -197,6 +199,7 @@ public class SiteMapBuilderService {
                 .toList();
 
         audit(propertyId, before, placedBefore, request.lots().size(), created, fileName);
+        Location locationSet = locateIfMissing(found.get());
 
         // The lots moved, so the buildings are tied to lots again now. The surroundings are
         // pulled again once this save is in the database, around where the lots are now.
@@ -204,7 +207,29 @@ public class SiteMapBuilderService {
         surroundingsService.startAfterCommit(propertyId);
 
         return Optional.of(new CommitResponse(request.lots().size(), created, unplaced,
-                repository.totalSquareFeet(propertyId)));
+                repository.totalSquareFeet(propertyId), locationSet));
+    }
+
+    // A property with no location gets the middle of the lots just saved. The property's own
+    // save does it, so it is audited like any other change to the property. A location that was
+    // already there is never moved. Null when nothing was set.
+    private Location locateIfMissing(Property property) {
+        if (property.latitude() != null && property.longitude() != null) {
+            return null;
+        }
+        return repository.middleOfOutlines(property.uuid())
+                .map(m -> new Location(sixPlaces(m.latitude()), sixPlaces(m.longitude())))
+                .map(location -> {
+                    propertyService.patchProperty(property.uuid(),
+                            Map.of("latitude", location.latitude(), "longitude", location.longitude()));
+                    return location;
+                })
+                .orElse(null);
+    }
+
+    // Six decimals is about ten centimetres, plenty for where a park is
+    private static double sixPlaces(double degrees) {
+        return Math.round(degrees * 1_000_000d) / 1_000_000d;
     }
 
     // One entry for the whole map: how many lots it holds, which were added, and which drawing.

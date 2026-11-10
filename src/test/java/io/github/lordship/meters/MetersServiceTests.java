@@ -1,381 +1,274 @@
 package io.github.lordship.meters;
 
 import io.github.lordship.audit.AuditService;
-import io.github.lordship.meters.internal.*;
-import io.github.lordship.properties.internal.PropertyRow;
+import io.github.lordship.meters.internal.MeterLinkRepository;
+import io.github.lordship.meters.internal.MeterRepository;
+import io.github.lordship.meters.internal.MeterSettingRepository;
+import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RuleConflict;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.simple.JdbcClient;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
-@ExtendWith(MockitoExtension.class)
 public class MetersServiceTests {
-    private MeterRepository meterRepository;
-    private MeterRelationRepository meterRelation;
-    private MeterReadRepository meterRead;
-    private AuditService auditService;
+
+    private static final LocalDate JAN = LocalDate.of(2026, 1, 1);
+
+    private MeterRepository meters;
+    private MeterLinkRepository links;
+    private MeterSettingRepository settings;
     private MeterService meterService;
 
-    private UUID meterId;
-    private UUID uuid1;
-    private UUID uuid2;
+    private final UUID propertyId = UUID.randomUUID();
 
     @BeforeEach
     void setup() {
-        meterRepository = mock(MeterRepository.class);
-        meterRead = mock(MeterReadRepository.class);
-        meterRelation = mock(MeterRelationRepository.class);
-        auditService = mock(AuditService.class);
-
-        meterService = new MeterService(
-                meterRepository,
-                meterRead,
-                meterRelation,
-                null,          // encryptionService unused
-                auditService
-        );
-
-        meterId = UUID.randomUUID();
-        uuid1 = UUID.randomUUID();
-        uuid2 = UUID.randomUUID();
+        meters = mock(MeterRepository.class);
+        links = mock(MeterLinkRepository.class);
+        settings = mock(MeterSettingRepository.class);
+        meterService = new MeterService(meters, links, settings, mock(AuditService.class));
     }
 
-
-    private MeterRow row(UUID id) {
-        return new MeterRow(
-                id,
-                meterId,
-                "Water meter",
-                null,
-                "065E1GHB",
-                0.0,
-                0.0,
-                null,
-                OffsetDateTime.now(ZoneOffset.UTC).minusDays(10).truncatedTo(ChronoUnit.DAYS),
-                OffsetDateTime.now(ZoneOffset.UTC).minusDays(5).truncatedTo(ChronoUnit.DAYS),
-                null,
-                null,
-                null,
-                true,
-                99999,
-                1.0,
-                15,
-                false
-        );
-    }
-
-
-
-
-    private MeterRow createTestMeter(UUID lotId, boolean isMaster) {
-        return new MeterRow(
-                UUID.randomUUID(),
-                meterId,
-                "Water meter",
-                null,
-                "065E1GHB",
-                0.0,
-                0.0,
-                null,
-                OffsetDateTime.now(ZoneOffset.UTC).minusDays(10).truncatedTo(ChronoUnit.DAYS),
-                OffsetDateTime.now(ZoneOffset.UTC).minusDays(5).truncatedTo(ChronoUnit.DAYS),
-                null,
-                null,
-                null,
-                true,
-                99999,
-                1.0,
-                15,
-                false
-        );
-    }
-
-
+    // ── Units ──
 
     @Test
-    void create_shouldSaveAndAudit() {
-        MeterCreateRequest req = new MeterCreateRequest(
-                meterId, 1.0, 2.0, MeterType.WATER, MeterMeasurement.GAL, true, 99999,                 1.0,
-                15,
-                false
-        );
+    void hundredCubicFeet_isExactly748point051948Gallons() {
+        assertEquals(new BigDecimal("748.051948"), MeterUnit.CCF.toBase(BigDecimal.ONE));
+        assertEquals(new BigDecimal("1000.000000"), MeterUnit.KGAL.toBase(BigDecimal.ONE));
+        assertTrue(MeterUnit.KWH.suits(MeterType.POWER));
+        assertFalse(MeterUnit.GAL.suits(MeterType.POWER));
+    }
 
-        MeterRow saved = row(uuid1);
-        when(meterRepository.save(any())).thenReturn(saved);
+    // ── Usage and warnings from a chain of reads ──
 
-        Meters result = meterService.create(req);
+    private static List<MeterRead> reads(Object... kindDayReading) {
+        List<MeterRead> out = new ArrayList<>();
+        for (int i = 0; i < kindDayReading.length; i += 3) {
+            out.add(new MeterRead(UUID.randomUUID(), null, UUID.randomUUID(),
+                    JAN.plusDays((Integer) kindDayReading[i + 1]), ((Number) kindDayReading[i + 2]).longValue(),
+                    (MeterReadKind) kindDayReading[i], MeterReadSource.STAFF, false, null, null, null, null));
+        }
+        return out;
+    }
 
-        assertEquals(uuid1, result.uuid());
-        verify(meterRepository).save(any());
-        verify(auditService).recordInsert(eq("meters"), eq(uuid1), any());
+    private static MeterSetting setting(LocalDate from, MeterUnit unit, String multiplier, long dialMax) {
+        return new MeterSetting(UUID.randomUUID(), null, UUID.randomUUID(), UUID.randomUUID(), MeterType.WATER, from,
+                unit, new BigDecimal(multiplier), dialMax, null, null, null);
+    }
+
+    private static List<MeterSetting> gallons(String multiplier) {
+        return List.of(setting(null, MeterUnit.GAL, multiplier, 99999));
+    }
+
+    private static final MeterReadKind READ = MeterReadKind.READ;
+
+    @Test
+    void usage_isTheDialDifference_timesTheMultiplier_inGallons() {
+        // a lot meter counting tens of gallons, as on the rent rolls: (new - old) x 10
+        List<ReadInterval> chain = ReadChain.evaluate(reads(READ, 0, 1200, READ, 30, 1350), gallons("10"));
+
+        assertEquals(List.of(ReadFlag.NO_PREVIOUS), chain.get(0).flags());
+        assertNull(chain.get(0).usage());
+        assertEquals(0, new BigDecimal("1500").compareTo(chain.get(1).baseUsage()));
+        assertTrue(chain.get(1).flags().isEmpty());
     }
 
     @Test
-    void findMetersById_shouldReturnMappedMeters() {
-        MeterRow saved = row(uuid1);
-        when(meterRepository.findById(uuid1)).thenReturn(Optional.of(saved));
+    void aLowerRead_isFlaggedBackwards_andCountsNothing() {
+        List<ReadInterval> chain = ReadChain.evaluate(reads(READ, 0, 1200, READ, 30, 1100), gallons("1"));
 
-        Optional<Meters> result = meterService.findMetersById(uuid1);
-
-        assertTrue(result.isPresent());
-        assertEquals(uuid1, result.get().uuid());
-    }
-
-    // Test create method with energy meter
-    @Test
-    void create_energyMeter_withKWH_succeeds() {
-        MeterCreateRequest req = new MeterCreateRequest(
-                UUID.randomUUID(),
-                1.0,
-                2.0,
-                MeterType.ENERGY,
-                MeterMeasurement.KWH,
-                false,
-                99999,
-                1.0,
-                15,
-                false
-        );
-
-        MeterRow saved = MeterRow.forInsert(
-                req.meterId(), req.pointX(), req.pointY(),
-                req.utilityType(), req.measurement(), req.isMasterMeter(),
-                req.rolloverMax(), req.meterMultiplier(), req.readDueDay(), req.isBimonthly()
-        );
-
-        when(meterRepository.save(any())).thenReturn(saved);
-
-        Meters result = meterService.create(req);
-
-        assertEquals(MeterMeasurement.KWH, result.measurement());
-        verify(auditService).recordInsert(eq("meters"), any(), any());
+        assertEquals(List.of(ReadFlag.BACKWARDS), chain.get(1).flags());
+        assertNull(chain.get(1).baseUsage());
     }
 
     @Test
-    void create_energyMeter_withInvalidMeasurement_throws() {
-        MeterCreateRequest req = new MeterCreateRequest(
-                UUID.randomUUID(),
-                1.0,
-                2.0,
-                MeterType.ENERGY,
-                MeterMeasurement.GAL,
-                false,
-                99999,
-                1.0,
-                15,
-                false
-        );
+    void aConfirmedRollover_countsPastTheTopOfTheDial() {
+        // 99,950 → 0 → 30 is 50 + 30 = 80
+        List<ReadInterval> chain = ReadChain.evaluate(
+                reads(READ, 0, 99950, MeterReadKind.ROLLOVER, 30, 30), gallons("1"));
 
-        assertThrows(IllegalArgumentException.class, () -> meterService.create(req));
-    }
-
-    // Test create method with water meter
-    @Test
-    void create_waterMeter_withGallons_succeeds() {
-        MeterCreateRequest req = new MeterCreateRequest(
-                UUID.randomUUID(),
-                1.0,
-                2.0,
-                MeterType.WATER,
-                MeterMeasurement.GAL,
-                false,
-                99999,
-                1.0,
-                15,
-                false
-        );
-
-        MeterRow saved = MeterRow.forInsert(
-                req.meterId(), req.pointX(), req.pointY(),
-                req.utilityType(), req.measurement(), req.isMasterMeter(),
-                req.rolloverMax(), req.meterMultiplier(), req.readDueDay(), req.isBimonthly()
-        );
-
-        when(meterRepository.save(any())).thenReturn(saved);
-
-        Meters result = meterService.create(req);
-
-        assertEquals(MeterMeasurement.GAL, result.measurement());
-        verify(auditService).recordInsert(eq("meters"), any(), any());
+        assertEquals(0, new BigDecimal("80").compareTo(chain.get(1).baseUsage()));
+        assertTrue(chain.get(1).flags().isEmpty());
     }
 
     @Test
-    void create_waterMeter_withKWH_throws() {
-        MeterCreateRequest req = new MeterCreateRequest(
-                UUID.randomUUID(),
-                1.0,
-                2.0,
-                MeterType.WATER,
-                MeterMeasurement.KWH,
-                false,
-                99999,
-                1.0,
-                15,
-                false
-        );
+    void aStart_neverCountsAcrossAReplacedMeter() {
+        List<ReadInterval> chain = ReadChain.evaluate(
+                reads(READ, 0, 5000, MeterReadKind.START, 10, 3, READ, 40, 103), gallons("1"));
 
-        assertThrows(IllegalArgumentException.class, () -> meterService.create(req));
-    }
-
-    // Test patch method with energy meter
-    @Test
-    void patch_energyMeter_toGallons_throws() {
-        UUID id = UUID.randomUUID();
-
-        MeterRow before = new MeterRow(
-                id, UUID.randomUUID(), "Energy meter", "Should throw error", "123456789",
-                1.0, 2.0, LocalDate.now(), OffsetDateTime.now(), null,
-                null, MeterType.ENERGY, MeterMeasurement.KWH, false, 99999,                 1.0,
-                15,
-                false
-        );
-
-
-        when(meterRepository.findById(id)).thenReturn(Optional.of(before));
-
-        Map<String, Object> changes = Map.of("measurement", "GAL");
-
-        assertThrows(IllegalArgumentException.class, () -> meterService.patchMeter(id, changes));
-    }
-
-    // Test patch method with water meter
-    @Test
-    void patch_waterMeter_toGallons_succeeds() {
-        UUID id = UUID.randomUUID();
-
-        MeterRow before = new MeterRow(
-                id, UUID.randomUUID(), "Energy meter", "Should patch successfully", "123456789",
-                1.0, 2.0, LocalDate.now(), OffsetDateTime.now(), null,
-                null, MeterType.WATER, MeterMeasurement.CBF, false, 99999,                 1.0,
-                15,
-                false
-        );
-
-        when(meterRepository.findById(id)).thenReturn(Optional.of(before));
-        MeterRow after = new MeterRow(
-                before.uuid(),
-                before.meterId(),
-                before.title(),
-                before.description(),
-                before.serialNumber(),
-                before.pointX(),
-                before.pointY(),
-                before.installedAt(),
-                before.createdAt(),
-                OffsetDateTime.now(),
-                null,
-                MeterType.WATER,
-                MeterMeasurement.GAL,   // patch CBF to GAL
-                before.isMasterMeter(),
-                99999,
-                1.0,
-                15,
-                false
-        );
-
-        when(meterRepository.patch(eq(id), any())).thenReturn(Optional.of(after));
-
-        Map<String, Object> changes = Map.of("measurement", "GAL");
-
-        Optional<Meters> result = meterService.patchMeter(id, changes);
-
-        assertTrue(result.isPresent());
-        verify(auditService).recordUpdate(eq("meters"), eq(id), any(), any());
+        assertNull(chain.get(1).usage());
+        assertTrue(chain.get(1).flags().isEmpty());
+        assertEquals(0, new BigDecimal("100").compareTo(chain.get(2).baseUsage()));
     }
 
     @Test
-    void patch_waterMeter_toKWH_throws() {
-        UUID id = UUID.randomUUID();
+    void aMeterThatDidNotMove_andAJump_areFlagged() {
+        List<ReadInterval> chain = ReadChain.evaluate(reads(
+                READ, 0, 1000, READ, 30, 1100, READ, 60, 1200, READ, 90, 1300,
+                READ, 120, 1300,   // stuck
+                READ, 150, 2300),  // ten times the usual: a leak or a misread
+                gallons("1"));
 
-        MeterRow before = new MeterRow(
-                id, UUID.randomUUID(), "Energy meter", "Should patch successfully", "123456789",
-                1.0, 2.0, LocalDate.now(), OffsetDateTime.now(), null,
-                null, MeterType.WATER, MeterMeasurement.GAL, false, 99999,                 1.0,
-                15,
-                false
-        );
-
-        when(meterRepository.findById(id)).thenReturn(Optional.of(before));
-
-        Map<String, Object> changes = Map.of("measurement", "KWH");
-
-        assertThrows(IllegalArgumentException.class, () -> meterService.patchMeter(id, changes));
+        assertEquals(List.of(ReadFlag.NO_CHANGE), chain.get(4).flags());
+        assertTrue(chain.get(5).flags().contains(ReadFlag.HIGH_USAGE));
     }
 
-    // Check if audit successfully ignores redundant patches
     @Test
-    void patch_noChanges_doesNotAudit() {
-        UUID id = UUID.randomUUID();
+    void aSettingFromADayOn_leavesEarlierUsageAlone() {
+        // the dial was really in tens of gallons from day 40 on: the first interval keeps x1
+        List<MeterSetting> dated = List.of(
+                setting(null, MeterUnit.GAL, "1", 99999),
+                setting(JAN.plusDays(40), MeterUnit.GAL, "10", 99999));
+        List<ReadInterval> chain = ReadChain.evaluate(reads(READ, 0, 100, READ, 30, 150, READ, 60, 170), dated);
 
-        MeterRow before = new MeterRow(
-                id, UUID.randomUUID(), "Water meter", "Should patch successfully", "123456789",
-                1.0, 2.0, LocalDate.now(), OffsetDateTime.now(), null,
-                null, MeterType.WATER, MeterMeasurement.GAL, false, 99999,                 1.0,
-                15,
-                false
-        );
-
-        when(meterRepository.findById(id)).thenReturn(Optional.of(before));
-
-        Map<String, Object> changes = Map.of("title", "Water meter"); // Setting title "patch" to same val as create
-
-        Optional<Meters> result = meterService.patchMeter(id, changes);
-
-        assertTrue(result.isPresent());
-        verify(auditService, never()).recordUpdate(any(), any(), any(), any());
+        assertEquals(0, new BigDecimal("50").compareTo(chain.get(1).baseUsage()));
+        assertEquals(0, new BigDecimal("200").compareTo(chain.get(2).baseUsage()));
     }
 
-
-
-    // Meter Read Tests
     @Test
-    void recordRead_doesNotIncrementRollover_whenValueIncreasesNormally() {
-        UUID id = UUID.randomUUID();
-        MeterRow meter = createTestMeter(id, false);
+    void aRolloverFromAboveASmallerDial_countsNothing_neverNegative() {
+        // read at 50,000 under a 99,999 dial; the dial is then set to 9,999 and a rollover is entered
+        List<MeterSetting> dated = List.of(
+                setting(null, MeterUnit.GAL, "1", 99999),
+                setting(JAN.plusDays(10), MeterUnit.GAL, "1", 9999));
+        List<ReadInterval> chain = ReadChain.evaluate(reads(READ, 0, 50000, MeterReadKind.ROLLOVER, 30, 100), dated);
 
-        when(meterRepository.findById(meter.uuid())).thenReturn(Optional.of(meter));
-        when(meterRead.save(any())).thenAnswer(inv -> {
-            MeterReadRow row = inv.getArgument(0);
-            return new MeterReadRow(
-                    UUID.randomUUID(),
-                    row.targetedMeter(),
-                    row.meterAmount(),
-                    row.readAt(),
-                    row.isEstimated(),
-                    row.rolloverCount(),
-                    OffsetDateTime.now(),
-                    OffsetDateTime.now(),
-                    null
-            );
-        });
-
-        meterService.recordRead(meter.uuid(), 100, OffsetDateTime.now().minusDays(2), false);
-        var next = meterService.recordRead(meter.uuid(), 450, OffsetDateTime.now(), false);
-
-        assertEquals(0, next.rolloverCount());
+        assertNull(chain.get(1).baseUsage());
+        assertTrue(chain.get(1).flags().contains(ReadFlag.ABOVE_DIAL));
     }
 
+    @Test
+    void usageBetweenTwoReads_addsTheReadsInBetween_andIsNullAcrossABackwardsRead() {
+        List<ReadInterval> chain = ReadChain.evaluate(reads(READ, 0, 100, READ, 30, 150, READ, 60, 220), gallons("1"));
+        UUID first = chain.get(0).read().uuid();
+        UUID last = chain.get(2).read().uuid();
+        assertEquals(0, new BigDecimal("120").compareTo(ReadChain.baseUsageBetween(chain, first, last)));
+
+        List<ReadInterval> broken = ReadChain.evaluate(reads(READ, 0, 100, READ, 30, 90, READ, 60, 220), gallons("1"));
+        assertNull(ReadChain.baseUsageBetween(broken, broken.get(0).read().uuid(), broken.get(2).read().uuid()));
+    }
+
+    // ── The tree ──
+
+    private MeterMain main(UUID id, MeterType type) {
+        return new MeterMain(id, propertyId, type, null, "Main", null, null, null, null, null, null, null, null,
+                OffsetDateTime.now(), OffsetDateTime.now(), null);
+    }
+
+    private Submeter submeter(UUID id, MeterType type) {
+        return new Submeter(id, propertyId, type, null, null, null, null, null, null, null,
+                OffsetDateTime.now(), OffsetDateTime.now(), null);
+    }
 
     @Test
-    void getUsageForPeriod_throws_whenNoReadingExistsBeforePeriodStart() {
-        UUID id = UUID.randomUUID();
-        MeterRow meter = createTestMeter(id, false);
+    void createMain_refusesAUnitThatDoesNotSuitTheUtility() {
+        InvalidRequest refused = assertThrows(InvalidRequest.class, () -> meterService.createMain(
+                propertyId, MeterType.POWER, MeterUnit.GAL, "PSE main", null, null, null, null, null, null));
+        assertEquals("meter.unit_does_not_suit", refused.problem().code());
+        verify(meters, never()).insertMain(any(), any(), any(), any(), any(), any(), any());
+    }
 
-        when(meterRepository.findById(meter.uuid())).thenReturn(Optional.of(meter));
-        assertThrows(IllegalStateException.class, () ->
-                meterService.getUsageForPeriod(meter.uuid(), OffsetDateTime.now().minusDays(30), OffsetDateTime.now()));
+    @Test
+    void addSetting_isRefused_whenABillAlreadyUsesReadsFromThatDayOn() {
+        UUID mainId = UUID.randomUUID();
+        LocalDate day = LocalDate.of(2026, 9, 1);
+        when(meters.findMainForUpdate(mainId)).thenReturn(Optional.of(main(mainId, MeterType.WATER)));
+        when(settings.ofMain(mainId)).thenReturn(List.of(setting(null, MeterUnit.CCF, "1", 99999)));
+        when(settings.billedReadBetween(mainId, day, null)).thenReturn(true);
+
+        RuleConflict refused = assertThrows(RuleConflict.class, () -> meterService.addSetting(
+                mainId, null, day, MeterUnit.CCF, BigDecimal.TEN, null, "dial counts tens"));
+        assertEquals("meter_setting.covers_billed_reads", refused.problem().code());
+        verify(settings, never()).insert(any(), any(), any(), any(), any(), any(), any(), anyLong(), any());
+    }
+
+    @Test
+    void addSetting_looksOnlyAtTheDaysUntilTheNextSettingStarts() {
+        // a setting slipped in before a later one reads the dial only up to that later one's first day,
+        // so bills after it do not stand in the way
+        UUID mainId = UUID.randomUUID();
+        LocalDate day = LocalDate.of(2026, 3, 1);
+        LocalDate later = LocalDate.of(2026, 9, 1);
+        MeterSetting first = setting(null, MeterUnit.CCF, "1", 99999);
+        when(meters.findMainForUpdate(mainId)).thenReturn(Optional.of(main(mainId, MeterType.WATER)));
+        when(settings.ofMain(mainId)).thenReturn(List.of(first, setting(later, MeterUnit.CCF, "1", 999999)));
+        when(settings.billedReadBetween(mainId, day, null)).thenReturn(true);
+        when(settings.billedReadBetween(mainId, day, later)).thenReturn(false);
+        when(settings.insert(any(), any(), any(), any(), any(), any(), any(), anyLong(), any())).thenReturn(first);
+
+        meterService.addSetting(mainId, null, day, null, BigDecimal.TEN, null, "dial counted tens until the swap");
+
+        verify(settings).billedReadBetween(mainId, day, later);
+        verify(settings).insert(eq(mainId), any(), any(), any(), eq(day), any(), any(), anyLong(), any());
+    }
+
+    @Test
+    void deleteRateGroup_isRefused_whileItHasACycleOfItsOwn() {
+        UUID groupId = UUID.randomUUID();
+        when(meters.findRateGroupForUpdate(groupId)).thenReturn(Optional.of(
+                new RateGroup(groupId, propertyId, "Phase 2 (County)", null, OffsetDateTime.now(), null)));
+        when(meters.rateGroupHasCycles(groupId)).thenReturn(true);
+
+        RuleConflict refused = assertThrows(RuleConflict.class, () -> meterService.deleteRateGroup(groupId));
+        assertEquals("rate_group.has_cycles", refused.problem().code());
+        verify(meters, never()).softDelete(eq(MeterRepository.RATE_GROUP), any());
+    }
+
+    @Test
+    void linkToMain_movesASubmeter_byEndingItsOpenLink() {
+        UUID subId = UUID.randomUUID();
+        UUID oldMain = UUID.randomUUID();
+        UUID newMain = UUID.randomUUID();
+        LocalDate moved = LocalDate.of(2026, 6, 1);
+        SubmeterMainLink open = new SubmeterMainLink(UUID.randomUUID(), subId, oldMain, propertyId, MeterType.WATER,
+                JAN, null, null, null);
+        SubmeterMainLink ended = new SubmeterMainLink(open.uuid(), subId, oldMain, propertyId, MeterType.WATER,
+                JAN, moved, null, null);
+
+        when(meters.findSubmeterForUpdate(subId)).thenReturn(Optional.of(submeter(subId, MeterType.WATER)));
+        when(meters.findMainForShare(newMain)).thenReturn(Optional.of(main(newMain, MeterType.WATER)));
+        when(links.mainLinksOf(subId)).thenReturn(List.of(open));
+        when(links.setMainLinkDates(open.uuid(), JAN, moved)).thenReturn(Optional.of(ended));
+        when(links.insertMainLink(subId, newMain, propertyId, MeterType.WATER, moved))
+                .thenReturn(new SubmeterMainLink(UUID.randomUUID(), subId, newMain, propertyId, MeterType.WATER, moved, null, null, null));
+
+        SubmeterMainLink made = meterService.linkToMain(subId, newMain, moved);
+
+        assertEquals(newMain, made.mainId());
+        verify(links).setMainLinkDates(open.uuid(), JAN, moved);
+    }
+
+    @Test
+    void linkToMain_refusesAMainOfAnotherUtility() {
+        UUID subId = UUID.randomUUID();
+        UUID powerMain = UUID.randomUUID();
+        when(meters.findSubmeterForUpdate(subId)).thenReturn(Optional.of(submeter(subId, MeterType.WATER)));
+        when(meters.findMainForShare(powerMain)).thenReturn(Optional.of(main(powerMain, MeterType.POWER)));
+
+        InvalidRequest refused = assertThrows(InvalidRequest.class, () -> meterService.linkToMain(subId, powerMain, JAN));
+        assertEquals("submeter.main_mismatch", refused.problem().code());
+    }
+
+    @Test
+    void deleteMain_isRefused_whileSubmetersHangOffIt() {
+        UUID mainId = UUID.randomUUID();
+        when(meters.findMainForUpdate(mainId)).thenReturn(Optional.of(main(mainId, MeterType.WATER)));
+        when(meters.mainHasOpenLinks(mainId)).thenReturn(true);
+
+        RuleConflict refused = assertThrows(RuleConflict.class, () -> meterService.deleteMain(mainId));
+        assertEquals("meter_main.has_submeters", refused.problem().code());
+        verify(meters, never()).softDelete(eq(MeterRepository.MAIN), any());
     }
 }
