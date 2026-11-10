@@ -65,6 +65,7 @@ public class UtilityBillController {
     ) {}
 
     // The reads come in pairs; printedUsage and printedUnit come together. At least one of the two.
+    // currentRollover: the dial passed its top between the two reads, so the new number is the lower one.
     public record AddMeterRequest(
             @NotNull UUID mainId,
             LocalDate priorReadOn,
@@ -73,6 +74,7 @@ public class UtilityBillController {
             LocalDate currentReadOn,
             Long currentReading,
             Boolean currentEstimated,
+            Boolean currentRollover,
             BigDecimal printedUsage,
             MeterUnit printedUnit,
             Boolean allowDuplicate
@@ -189,6 +191,7 @@ public class UtilityBillController {
     // ── The mains a bill is for ──
 
     // 409 when a printed read disagrees with the read on file for that main and day,
+    // the reads cannot be counted and no usage is printed,
     // or (unless allowDuplicate) another bill already names the main for these dates
     @PreAuthorize("hasAuthority('meterbills:edit')")
     @PostMapping("/{uuid}/meters")
@@ -197,6 +200,7 @@ public class UtilityBillController {
         return created(billService.addMeter(uuid, r.mainId(),
                 r.priorReadOn(), r.priorReading(), Boolean.TRUE.equals(r.priorEstimated()),
                 r.currentReadOn(), r.currentReading(), Boolean.TRUE.equals(r.currentEstimated()),
+                Boolean.TRUE.equals(r.currentRollover()),
                 r.printedUsage(), r.printedUnit(), Boolean.TRUE.equals(r.allowDuplicate())));
     }
 

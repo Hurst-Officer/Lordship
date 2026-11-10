@@ -196,6 +196,12 @@ public class MeterRepository {
                 .param("id", rateGroupId).query(Boolean.class).single();
     }
 
+    // A live cycle set for the group: it would be left pointing at nothing
+    public boolean rateGroupHasCycles(UUID rateGroupId) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM utility_cycle WHERE rate_group_id = :id AND deleted_at IS NULL)")
+                .param("id", rateGroupId).query(Boolean.class).single();
+    }
+
     // ── Rules that look past this module's tables ──
 
     // A live link that has not ended yet (or ends in the future): the meter is still in the tree

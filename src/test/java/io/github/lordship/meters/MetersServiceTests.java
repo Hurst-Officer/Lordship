@@ -195,6 +195,38 @@ public class MetersServiceTests {
     }
 
     @Test
+    void addSetting_looksOnlyAtTheDaysUntilTheNextSettingStarts() {
+        // a setting slipped in before a later one reads the dial only up to that later one's first day,
+        // so bills after it do not stand in the way
+        UUID mainId = UUID.randomUUID();
+        LocalDate day = LocalDate.of(2026, 3, 1);
+        LocalDate later = LocalDate.of(2026, 9, 1);
+        MeterSetting first = setting(null, MeterUnit.CCF, "1", 99999);
+        when(meters.findMainForUpdate(mainId)).thenReturn(Optional.of(main(mainId, MeterType.WATER)));
+        when(settings.ofMain(mainId)).thenReturn(List.of(first, setting(later, MeterUnit.CCF, "1", 999999)));
+        when(settings.billedReadBetween(mainId, day, null)).thenReturn(true);
+        when(settings.billedReadBetween(mainId, day, later)).thenReturn(false);
+        when(settings.insert(any(), any(), any(), any(), any(), any(), any(), anyLong(), any())).thenReturn(first);
+
+        meterService.addSetting(mainId, null, day, null, BigDecimal.TEN, null, "dial counted tens until the swap");
+
+        verify(settings).billedReadBetween(mainId, day, later);
+        verify(settings).insert(eq(mainId), any(), any(), any(), eq(day), any(), any(), anyLong(), any());
+    }
+
+    @Test
+    void deleteRateGroup_isRefused_whileItHasACycleOfItsOwn() {
+        UUID groupId = UUID.randomUUID();
+        when(meters.findRateGroupForUpdate(groupId)).thenReturn(Optional.of(
+                new RateGroup(groupId, propertyId, "Phase 2 (County)", null, OffsetDateTime.now(), null)));
+        when(meters.rateGroupHasCycles(groupId)).thenReturn(true);
+
+        RuleConflict refused = assertThrows(RuleConflict.class, () -> meterService.deleteRateGroup(groupId));
+        assertEquals("rate_group.has_cycles", refused.problem().code());
+        verify(meters, never()).softDelete(eq(MeterRepository.RATE_GROUP), any());
+    }
+
+    @Test
     void linkToMain_movesASubmeter_byEndingItsOpenLink() {
         UUID subId = UUID.randomUUID();
         UUID oldMain = UUID.randomUUID();

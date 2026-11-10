@@ -9,6 +9,8 @@ import java.util.UUID;
  * Billed every 2 months, in even months, two months after the service period ends:
  * cycleMonths 2, anchorMonth 2, lagMonths 2.
  *
+ * @param rateGroupId null for the park's own cycle; set for a rate group billed on another rhythm.
+ *                    A group with no cycle of its own follows the park's.
  * @param anchorMonth any month (1-12) that carries a charge; the others in between are off-months
  * @param lagMonths   months from the end of the service period to the billing month
  * @param readDay     when submeters are due to be read, if the park has a set day
@@ -16,6 +18,7 @@ import java.util.UUID;
 public record UtilityCycle(
         UUID uuid,
         UUID propertyId,
+        UUID rateGroupId,
         UtilityService service,
         Integer cycleMonths,
         Integer anchorMonth,

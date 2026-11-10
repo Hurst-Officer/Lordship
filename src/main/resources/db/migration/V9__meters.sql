@@ -326,10 +326,14 @@ CREATE INDEX idx_utility_bill_line_month ON utility_bill_line (billing_month) WH
 -- Set by the GMs in Glade. Example: billed every 2 months, in even months, two
 -- months after the service period ends: cycle_months 2, anchor_month 2, lag_months 2.
 -- The app proposes each bill line's billing_month from this; a person can still change it.
+-- A rate group billed on another rhythm (a second provider that bills every two
+-- months while the city bills monthly) has a cycle of its own; a group with none
+-- follows the park's (rate_group_id NULL).
 
 CREATE TABLE utility_cycle (
                                uuid           UUID PRIMARY KEY DEFAULT uuidv7(),
                                property_id    UUID NOT NULL REFERENCES property(uuid),
+                               rate_group_id  UUID,                   -- NULL: the park's own cycle
                                service        utility_service NOT NULL,
                                cycle_months   SMALLINT NOT NULL CONSTRAINT utility_cycle_months_divide_the_year CHECK (cycle_months IN (1, 2, 3, 4, 6, 12)),
                                anchor_month   SMALLINT NOT NULL CONSTRAINT utility_cycle_anchor_1_to_12 CHECK (anchor_month BETWEEN 1 AND 12), -- any month that carries a charge
@@ -338,7 +342,10 @@ CREATE TABLE utility_cycle (
                                effective_from DATE NOT NULL CONSTRAINT utility_cycle_starts_on_a_first CHECK (extract(day FROM effective_from) = 1),
                                notes          TEXT,
                                created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-                               deleted_at     TIMESTAMPTZ
+                               deleted_at     TIMESTAMPTZ,
+                               FOREIGN KEY (rate_group_id, property_id) REFERENCES utility_rate_group (uuid, property_id)
 );
 
-CREATE UNIQUE INDEX uq_utility_cycle_start ON utility_cycle (property_id, service, effective_from) WHERE deleted_at IS NULL;
+-- One live cycle per park, rate group (or none) and service for each starting month
+CREATE UNIQUE INDEX uq_utility_cycle_start ON utility_cycle (property_id, rate_group_id, service, effective_from) NULLS NOT DISTINCT
+    WHERE deleted_at IS NULL;

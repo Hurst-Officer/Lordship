@@ -260,7 +260,8 @@ public class MeterService {
      * Reads a meter's dial a new way from a day on: a correction (the dial was
      * always 6 digits), or a change (a new register). Reads before that day keep
      * their usage. Unit, multiplier or dial left out stay as on that day. Refused
-     * when a bill's usage would change: one whose new read is on or after that day.
+     * when a bill's usage would change: one that counts reads from that day until
+     * the next dated setting starts.
      */
     @Transactional
     public MeterSetting addSetting(UUID mainId, UUID submeterId, LocalDate effectiveFrom, MeterUnit unit,
@@ -290,7 +291,8 @@ public class MeterService {
         requireUnitSuits(newUnit, type);
         BigDecimal newMultiplier = multiplier != null ? checkedMultiplier(multiplier) : current.multiplier();
         long newDial = dialMax != null ? checkedDialMax(dialMax) : current.dialMax();
-        refuseIfBilled(mainId, effectiveFrom, null);
+        // It reads the dial only until the next dated setting starts; bills past that day are not touched
+        refuseIfBilled(mainId, effectiveFrom, firstStartAfter(existing, effectiveFrom, null));
         return insertSetting(mainId, submeterId, propertyId, type, effectiveFrom, newUnit,
                 newMultiplier, newDial, Patches.text(notes));
     }
@@ -338,7 +340,7 @@ public class MeterService {
                 if (all.stream().anyMatch(s -> !s.uuid().equals(uuid) && moved.equals(s.effectiveFrom()))) {
                     throw RuleConflict.of("meter_setting.day_taken", moved);
                 }
-                refuseIfBilled(before.mainId(), moved, null);
+                refuseIfBilled(before.mainId(), moved, firstStartAfter(all, moved, uuid));
             }
         }
 
@@ -418,13 +420,14 @@ public class MeterService {
         return Optional.of(after);
     }
 
-    // Refused while mains are in it, or bills were entered under it
+    // Refused while mains are in it, bills were entered under it, or it has a cycle of its own
     @Transactional
     public boolean deleteRateGroup(UUID uuid) {
         Optional<RateGroup> found = meters.findRateGroupForUpdate(uuid);
         if (found.isEmpty()) return false;
         if (meters.rateGroupHasMains(uuid)) throw RuleConflict.of("rate_group.has_mains", found.get().name());
         if (meters.rateGroupHasBills(uuid)) throw RuleConflict.of("rate_group.has_bills", found.get().name());
+        if (meters.rateGroupHasCycles(uuid)) throw RuleConflict.of("rate_group.has_cycles", found.get().name());
         meters.softDelete(MeterRepository.RATE_GROUP, uuid);
         auditService.recordDelete(MeterRepository.RATE_GROUP, uuid, AuditMapper.toMap(found.get()));
         return true;
@@ -614,9 +617,14 @@ public class MeterService {
 
     // The first day after this setting that another live setting starts, or null when it runs on
     private static LocalDate nextStart(List<MeterSetting> all, MeterSetting setting) {
+        return firstStartAfter(all, setting.effectiveFrom(), setting.uuid());
+    }
+
+    // The first day after a day (null: the very start) that a live setting other than one starts, or null when none does
+    private static LocalDate firstStartAfter(List<MeterSetting> all, LocalDate day, UUID except) {
         return all.stream()
-                .filter(s -> !s.uuid().equals(setting.uuid()) && s.effectiveFrom() != null)
-                .filter(s -> setting.effectiveFrom() == null || s.effectiveFrom().isAfter(setting.effectiveFrom()))
+                .filter(s -> !s.uuid().equals(except) && s.effectiveFrom() != null)
+                .filter(s -> day == null || s.effectiveFrom().isAfter(day))
                 .map(MeterSetting::effectiveFrom)
                 .min(Comparator.naturalOrder())
                 .orElse(null);

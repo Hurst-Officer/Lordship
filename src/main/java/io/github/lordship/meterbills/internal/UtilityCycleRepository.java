@@ -27,16 +27,16 @@ public class UtilityCycleRepository {
         this.jdbc = jdbc;
     }
 
-    public UtilityCycle insert(UUID propertyId, UtilityService service, int cycleMonths, int anchorMonth, int lagMonths,
-                               Integer readDay, LocalDate effectiveFrom, String notes) {
+    public UtilityCycle insert(UUID propertyId, UUID rateGroupId, UtilityService service, int cycleMonths, int anchorMonth,
+                               int lagMonths, Integer readDay, LocalDate effectiveFrom, String notes) {
         return jdbc.sql("""
-                        INSERT INTO utility_cycle (property_id, service, cycle_months, anchor_month, lag_months, read_day,
-                                                   effective_from, notes)
-                        VALUES (:propertyId, CAST(:service AS utility_service), :cycleMonths, :anchorMonth, :lagMonths,
-                                :readDay, :effectiveFrom, :notes)
+                        INSERT INTO utility_cycle (property_id, rate_group_id, service, cycle_months, anchor_month,
+                                                   lag_months, read_day, effective_from, notes)
+                        VALUES (:propertyId, :rateGroupId, CAST(:service AS utility_service), :cycleMonths, :anchorMonth,
+                                :lagMonths, :readDay, :effectiveFrom, :notes)
                         RETURNING *
                         """)
-                .param("propertyId", propertyId).param("service", service.name())
+                .param("propertyId", propertyId).param("rateGroupId", rateGroupId).param("service", service.name())
                 .param("cycleMonths", cycleMonths).param("anchorMonth", anchorMonth).param("lagMonths", lagMonths)
                 .param("readDay", readDay).param("effectiveFrom", effectiveFrom).param("notes", notes)
                 .query(UtilityCycle.class).single();
@@ -53,30 +53,35 @@ public class UtilityCycleRepository {
     }
 
     public List<UtilityCycle> of(UUID propertyId, boolean deleted) {
-        return jdbc.sql("SELECT * FROM utility_cycle WHERE property_id = :propertyId AND (deleted_at IS NOT NULL) = :deleted ORDER BY service, effective_from")
+        return jdbc.sql("SELECT * FROM utility_cycle WHERE property_id = :propertyId AND (deleted_at IS NOT NULL) = :deleted ORDER BY service, rate_group_id NULLS FIRST, effective_from")
                 .param("propertyId", propertyId).param("deleted", deleted).query(UtilityCycle.class).list();
     }
 
-    // The cycle in force for a service on a day: the live one that started most recently on or before it
-    public Optional<UtilityCycle> inForce(UUID propertyId, UtilityService service, LocalDate on) {
+    // The cycle in force for a service on a day: the live one that started most recently on or before it.
+    // rateGroupId null asks for the park's own cycle; a group's cycle is never mixed with it here.
+    public Optional<UtilityCycle> inForce(UUID propertyId, UUID rateGroupId, UtilityService service, LocalDate on) {
         return jdbc.sql("""
                         SELECT * FROM utility_cycle
                          WHERE property_id = :propertyId AND service = CAST(:service AS utility_service)
+                           AND rate_group_id IS NOT DISTINCT FROM CAST(:rateGroupId AS uuid)
                            AND effective_from <= :on AND deleted_at IS NULL
                          ORDER BY effective_from DESC LIMIT 1
                         """)
-                .param("propertyId", propertyId).param("service", service.name()).param("on", on)
+                .param("propertyId", propertyId).param("rateGroupId", rateGroupId)
+                .param("service", service.name()).param("on", on)
                 .query(UtilityCycle.class).optional();
     }
 
-    public boolean startTaken(UUID propertyId, UtilityService service, LocalDate effectiveFrom, UUID except) {
+    public boolean startTaken(UUID propertyId, UUID rateGroupId, UtilityService service, LocalDate effectiveFrom, UUID except) {
         return jdbc.sql("""
                         SELECT EXISTS (SELECT 1 FROM utility_cycle
                                         WHERE property_id = :propertyId AND service = CAST(:service AS utility_service)
-                                          AND effective_from = :from AND deleted_at IS NULL AND uuid IS DISTINCT FROM :except)
+                                          AND rate_group_id IS NOT DISTINCT FROM CAST(:rateGroupId AS uuid)
+                                          AND effective_from = :from AND deleted_at IS NULL
+                                          AND uuid IS DISTINCT FROM CAST(:except AS uuid))
                         """)
-                .param("propertyId", propertyId).param("service", service.name()).param("from", effectiveFrom)
-                .param("except", except).query(Boolean.class).single();
+                .param("propertyId", propertyId).param("rateGroupId", rateGroupId).param("service", service.name())
+                .param("from", effectiveFrom).param("except", except).query(Boolean.class).single();
     }
 
     public Optional<UtilityCycle> patch(UUID uuid, Map<String, Object> changes) {

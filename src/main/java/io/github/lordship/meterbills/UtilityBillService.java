@@ -5,6 +5,7 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.meterbills.internal.UtilityBillRepository;
 import io.github.lordship.meters.MeterMain;
 import io.github.lordship.meters.MeterRead;
+import io.github.lordship.meters.MeterReadKind;
 import io.github.lordship.meters.MeterReadService;
 import io.github.lordship.meters.MeterService;
 import io.github.lordship.meters.MeterType;
@@ -232,11 +233,17 @@ public class UtilityBillService {
      * the usage printed. Printed reads become provider reads of the main: one
      * already on file for that day is reused when it agrees, and refused (409)
      * when it shows another number. Empty when the bill is not live (404).
+     *
+     * <p>The main always ends up with a usage the rate can use. Reads that cannot
+     * be counted (the new one is lower, or the meter was restarted in between)
+     * are refused unless the printed usage is given too; a dial that passed its
+     * top during the bill is entered with {@code currentRollover}.
      */
     @Transactional
     public Optional<BillDetail> addMeter(UUID billId, UUID mainId,
                                          LocalDate priorReadOn, Long priorReading, boolean priorEstimated,
                                          LocalDate currentReadOn, Long currentReading, boolean currentEstimated,
+                                         boolean currentRollover,
                                          BigDecimal printedUsage, MeterUnit printedUnit, boolean allowDuplicate) {
         Optional<UtilityBill> found = bills.findBillForUpdate(billId);
         if (found.isEmpty()) return Optional.empty();
@@ -272,8 +279,10 @@ public class UtilityBillService {
         UUID priorId = null;
         UUID currentId = null;
         if (hasPrior) {
-            priorId = readService.providerRead(mainId, priorReadOn, priorReading, priorEstimated).uuid();
-            currentId = readService.providerRead(mainId, currentReadOn, currentReading, currentEstimated).uuid();
+            priorId = readService.providerRead(mainId, priorReadOn, priorReading, priorEstimated, null).uuid();
+            currentId = readService.providerRead(mainId, currentReadOn, currentReading, currentEstimated,
+                    currentRollover ? MeterReadKind.ROLLOVER : MeterReadKind.READ).uuid();
+            if (printedUsage == null) requireCountable(main, priorId, currentId);
         }
 
         UtilityBillMeter saved = bills.insertMeter(billId, mainId, bill.propertyId(), priorId, currentId,
@@ -299,6 +308,8 @@ public class UtilityBillService {
         MeterUnit unit = changes.containsKey("printed_unit") ? (MeterUnit) changes.get("printed_unit") : before.printedUnit();
         requirePrintedUsage(usage, unit, main.utilityType());
         if (usage == null && before.priorReadId() == null) throw InvalidRequest.of("utility_bill.meter_needs_usage");
+        // Taking the printed usage away leaves the reads to carry the bill: they must be countable
+        if (usage == null) requireCountable(main, before.priorReadId(), before.currentReadId());
 
         UtilityBillMeter after = bills.patchMeter(uuid, changes).orElse(null);
         if (after == null) return Optional.empty();
@@ -343,8 +354,9 @@ public class UtilityBillService {
     // ── Lines ──
 
     /**
-     * A printed line. Its billing month, when not given, comes from the park's
-     * cycle for its service and the bill's period; with no cycle it must be given.
+     * A printed line. Its billing month, when not given, comes from the cycle for
+     * its service (the bill's rate group's own, else the park's) and the bill's
+     * period; with no cycle it must be given.
      * Empty when the bill is not live (404).
      */
     @Transactional
@@ -361,7 +373,7 @@ public class UtilityBillService {
         Patches.fits(printedRate, 18, 8, "printedRate");
         if (printedRate != null && rateUnit == null) throw InvalidRequest.onField("rateUnit", "utility_bill.rate_needs_unit");
         LocalDate month = billingMonth != null ? billingMonth.withDayOfMonth(1)
-                : cycleService.proposedBillingMonth(bill.propertyId(), service, bill.periodEnd())
+                : cycleService.proposedBillingMonth(bill.propertyId(), bill.rateGroupId(), service, bill.periodEnd())
                 .orElseThrow(() -> InvalidRequest.onField("billingMonth", "utility_bill.no_cycle"));
 
         UtilityBillLine saved = bills.insertLine(billId, service, text, amount, printedRate, rateUnit,
@@ -475,7 +487,7 @@ public class UtilityBillService {
 
     // ── Rules ──
 
-    // A bill meter comes back only as addMeter would have let it in: main live and in the bill's group, reads live
+    // A bill meter comes back only as addMeter would have let it in: main live and in the bill's group, reads live and countable
     private void requireMeterIntact(UtilityBillMeter m, UtilityBill bill, boolean allowDuplicate) {
         MeterMain main = meterService.lockMain(m.mainId()).orElse(null);
         if (main == null) {
@@ -486,8 +498,18 @@ public class UtilityBillService {
             throw RuleConflict.of("utility_bill.main_in_other_group", main.title());
         }
         if (!bills.readsLive(m)) throw RuleConflict.of("utility_bill.reads_deleted", main.title());
+        // Reads entered or corrected while it was deleted may have left it with nothing to count
+        if (m.printedUsage() == null) requireCountable(main, m.priorReadId(), m.currentReadId());
         if (!allowDuplicate && !bills.billsNamingMain(m.mainId(), bill.uuid(), bill.periodStart(), bill.periodEnd()).isEmpty()) {
             throw RuleConflict.of("utility_bill.main_already_billed", main.title());
+        }
+    }
+
+    // Without printed usage, a bill's usage for a main is what its reads add up to: 409 when they add up to nothing
+    private void requireCountable(MeterMain main, UUID priorReadId, UUID currentReadId) {
+        List<ReadInterval> chain = readService.history(main.uuid(), null);
+        if (ReadChain.baseUsageBetween(chain, priorReadId, currentReadId) == null) {
+            throw RuleConflict.of("utility_bill.reads_not_countable", main.title());
         }
     }
 

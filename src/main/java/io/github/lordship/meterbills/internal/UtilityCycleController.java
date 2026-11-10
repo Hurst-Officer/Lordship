@@ -40,8 +40,10 @@ public class UtilityCycleController {
             "cycleMonths", "cycle_months", "anchorMonth", "anchor_month", "lagMonths", "lag_months",
             "readDay", "read_day", "effectiveFrom", "effective_from", "notes", "notes");
 
+    // rateGroupId: null for the park's own cycle, or a rate group billed on another rhythm
     public record CreateCycleRequest(
             @NotNull UUID propertyId,
+            UUID rateGroupId,
             @NotNull UtilityService service,
             @NotNull Integer cycleMonths,
             @NotNull Integer anchorMonth,
@@ -74,27 +76,29 @@ public class UtilityCycleController {
         return ResponseEntity.ok(cycleService.deleted(propertyId));
     }
 
-    // The rent month a bill for this service would land in, so the bill form can fill it in
+    // The rent month a bill for this service would land in, so the bill form can fill it in.
+    // rateGroupId: the group the bill is entered under; its own cycle is used when it has one, else the park's.
     @PreAuthorize("hasAuthority('meterbills:view')")
     @GetMapping("/proposed-month")
     public ResponseEntity<ProposedMonth> proposedMonth(
             @RequestParam UUID propertyId,
+            @RequestParam(required = false) UUID rateGroupId,
             @RequestParam UtilityService service,
             @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate periodEnd,
             Authentication auth) {
         if (!inScope(Optional.of(propertyId), auth)) return ResponseEntity.notFound().build();
         return ResponseEntity.ok(new ProposedMonth(
-                cycleService.proposedBillingMonth(propertyId, service, periodEnd).orElse(null)));
+                cycleService.proposedBillingMonth(propertyId, rateGroupId, service, periodEnd).orElse(null)));
     }
 
-    // 409 when the park already has a cycle for that service starting that month
+    // 409 when the park (or that rate group) already has a cycle for that service starting that month
     @PreAuthorize("hasAuthority('meterbills:edit')")
     @PostMapping
     public ResponseEntity<UtilityCycle> create(@Valid @RequestBody CreateCycleRequest r, Authentication auth) {
         if (!inScope(Optional.of(r.propertyId()), auth)) return ResponseEntity.notFound().build();
         return ResponseEntity.status(HttpStatus.CREATED).body(cycleService.create(
-                r.propertyId(), r.service(), r.cycleMonths(), r.anchorMonth(), r.lagMonths(), r.readDay(),
-                r.effectiveFrom(), r.notes()));
+                r.propertyId(), r.rateGroupId(), r.service(), r.cycleMonths(), r.anchorMonth(), r.lagMonths(),
+                r.readDay(), r.effectiveFrom(), r.notes()));
     }
 
     @PreAuthorize("hasAuthority('meterbills:edit')")

@@ -3,6 +3,8 @@ package io.github.lordship.meterbills;
 import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.meterbills.internal.UtilityCycleRepository;
+import io.github.lordship.meters.MeterService;
+import io.github.lordship.meters.RateGroup;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.Patches;
 import io.github.lordship.shared.RuleConflict;
@@ -21,15 +23,21 @@ import java.util.UUID;
  * Each park's utility cycle, set by the GMs: how often a service is passed on,
  * in which months, and how long after the service period. A cycle holds from
  * its effective month until a later cycle for the same service starts.
+ *
+ * <p>A cycle with no rate group is the park's own. A rate group billed on
+ * another rhythm (a second provider) has cycles of its own; a group with none
+ * for a service follows the park's.
  */
 @Service
 public class UtilityCycleService {
 
     private final UtilityCycleRepository cycles;
+    private final MeterService meterService;
     private final AuditService auditService;
 
-    public UtilityCycleService(UtilityCycleRepository cycles, AuditService auditService) {
+    public UtilityCycleService(UtilityCycleRepository cycles, MeterService meterService, AuditService auditService) {
         this.cycles = cycles;
+        this.meterService = meterService;
         this.auditService = auditService;
     }
 
@@ -46,12 +54,18 @@ public class UtilityCycleService {
     }
 
     /**
-     * The rent month a bill for this service lands in, by the park's cycle: the
-     * month its service period ends, plus the lag, moved on to the next month
-     * that carries a charge. Empty when the park has no cycle for the service.
+     * The rent month a bill for this service lands in, by the cycle in force the
+     * day its service period ends: that month, plus the lag, moved on to the next
+     * month that carries a charge. A bill entered under a rate group uses the
+     * group's own cycle when it has one, otherwise the park's. Empty when neither
+     * has a cycle for the service.
      */
-    public Optional<LocalDate> proposedBillingMonth(UUID propertyId, UtilityService service, LocalDate periodEnd) {
-        return cycles.inForce(propertyId, service, periodEnd).map(c -> billingMonth(c, periodEnd));
+    public Optional<LocalDate> proposedBillingMonth(UUID propertyId, UUID rateGroupId, UtilityService service,
+                                                    LocalDate periodEnd) {
+        Optional<UtilityCycle> cycle = rateGroupId == null ? Optional.empty()
+                : cycles.inForce(propertyId, rateGroupId, service, periodEnd);
+        if (cycle.isEmpty()) cycle = cycles.inForce(propertyId, null, service, periodEnd);
+        return cycle.map(c -> billingMonth(c, periodEnd));
     }
 
     /** The rule behind {@link #proposedBillingMonth}, on its own so it can be checked without a database */
@@ -68,17 +82,27 @@ public class UtilityCycleService {
         return Math.floorMod(month - cycle.anchorMonth(), cycle.cycleMonths()) == 0;
     }
 
+    /** rateGroupId: null for the park's own cycle, or the rate group this cycle is for */
     @Transactional
-    public UtilityCycle create(UUID propertyId, UtilityService service, Integer cycleMonths, Integer anchorMonth,
-                               Integer lagMonths, Integer readDay, LocalDate effectiveFrom, String notes) {
+    public UtilityCycle create(UUID propertyId, UUID rateGroupId, UtilityService service, Integer cycleMonths,
+                               Integer anchorMonth, Integer lagMonths, Integer readDay, LocalDate effectiveFrom,
+                               String notes) {
         if (service == null) throw InvalidRequest.onField("service", "value.required");
         if (effectiveFrom == null) throw InvalidRequest.onField("effectiveFrom", "value.required");
         LocalDate from = effectiveFrom.withDayOfMonth(1);
         requireRanges(cycleMonths, anchorMonth, lagMonths, readDay);
-        if (cycles.startTaken(propertyId, service, from, null)) throw RuleConflict.of("utility_cycle.start_taken", from);
+        if (rateGroupId != null) {
+            // Held until the cycle is saved, so the group cannot be deleted in between
+            RateGroup group = meterService.holdRateGroup(rateGroupId)
+                    .orElseThrow(() -> InvalidRequest.onField("rateGroupId", "rate_group.unknown"));
+            if (!group.propertyId().equals(propertyId)) throw InvalidRequest.onField("rateGroupId", "rate_group.unknown");
+        }
+        if (cycles.startTaken(propertyId, rateGroupId, service, from, null)) {
+            throw RuleConflict.of("utility_cycle.start_taken", from);
+        }
 
-        UtilityCycle saved = cycles.insert(propertyId, service, cycleMonths, anchorMonth, lagMonths, readDay, from,
-                Patches.text(notes));
+        UtilityCycle saved = cycles.insert(propertyId, rateGroupId, service, cycleMonths, anchorMonth, lagMonths, readDay,
+                from, Patches.text(notes));
         auditService.recordInsert(UtilityCycleRepository.TABLE, saved.uuid(), AuditMapper.toMap(saved));
         return saved;
     }
@@ -102,7 +126,7 @@ public class UtilityCycleService {
                     LocalDate from = Patches.date(v, "effectiveFrom");
                     if (from == null) throw InvalidRequest.onField("effectiveFrom", "value.required");
                     from = from.withDayOfMonth(1);
-                    if (cycles.startTaken(before.propertyId(), before.service(), from, uuid)) {
+                    if (cycles.startTaken(before.propertyId(), before.rateGroupId(), before.service(), from, uuid)) {
                         throw RuleConflict.of("utility_cycle.start_taken", from);
                     }
                     changes.put(col, from);
@@ -131,13 +155,16 @@ public class UtilityCycleService {
         return true;
     }
 
-    // Refused when another cycle has since been set to start the same month
+    // Refused when its rate group has since been deleted, or another cycle has been set to start the same month
     @Transactional
     public Optional<UtilityCycle> restore(UUID uuid) {
         UtilityCycle before = cycles.findAny(uuid).orElse(null);
         if (before == null) return Optional.empty();
         if (before.deletedAt() != null) {
-            if (cycles.startTaken(before.propertyId(), before.service(), before.effectiveFrom(), uuid)) {
+            if (before.rateGroupId() != null && meterService.holdRateGroup(before.rateGroupId()).isEmpty()) {
+                throw RuleConflict.of("utility_cycle.rate_group_deleted");
+            }
+            if (cycles.startTaken(before.propertyId(), before.rateGroupId(), before.service(), before.effectiveFrom(), uuid)) {
                 throw RuleConflict.of("utility_cycle.start_taken", before.effectiveFrom());
             }
             cycles.restore(uuid);

@@ -148,6 +148,98 @@ public class MeterBillsControllerIT extends IntegrationTest {
     }
 
     @Test
+    void aNewMainsFirstBill_startsFromItsStartRead_andCountsARollover() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB6").uuid();
+        UUID mainId = testData.insertMain(propertyId).uuid();
+
+        // staff took the main's first read when it went in; the provider's first bill starts from that same number
+        send(token, "/api/meter-reads", """
+                { "mainId": "%s", "readOn": "2026-08-01", "reading": 99950, "kind": "START" }
+                """.formatted(mainId)).andExpect(status().isCreated());
+
+        // the dial (99,999 at most) passed its top during the bill: 50 up to the top, then 30 = 80 CCF
+        send(token, "/api/utility-bills/" + newBill(token, propertyId, "2026-08-01", "2026-10-01") + "/meters", """
+                { "mainId": "%s", "priorReadOn": "2026-08-01", "priorReading": 99950,
+                  "currentReadOn": "2026-10-01", "currentReading": 30, "currentRollover": true }
+                """.formatted(mainId))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.meters[0].priorRead.kind").value("START"))
+                .andExpect(jsonPath("$.meters[0].priorRead.source").value("STAFF"))
+                .andExpect(jsonPath("$.meters[0].currentRead.kind").value("ROLLOVER"))
+                .andExpect(jsonPath("$.meters[0].readsBaseUsage").value("59844.155844"))
+                .andExpect(jsonPath("$.meters[0].baseUsage").value("59844.155844"));
+    }
+
+    @Test
+    void readsThatRunBackwards_areRefusedOnABill_unlessItsUsageIsPrinted() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB7").uuid();
+        UUID mainId = testData.insertMain(propertyId).uuid();
+
+        send(token, "/api/utility-bills/" + newBill(token, propertyId, "2026-08-01", "2026-10-01") + "/meters", """
+                { "mainId": "%s", "priorReadOn": "2026-08-01", "priorReading": 4822,
+                  "currentReadOn": "2026-10-01", "currentReading": 4410 }
+                """.formatted(mainId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("utility_bill.reads_not_countable"));
+    }
+
+    @Test
+    void aRateGroupBilledOnAnotherRhythm_hasItsOwnCycle_andOtherGroupsFollowThePark() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB8").uuid();
+        String county = JsonPath.read(send(token, "/api/meters/rate-groups", """
+                { "propertyId": "%s", "name": "Phase 2 (County)" }
+                """.formatted(propertyId)).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.uuid");
+        String annex = JsonPath.read(send(token, "/api/meters/rate-groups", """
+                { "propertyId": "%s", "name": "Annex" }
+                """.formatted(propertyId)).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.uuid");
+
+        // the city bills monthly; the county bills Phase 2 every 2 months, in even months
+        send(token, "/api/utility-cycles", """
+                { "propertyId": "%s", "service": "WATER", "cycleMonths": 1, "anchorMonth": 1, "lagMonths": 1,
+                  "effectiveFrom": "2026-01-01" }
+                """.formatted(propertyId)).andExpect(status().isCreated());
+        send(token, "/api/utility-cycles", """
+                { "propertyId": "%s", "rateGroupId": "%s", "service": "WATER", "cycleMonths": 2, "anchorMonth": 2,
+                  "lagMonths": 1, "effectiveFrom": "2026-01-01" }
+                """.formatted(propertyId, county))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.rateGroupId").value(county));
+
+        mockMvc.perform(get("/api/utility-cycles/proposed-month")
+                        .param("propertyId", propertyId.toString()).param("service", "WATER").param("periodEnd", "2026-08-20")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.billingMonth").value("2026-09-01"));
+        mockMvc.perform(get("/api/utility-cycles/proposed-month")
+                        .param("propertyId", propertyId.toString()).param("rateGroupId", county)
+                        .param("service", "WATER").param("periodEnd", "2026-08-20")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.billingMonth").value("2026-10-01"));
+        // a group with no cycle of its own follows the park's
+        mockMvc.perform(get("/api/utility-cycles/proposed-month")
+                        .param("propertyId", propertyId.toString()).param("rateGroupId", annex)
+                        .param("service", "WATER").param("periodEnd", "2026-08-20")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.billingMonth").value("2026-09-01"));
+
+        // a bill entered under the county group takes the county's month for a line with none given
+        String bill = JsonPath.read(send(token, "/api/utility-bills", """
+                { "propertyId": "%s", "rateGroupId": "%s", "provider": "County", "periodStart": "2026-06-20",
+                  "periodEnd": "2026-08-20" }
+                """.formatted(propertyId, county)).andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString(), "$.bill.uuid");
+        send(token, "/api/utility-bills/" + bill + "/lines", """
+                { "service": "WATER", "description": "Water", "amount": "100.00" }
+                """)
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.lines[0].billingMonth").value("2026-10-01"));
+    }
+
+    @Test
     void theSameBillEnteredTwice_isRefused_untilThePersonConfirms() throws Exception {
         String token = root();
         UUID propertyId = testData.insertProperty("UB5").uuid();

@@ -150,25 +150,43 @@ public class MeterReadService {
      * and day is reused when it shows the same number; a different number is
      * refused (409) so someone can find out which is right. The main is locked
      * until the bill is saved, so the read cannot be deleted in between.
+     *
+     * <p>A bill counts usage after its old read up to its new read, so the two are
+     * treated differently:
+     * <ul>
+     *   <li>The old read ({@code kind} null) only lends its number. Whatever is on
+     *       file for that day stands, a START included: a new main's first bill
+     *       starts from the read taken when it was put in.</li>
+     *   <li>The new read is READ, or ROLLOVER when the dial passed its top during
+     *       the bill. A read on file already marked ROLLOVER stands. One marked
+     *       START cannot be a bill's new read (nothing is counted up to it), and a
+     *       plain read on file is not turned into a rollover here: correct it first.</li>
+     * </ul>
+     *
+     * @param kind null for the bill's old read; READ or ROLLOVER for its new read
      */
     @Transactional
-    public MeterRead providerRead(UUID mainId, LocalDate readOn, Long reading, boolean isEstimated) {
+    public MeterRead providerRead(UUID mainId, LocalDate readOn, Long reading, boolean isEstimated, MeterReadKind kind) {
+        if (kind == MeterReadKind.START) throw new IllegalArgumentException("A bill's new read is a READ or a ROLLOVER");
         lockLiveMeter(mainId, null);
         requireReadable(mainId, null, readOn, reading);
         Optional<MeterRead> sameDay = reads.onDay(mainId, null, readOn);
         if (sameDay.isPresent()) {
-            if (sameDay.get().reading().longValue() != reading) {
-                throw RuleConflict.of("meter_read.provider_differs", readOn, sameDay.get().reading(), reading);
+            MeterRead onFile = sameDay.get();
+            if (onFile.reading().longValue() != reading) {
+                throw RuleConflict.of("meter_read.provider_differs", readOn, onFile.reading(), reading);
             }
-            if (sameDay.get().kind() != MeterReadKind.READ) {
-                // a START or ROLLOVER on file would change what the provider's two numbers mean
-                throw RuleConflict.of("meter_read.provider_kind", readOn);
+            if (kind != null) {
+                if (onFile.kind() == MeterReadKind.START) throw RuleConflict.of("meter_read.provider_kind", readOn);
+                if (kind == MeterReadKind.ROLLOVER && onFile.kind() != MeterReadKind.ROLLOVER) {
+                    throw RuleConflict.of("meter_read.provider_not_rollover", readOn);
+                }
             }
-            return sameDay.get();
+            return onFile;
         }
         refuseInsideBill(mainId, readOn);
-        MeterRead saved = reads.insert(mainId, null, readOn, reading, MeterReadKind.READ, MeterReadSource.PROVIDER,
-                isEstimated, null);
+        MeterRead saved = reads.insert(mainId, null, readOn, reading, kind == null ? MeterReadKind.READ : kind,
+                MeterReadSource.PROVIDER, isEstimated, null);
         auditService.recordInsert(MeterReadRepository.TABLE, saved.uuid(), AuditMapper.toMap(saved));
         return saved;
     }
