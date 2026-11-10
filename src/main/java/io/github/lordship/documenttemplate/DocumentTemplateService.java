@@ -211,6 +211,7 @@ public class DocumentTemplateService {
         }
         DocumentTemplateRow before = beforeOpt.get();
 
+        changes = withName(changes, "template.name_blank");
         Optional<DocumentTemplateRow> afterOpt = documentTemplateRepository.patch(uuid, changes);
         if (afterOpt.isEmpty()) {
             return Optional.empty();
@@ -232,6 +233,24 @@ public class DocumentTemplateService {
             auditService.recordDelete("document_template", uuid, AuditMapper.toMap(existing));
             return true;
         }).orElse(false);
+    }
+
+    /**
+     * The changes with the name trimmed, when they rename. The column is NOT NULL, so a cleared name would come
+     * back as the database's bare "conflict"; the worker gets the reason instead (400 on "name").
+     */
+    private static Map<String, Object> withName(Map<String, Object> changes, String blankCode) {
+        if (!changes.containsKey("name")) {
+            return changes;
+        }
+        Object raw = changes.get("name");
+        String name = raw == null ? "" : String.valueOf(raw).trim();
+        if (name.isEmpty()) {
+            throw InvalidRequest.onField("name", blankCode);
+        }
+        Map<String, Object> trimmed = new HashMap<>(changes);
+        trimmed.put("name", name);
+        return trimmed;
     }
 
     // ---- sections ------------------------------------------------------------
@@ -258,7 +277,7 @@ public class DocumentTemplateService {
         }
         DocumentSectionRow before = beforeOpt.get();
 
-        Map<String, Object> effective = new HashMap<>(changes);
+        Map<String, Object> effective = new HashMap<>(withName(changes, "section.name_blank"));
         asUuids(effective, "style", "title_style");
         asFormats(effective, "number_formats", "cite_formats");
 
@@ -424,6 +443,7 @@ public class DocumentTemplateService {
         }
         DocumentStyleRow before = beforeOpt.get();
 
+        changes = withName(changes, "style.name_blank");
         if (changes.containsKey("target") && changes.get("target") != null) {
             String target = String.valueOf(changes.get("target"));
             if (StyleTarget.of(target).isEmpty()) {
