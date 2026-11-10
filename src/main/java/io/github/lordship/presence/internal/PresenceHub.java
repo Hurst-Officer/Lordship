@@ -27,7 +27,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Who is where in Glade right now. Kept in a Caffeine cache only: nothing here is saved or audited.
+ * Who is where in Glade right now, and what changed. Kept in a Caffeine cache only: nothing here is saved or audited.
+ * Changes reach the windows two ways: a window announces its own save ("saved", from Glade), and the database
+ * announces every committed change to a table Glade shows, whoever made it ("changed", from ChangeNotices).
  * One entry per Glade window, so an agent with two windows open does not flicker.
  * Every change is pushed to every open stream, filtered by the viewer's property scope.
  *
@@ -197,6 +199,33 @@ public class PresenceHub {
             }
         });
         return true;
+    }
+
+    /**
+     * Rows changed in the database (ChangeNotices), by the Glade place that shows them and the table that changed.
+     * Every window that may see a place is told in one "changed" event, the window that made the change included
+     * (the database does not know which window did). "*" reaches every window: load everything again.
+     */
+    public void changed(Map<String, String> tableByPlace) {
+        if (tableByPlace.isEmpty()) {
+            return;
+        }
+        later(() -> {
+            for (Map.Entry<UUID, Window> entry : windows.entrySet()) {
+                Window viewer = entry.getValue();
+                PropertyScope scope = scopeOf(viewer);
+                List<ChangedEvent.Place> shown = new ArrayList<>();
+                tableByPlace.forEach((place, table) -> {
+                    if (place.equals(ChangePlaces.EVERYTHING) || visibleTo(viewer.agentId, scope, place)) {
+                        shown.add(new ChangedEvent.Place(place, table));
+                    }
+                });
+                if (!shown.isEmpty()) {
+                    write(entry.getKey(), viewer,
+                            SseEmitter.event().name("changed").data(new ChangedEvent(shown), MediaType.APPLICATION_JSON));
+                }
+            }
+        });
     }
 
     /** The window is closing. Everyone else sees it leave right away. */

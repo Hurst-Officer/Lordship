@@ -329,6 +329,79 @@ public class AgentSessionIT extends IntegrationTest {
                 .andExpect(jsonPath("$.length()").value(0));
     }
 
+    // ---- an ended session's access token is refused at once, not when it runs out ----
+
+    private ResultActions self(String accessToken) throws Exception {
+        return mockMvc.perform(get("/api/agents/self")
+                .header("Authorization", "Bearer " + accessToken));
+    }
+
+    @Test
+    void signOutEverywhere_refusesEveryAccessTokenOnItsNextRequest() throws Exception {
+        String rootToken = rootToken();
+        TestAgent agent = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken);
+        String office = signIn(agent).get("token").asString();
+        String laptop = signIn(agent).get("token").asString();
+        self(office).andExpect(status().isOk());
+        self(laptop).andExpect(status().isOk());
+
+        mockMvc.perform(delete("/api/agents/{uuid}/sessions", agent.uuid())
+                        .header("Authorization", "Bearer " + rootToken))
+                .andExpect(status().isNoContent());
+
+        // still signed and unexpired, and refused all the same
+        self(office).andExpect(status().isUnauthorized());
+        self(laptop).andExpect(status().isUnauthorized());
+        self(agent.token()).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void signOutComputer_refusesOnlyThatComputersAccessToken() throws Exception {
+        String rootToken = rootToken();
+        TestAgent agent = TestAuthSupport.agentWithPermissions(
+                mockMvc, objectMapper, rootToken, "agents:end_sessions");
+        String office = signIn(agent).get("token").asString();
+        String laptop = signIn(agent).get("token").asString();
+        String officeId = thisComputerId(office, agent);
+
+        mockMvc.perform(delete("/api/agents/{uuid}/sessions/{sessionId}", agent.uuid(), officeId)
+                        .header("Authorization", "Bearer " + rootToken))
+                .andExpect(status().isNoContent());
+
+        self(office).andExpect(status().isUnauthorized());
+        self(laptop).andExpect(status().isOk());
+    }
+
+    @Test
+    void logout_refusesThatAccessTokenAtOnce() throws Exception {
+        TestAgent agent = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken());
+        JsonNode office = signIn(agent);
+        JsonNode laptop = signIn(agent);
+
+        mockMvc.perform(post("/api/agents/session/logout")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "refreshToken": "%s" }
+                                """.formatted(office.get("refreshToken").asString())))
+                .andExpect(status().isNoContent());
+
+        self(office.get("token").asString()).andExpect(status().isUnauthorized());
+        self(laptop.get("token").asString()).andExpect(status().isOk());
+    }
+
+    // The snapshot every request is checked with is cached. A sign-in after it was cached is a session the
+    // cached copy has never seen; the new token must still work at once.
+    @Test
+    void aFreshSignIn_worksAtOnce_whileAnOlderSnapshotIsCached() throws Exception {
+        TestAgent agent = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken());
+        self(agent.token()).andExpect(status().isOk());
+
+        String fresh = signIn(agent).get("token").asString();
+
+        self(fresh).andExpect(status().isOk());
+        self(agent.token()).andExpect(status().isOk());
+    }
+
     @Test
     void sessions_need_agentsEndSessions() throws Exception {
         String rootToken = rootToken();

@@ -99,7 +99,7 @@ public class AgentController {
 
     /**
      * Log out of this computer. Always 204, even for a token that is unknown or already ended.
-     * The access token keeps working until it expires (at most {@code jwt.expiration-ms}).
+     * The access token from this computer stops working at once (its session ended).
      */
     @PostMapping("/session/logout")
     public ResponseEntity<Void> logout(@Valid @RequestBody RefreshTokenRequest request) {
@@ -187,7 +187,7 @@ public class AgentController {
 
     /**
      * Sign one computer out. 204, or 404 when the session is not this agent's or already ended.
-     * That computer shows the sign-in screen at its next refresh, within {@code jwt.expiration-ms}.
+     * That computer's access token is refused on its very next request (401), so Glade there shows the sign-in screen.
      */
     @PreAuthorize("hasAuthority('agents:end_sessions')")
     @DeleteMapping("/{uuid}/sessions/{sessionId}")

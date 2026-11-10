@@ -52,10 +52,13 @@ public final class ScreenResponses {
 
     // The person page (X3). permissions is null without role_permissions:view; properties null without
     // assignments:view. allProperties: their roles give them every property. history is null without audit:view.
+    // denied: what their roles give but has been taken away from them (POST /api/denied-permissions/deny),
+    // in the same shape as permissions; null without role_permissions:view.
     public record PersonScreen(
             RoleDirectory.PersonLine person,
             List<RoleDirectory.HeldRole> roles,
             List<RoleDirectory.EffectivePermission> permissions,
+            List<RoleDirectory.EffectivePermission> denied,
             boolean allProperties,
             List<RoleDirectory.AssignedProperty> properties,
             History.PageHistory history

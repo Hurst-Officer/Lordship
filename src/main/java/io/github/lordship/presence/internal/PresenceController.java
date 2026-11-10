@@ -31,6 +31,8 @@ public class PresenceController {
      * The stream a window hears everyone else on (Server-Sent Events).
      * Each "roster" event carries { agents: [{ agentId, name, place, field, typing, picks }] }, the viewer left out.
      * A "saved" event { agentId, name, place, field, byYou } means someone saved something there (see /saved).
+     * A "changed" event { places: [{ place, table }] } means rows shown on those places changed in the database,
+     * whoever changed them (ChangeNotices); place "*" means load everything again.
      * The first one arrives at once. A ":ping" comment comes every 15 seconds.
      * The stream closes after 10 minutes; open a new one with a fresh token.
      * 403 when the client id belongs to another agent.

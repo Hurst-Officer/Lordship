@@ -25,7 +25,8 @@ public class AgentAuthorizationCacheTest {
         return new AgentAuthorization(
                 new AgentPrincipal(agentId, UUID.randomUUID(), new PropertyScope.All()),
                 null,
-                Set.of("tenants:view")
+                Set.of("tenants:view"),
+                Set.of()
         );
     }
 
@@ -133,7 +134,8 @@ public class AgentAuthorizationCacheTest {
                 new AgentPrincipal(UUID.randomUUID(), UUID.randomUUID(),
                         new PropertyScope.Restricted(assignedProperties)),
                 null,
-                Set.of("tenants:view")
+                Set.of("tenants:view"),
+                Set.of()
         );
 
         // Act

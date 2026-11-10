@@ -83,7 +83,8 @@ public class RoleScreenController {
     }
 
     // The person page: who they are, every live role marked with whether they hold it, what that lets them do
-    // (role_permissions:view), the properties they work with (assignments:view), and their history.
+    // and what has been taken away from them (both role_permissions:view), the properties they work with
+    // (assignments:view), and their history.
     // 404 for an unknown or removed agent, and for the server's own agent.
     @PreAuthorize("hasAuthority('agent_roles:view')")
     @GetMapping("/person/{agentId}")
@@ -100,16 +101,21 @@ public class RoleScreenController {
         History.PageHistory history = can.contains("audit:view")
                 ? auditService.pageHistory(List.of(new History.Ref("agent", agentId)), List.of(), AuditService.zoneOf(zone))
                 : null;
+        // what was taken from the person is not shown without role_permissions:view, so neither is its history
+        if (history != null && !can.contains("role_permissions:view")) {
+            history = withoutPermissions(history);
+        }
         return ResponseEntity.ok(new ScreenResponses.PersonScreen(
                 found.get(),
                 roleDirectory.rolesOf(agentId),
                 can.contains("role_permissions:view") ? permissions : null,
+                can.contains("role_permissions:view") ? roleDirectory.deniedOf(agentId) : null,
                 allProperties,
                 can.contains("assignments:view") ? roleDirectory.propertiesOf(agentId) : null,
                 history));
     }
 
-    // The history without the role's "permissions" entries (their keys name permissions)
+    // The history without the "permissions" entries of a role or a person (their keys name permissions)
     private static History.PageHistory withoutPermissions(History.PageHistory history) {
         return new History.PageHistory(history.lastEdit(), history.records().stream()
                 .map(r -> new History.RecordHistory(r.table(), r.recordId(), r.added(), r.fields().entrySet().stream()

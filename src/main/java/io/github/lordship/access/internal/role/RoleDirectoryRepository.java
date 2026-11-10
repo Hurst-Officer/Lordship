@@ -35,8 +35,9 @@ public class RoleDirectoryRepository {
     public record HeldRoleRow(UUID roleId, String roleName, String roleDescription, boolean held) { }
 
     // One permission the person has, through one of their roles. A permission held through two roles is two rows.
-    // groupOrder is the group's place in the role editor (permission_group.sort_order), so every screen numbers it the same
-    public record ThroughRow(String permissionName, String groupKey, int groupOrder, String roleName) { }
+    // groupOrder is the group's place in the role editor (permission_group.sort_order), so every screen numbers it the same.
+    // permissionOrder is the permission's place inside its group (permission.sort_order).
+    public record ThroughRow(String permissionName, String groupKey, int groupOrder, int permissionOrder, String roleName) { }
 
     public record PropertyRow(UUID propertyId, String propertyCode, String propertyName) { }
 
@@ -153,8 +154,18 @@ public class RoleDirectoryRepository {
     // What the person can do, and through which roles. Denied permissions are left out,
     // the same as the lookup every request is checked with (PermissionRepository).
     public List<ThroughRow> findPermissionsThroughRoles(UUID agentId) {
+        return throughRoles(agentId, false);
+    }
+
+    // The permissions the person's roles give but that are denied to the person, and through which roles
+    public List<ThroughRow> findDeniedThroughRoles(UUID agentId) {
+        return throughRoles(agentId, true);
+    }
+
+    // denied false: the permissions the person has. denied true: the ones taken away from the person.
+    private List<ThroughRow> throughRoles(UUID agentId, boolean denied) {
         return jdbc.sql("""
-                SELECT p.permission_name, g.group_key, g.sort_order AS group_order, r.role_name
+                SELECT p.permission_name, g.group_key, g.sort_order AS group_order, p.sort_order AS permission_order, r.role_name
                 FROM granted_role gr
                 JOIN agent_role r ON r.uuid = gr.role_id AND r.deleted_at IS NULL
                 JOIN role_permission rp ON rp.role_id = r.uuid AND rp.deleted_at IS NULL
@@ -162,15 +173,16 @@ public class RoleDirectoryRepository {
                 JOIN permission_group g ON g.uuid = p.group_id
                 WHERE gr.agent_id = :agentId
                 AND gr.deleted_at IS NULL
-                AND NOT EXISTS (
+                AND EXISTS (
                     SELECT 1 FROM denied_permission d
                     WHERE d.agent_id = :agentId
                     AND d.permission_id = p.uuid
                     AND d.deleted_at IS NULL
-                )
+                ) = :denied
                 ORDER BY g.sort_order, p.sort_order, lower(r.role_name)
                 """)
                 .param("agentId", agentId)
+                .param("denied", denied)
                 .query(ThroughRow.class)
                 .list();
     }

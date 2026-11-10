@@ -34,8 +34,10 @@ public class RoleDirectory {
 
     // One permission the person has, and the roles it comes through.
     // groupOrder is the group's number in the role editor (1 Staff and access, 2 People...).
+    // permissionOrder is the permission's place inside its group, so a screen showing permissionsOf and deniedOf
+    // together can keep each permission where the role editor puts it.
     public record EffectivePermission(String permissionName, String label, String groupKey, String groupLabel,
-                                      int groupOrder, List<String> through) { }
+                                      int groupOrder, int permissionOrder, List<String> through) { }
 
     // A property the person is assigned to
     public record AssignedProperty(UUID propertyId, String propertyCode, String propertyName) { }
@@ -94,9 +96,20 @@ public class RoleDirectory {
 
     // What the person can do, each permission with the roles it comes through, by group
     public List<EffectivePermission> permissionsOf(UUID agentId) {
+        return grouped(repository.findPermissionsThroughRoles(agentId));
+    }
+
+    // The permissions the person's roles give but that are taken away from the person (DeniedPermissionService),
+    // in the same shape as permissionsOf. A denial whose permission no role of theirs gives any more is not listed.
+    public List<EffectivePermission> deniedOf(UUID agentId) {
+        return grouped(repository.findDeniedThroughRoles(agentId));
+    }
+
+    // One EffectivePermission per permission name, with every role the permission comes through
+    private List<EffectivePermission> grouped(List<ThroughRow> rows) {
         Map<String, List<String>> through = new LinkedHashMap<>();
         Map<String, ThroughRow> first = new LinkedHashMap<>();
-        for (ThroughRow row : repository.findPermissionsThroughRoles(agentId)) {
+        for (ThroughRow row : rows) {
             through.computeIfAbsent(row.permissionName(), name -> new ArrayList<>()).add(row.roleName());
             first.putIfAbsent(row.permissionName(), row);
         }
@@ -107,6 +120,7 @@ public class RoleDirectory {
                 first.get(name).groupKey(),
                 permissionText.groupLabel(first.get(name).groupKey()),
                 first.get(name).groupOrder(),
+                first.get(name).permissionOrder(),
                 List.copyOf(roles))));
         return permissions;
     }

@@ -3,6 +3,8 @@ package io.github.lordship.access.internal;
 import io.github.lordship.IntegrationTest;
 import io.github.lordship.access.internal.agents.AgentRepository;
 import io.github.lordship.access.internal.agents.AgentRow;
+import io.github.lordship.access.internal.deniedpermission.DeniedPermissionRepository;
+import io.github.lordship.access.internal.deniedpermission.DeniedPermissionRow;
 import io.github.lordship.access.internal.grantedrole.GrantedRoleRepository;
 import io.github.lordship.access.internal.grantedrole.GrantedRoleRow;
 import io.github.lordship.access.internal.permissions.PermissionRepository;
@@ -44,6 +46,9 @@ public class PermissionRepositoryTest extends IntegrationTest {
 
     @Autowired
     AgentRepository agentRepository;
+
+    @Autowired
+    DeniedPermissionRepository deniedPermissionRepository;
 
     private static final String PERMISSION_NAME = "tenants:view";
 
@@ -103,6 +108,36 @@ public class PermissionRepositoryTest extends IntegrationTest {
 
         // Assert
         assertFalse(agentHolds(agentId, PERMISSION_NAME));
+    }
+
+    @Test
+    void findActivePermissionsForAgent_shouldDropPermission_whileDenied() {
+        // Arrange
+        UUID agentId = insertAgent();
+        UUID roleId = insertRoleHolding(PERMISSION_NAME);
+        grantedRoleRepository.save(new GrantedRoleRow(agentId, roleId, SystemPrincipal.AGENT_UUID));
+        UUID permissionId = permissionRepository.findByName(PERMISSION_NAME).orElseThrow().uuid();
+
+        assertTrue(deniedPermissionRepository.rolesGive(agentId, permissionId),
+                "fixture is wrong if the agent's role does not give the permission");
+
+        // Act
+        DeniedPermissionRow denial = deniedPermissionRepository.save(
+                new DeniedPermissionRow(agentId, permissionId, SystemPrincipal.AGENT_UUID));
+
+        // Assert
+        assertFalse(agentHolds(agentId, PERMISSION_NAME),
+                "a denied permission must stop being handed out, role or no role");
+        assertTrue(deniedPermissionRepository.rolesGive(agentId, permissionId),
+                "the role still gives the permission; only the denial takes the permission away");
+
+        // Act: the denial is lifted
+        assertTrue(deniedPermissionRepository.remove(denial.uuid(), SystemPrincipal.AGENT_UUID));
+
+        // Assert
+        assertTrue(agentHolds(agentId, PERMISSION_NAME));
+        assertFalse(deniedPermissionRepository.remove(denial.uuid(), SystemPrincipal.AGENT_UUID),
+                "a denial already lifted cannot be lifted twice");
     }
 
     @Test
