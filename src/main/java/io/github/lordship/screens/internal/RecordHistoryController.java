@@ -53,8 +53,9 @@ public class RecordHistoryController {
             Map.entry("property_document_assignment", "property_document:view"),
             Map.entry("property_document_customization", "property_document:view"));
 
-    // An agent's history is read for the roles they were given and lost, and nothing else of theirs
-    private static final String AGENT_FIELDS = "roles.";
+    // An agent's history is read for the roles they were given and lost, and the permissions taken from them alone
+    // and given back ("permissions.lots:edit"), and nothing else of theirs
+    private static final List<String> AGENT_FIELDS = List.of("roles.", "permissions.");
 
     // On their own page, an agent reads the history of their own details. Never the social security number.
     private static final Map<String, Set<String>> OWN_FIELDS = Map.of(
@@ -79,14 +80,16 @@ public class RecordHistoryController {
      * table is property, lot, mobile_home, agent_role, agent, or a Documents table (document_template, document_section,
      * template_clause, document_style, property_document_assignment, property_document_customization).
      * Anything else is a 400 (audit.table_unknown).
-     * For agent, every field must be a role ("roles.<roleId>"); anything else is a 400 (audit.field_not_shown).
+     * For agent, every field must be a role ("roles.<roleId>") or a permission taken from them or given back
+     * ("permissions.<name>"); anything else is a 400 (audit.field_not_shown).
      * Repeat field once for each field to include: ?field=propertyZoning&field=fieldLinks.property_zoning
      * (repeated, not comma-separated, because a custom field's name can hold a comma). None is a 400.
      * day (like 2026-10-03) keeps one day in the time zone named by zone (like America/Los_Angeles).
      * 403 without the permission to view that kind of record.
      * 404 when the record is in a property outside the agent's scope.
-     * The agent's own person and agent records (their own page) need only audit:view_own or audit:view,
-     * for the fields in OWN_FIELDS. A person record that is not the caller's own is a 403.
+     * The agent's own person and agent records (their own page) need audit:view_own, for the fields in OWN_FIELDS.
+     * audit:view alone does not open them: a person record is then a 403, and an agent's own fields a 400.
+     * A person record that is not the caller's own is a 403.
      */
     @PreAuthorize("hasAnyAuthority('audit:view', 'audit:view_own')")
     @GetMapping("/{table}/{id}")
@@ -106,7 +109,7 @@ public class RecordHistoryController {
         if (fields == null || fields.length == 0) {
             throw InvalidRequest.onField("field", "audit.field_missing");
         }
-        if (isOwn(table, id, authentication)
+        if (isOwn(table, id, authentication) && can(authentication, "audit:view_own")
                 && java.util.Arrays.stream(fields).allMatch(field -> field != null && OWN_FIELDS.get(table).contains(field))) {
             return ResponseEntity.ok(auditService.fieldHistory(
                     new History.Ref(table, id), List.of(fields), day, AuditService.zoneOf(zone), page, HISTORY_PAGE_SIZE));
@@ -117,7 +120,7 @@ public class RecordHistoryController {
         }
         if ("agent".equals(table)) {
             for (String field : fields) {
-                if (field == null || !field.startsWith(AGENT_FIELDS)) {
+                if (field == null || AGENT_FIELDS.stream().noneMatch(field::startsWith)) {
                     throw InvalidRequest.onField("field", "audit.field_not_shown", field);
                 }
             }
@@ -125,8 +128,8 @@ public class RecordHistoryController {
         if (!can(authentication, VIEW_PERMISSION.get(table))) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
-        // what a role can do is only shown to someone who may see it, its history included
-        if ("agent_role".equals(table) && !can(authentication, "role_permissions:view")
+        // what a role can do (and what a person had taken away) is only shown to someone who may see it, history included
+        if (("agent_role".equals(table) || "agent".equals(table)) && !can(authentication, "role_permissions:view")
                 && java.util.Arrays.stream(fields).anyMatch(field -> field != null && field.startsWith("permissions"))) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }

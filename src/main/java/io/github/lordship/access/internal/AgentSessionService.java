@@ -1,5 +1,6 @@
 package io.github.lordship.access.internal;
 
+import io.github.lordship.identity.AgentAuthorizationCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +16,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -24,6 +26,11 @@ import java.util.UUID;
  *
  * <p>The database only stores a SHA-256 hash of each token. A copy of the table
  * cannot be used to sign in.
+ *
+ * <p>Every access token names its session (the sid claim), and every request checks that the session was not
+ * ended (JwtAuthFilter). So each path here that ends a session drops the agent's cached snapshot
+ * (AgentAuthorizationCache): the computers signed out are refused on their very next request, not when their
+ * access token runs out.
  */
 @Service
 public class AgentSessionService {
@@ -32,13 +39,16 @@ public class AgentSessionService {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final AgentSessionRepository sessionRepository;
+    private final AgentAuthorizationCache authorizationCache;
     private final int idleDays;
     private final int maxDays;
 
     public AgentSessionService(AgentSessionRepository sessionRepository,
+                               AgentAuthorizationCache authorizationCache,
                                @Value("${lordship.session.idle-days:30}") int idleDays,
                                @Value("${lordship.session.max-days:90}") int maxDays) {
         this.sessionRepository = sessionRepository;
+        this.authorizationCache = authorizationCache;
         this.idleDays = idleDays;
         this.maxDays = maxDays;
     }
@@ -72,6 +82,7 @@ public class AgentSessionService {
                     .filter(row -> row.endedAt() == null)
                     .ifPresent(row -> {
                         sessionRepository.end(row.uuid());
+                        authorizationCache.invalidate(row.agentId());
                         log.warn("A used-up refresh token for agent {} came back. Ended session {}",
                                 row.agentId(), row.uuid());
                     });
@@ -88,6 +99,7 @@ public class AgentSessionService {
         boolean idleTooLong = now.isAfter(row.lastUsedAt().plusDays(idleDays));
         if (pastHardLimit || idleTooLong) {
             sessionRepository.end(row.uuid());
+            authorizationCache.invalidate(row.agentId());
             return Optional.empty();
         }
 
@@ -102,7 +114,11 @@ public class AgentSessionService {
     /** Log out of one computer. Does nothing for an unknown token. */
     public void end(String refreshToken) {
         sessionRepository.findByTokenHash(hash(refreshToken))
-                .ifPresent(row -> sessionRepository.end(row.uuid()));
+                .ifPresent(row -> {
+                    if (sessionRepository.end(row.uuid())) {
+                        authorizationCache.invalidate(row.agentId());
+                    }
+                });
     }
 
     /** The agent's computers that are still signed in, most recently used first. */
@@ -112,12 +128,23 @@ public class AgentSessionService {
 
     /** An admin signs one computer out. False when it is not this agent's or already ended. */
     public boolean endForAgent(UUID agentId, UUID sessionId) {
-        return sessionRepository.endForAgent(agentId, sessionId);
+        boolean ended = sessionRepository.endForAgent(agentId, sessionId);
+        if (ended) {
+            authorizationCache.invalidate(agentId);
+        }
+        return ended;
     }
 
-    /** Log out of every computer. Used by password reset and agent removal. */
+    /** Log out of every computer. Used by "Sign out everywhere", password reset and agent removal. */
     public int endAll(UUID agentId) {
-        return sessionRepository.endAllForAgent(agentId);
+        int ended = sessionRepository.endAllForAgent(agentId);
+        authorizationCache.invalidate(agentId);
+        return ended;
+    }
+
+    /** The agent's sessions that were not ended, for the check on every request (JwtAuthFilter). */
+    public Set<UUID> notEndedIds(UUID agentId) {
+        return Set.copyOf(sessionRepository.findNotEndedIds(agentId));
     }
 
     // 32 random bytes, URL-safe base64 (43 characters)

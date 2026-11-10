@@ -54,7 +54,8 @@ public class AgentAuthorizationLoader {
         return new AgentAuthorization(
                 new AgentPrincipal(agent.uuid(), agent.personId(), scope),
                 agent.tokensValidFrom(),
-                permissions
+                permissions,
+                agentService.openSessionIds(agentId)
         );
     }
 }

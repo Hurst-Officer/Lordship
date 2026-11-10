@@ -103,6 +103,15 @@ public class AgentSessionRepository {
                 .list();
     }
 
+    // The ids of the agent's sessions that were not ended, for the check on every request (JwtAuthFilter).
+    // Idle and hard limits are left to the refresh: an access token lives minutes, a session days.
+    public List<UUID> findNotEndedIds(UUID agentId) {
+        return jdbc.sql("SELECT uuid FROM agent_session WHERE agent_id = :agentId AND ended_at IS NULL")
+                .param("agentId", agentId)
+                .query(UUID.class)
+                .list();
+    }
+
     // Only ends the session when it belongs to this agent.
     public boolean endForAgent(UUID agentId, UUID sessionId) {
         return jdbc.sql("""

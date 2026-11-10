@@ -19,6 +19,8 @@ import java.util.UUID;
  * <ul>
  *   <li>agent_role: {"permissions": {"lots:edit": true}} and {"holders": {"Maria Lopez": true}}</li>
  *   <li>agent: {"roles": {"&lt;roleId&gt;": true}}</li>
+ *   <li>agent: {"permissions": {"lots:edit": false}}, a permission taken from the person alone (false) or given back
+ *       (true), the way the switch on their page reads (DeniedPermissionService)</li>
  * </ul>
  * The history reads these the way it reads a property's custom fields ("permissions.lots:edit").
  * The role_permission and granted_role rows are still written to the audit log as before.
@@ -38,6 +40,13 @@ public class RoleHistory {
     public void permissions(UUID roleId, Map<String, Boolean> changed) {
         if (changed.isEmpty()) return;
         auditService.recordUpdate("agent_role", roleId, Map.of("permissions", flipped(changed)), Map.of("permissions", changed));
+    }
+
+    // A permission taken from a person alone (has false) or given back (true), as one entry in the person's history.
+    // Only the person's own switch: a permission lost or gained with a role is the role's entry, not this.
+    public void personPermission(UUID agentId, String permissionName, boolean has) {
+        Map<String, Boolean> changed = Map.of(permissionName, has);
+        auditService.recordUpdate("agent", agentId, Map.of("permissions", flipped(changed)), Map.of("permissions", changed));
     }
 
     // A role given to a person (holds true) or taken from them: on the role, and on the person

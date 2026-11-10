@@ -50,7 +50,7 @@ import java.util.stream.Collectors;
  *   <li>keeps each lot's corners on the drawing, so the park can be reopened</li>
  *   <li>keeps the drawing itself and how it was pinned to the globe</li>
  *   <li>writes one audit entry for the whole map</li>
- *   <li>gives a property with no latitude and longitude the middle of its lots, so it has a location from then on</li>
+ *   <li>gives a property with no latitude and longitude the middle of the property's lots, so the property has a location from then on</li>
  *   <li>once the save is in the database, pulls the park's surroundings in the background:
  *       roads, water, buildings, property lines and ground heights</li>
  * </ol>
@@ -210,9 +210,10 @@ public class SiteMapBuilderService {
                 repository.totalSquareFeet(propertyId), locationSet));
     }
 
-    // A property with no location gets the middle of the lots just saved. The property's own
-    // save does it, so it is audited like any other change to the property. A location that was
-    // already there is never moved. Null when nothing was set.
+    // Gives a property that has no location the middle of the lots just saved. The location is
+    // written through the property's own save, so the audit log records the new location like any
+    // other change to the property. A property that already has a location keeps that location.
+    // Returns the location that was set, or null when no location was set.
     private Location locateIfMissing(Property property) {
         if (property.latitude() != null && property.longitude() != null) {
             return null;

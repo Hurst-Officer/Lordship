@@ -62,8 +62,10 @@ public class AuditController {
      * sort: when (default), kind or record; ascending defaults to false (newest first). limit: 1 to 500.
      * A save under a property the agent is no longer assigned to comes back with hidden true and nothing that
      * names the record. 404 for a caller who is not an agent.
+     * Needs audit:view_own alone: audit:view (everyone's history bars) does not include it, so taking
+     * "See own activity log" away hides "My activity" even from someone who may see activity logs.
      */
-    @PreAuthorize("hasAnyAuthority('audit:view_own', 'audit:view')")
+    @PreAuthorize("hasAuthority('audit:view_own')")
     @GetMapping("/mine")
     public ResponseEntity<History.SavePage> ownActivity(
             @RequestParam(defaultValue = "when") String sort,

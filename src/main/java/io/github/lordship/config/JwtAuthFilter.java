@@ -138,6 +138,26 @@ public class JwtAuthFilter extends OncePerRequestFilter {
             }
         }
 
+        // A token whose session was ended: this computer was signed out (by the worker, by an admin, or by a
+        // stolen refresh token coming back). The token is still signed and unexpired, so nothing above catches it.
+        // A session missing from the cached snapshot may also be brand new (a sign-in a moment ago), so the
+        // snapshot is read again once before refusing.
+        UUID sessionId = null;
+        try {
+            sessionId = jwtService.extractSessionId(claims);
+        } catch (IllegalArgumentException e) {
+            // A malformed sid is signed by us, so this should not happen. Without a session there is nothing to check.
+        }
+        if (sessionId != null && !authorization.openSessions().contains(sessionId)) {
+            authorizationCache.invalidate(agentId);
+            authorization = authorizationCache.get(agentId, authorizationLoader::load);
+            if (authorization == null || !authorization.openSessions().contains(sessionId)) {
+                LordshipAuthenticationEntryPoint.send(response, "invalid_token",
+                        "Session ended, sign in again");
+                return;
+            }
+        }
+
         Set<SimpleGrantedAuthority> authorities = authorization.permissions()
                 .stream()
                 .map(SimpleGrantedAuthority::new)
@@ -148,13 +168,8 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         SecurityContextHolder.getContext().setAuthentication(authentication);
 
-        try {
-            UUID sessionId = jwtService.extractSessionId(claims);
-            if (sessionId != null) {
-                request.setAttribute(JwtService.SESSION_ID_ATTRIBUTE, sessionId);
-            }
-        } catch (IllegalArgumentException e) {
-            // A malformed sid only costs the "this computer" label. It is signed, so this should not happen.
+        if (sessionId != null) {
+            request.setAttribute(JwtService.SESSION_ID_ATTRIBUTE, sessionId);
         }
 
         filterChain.doFilter(request, response);

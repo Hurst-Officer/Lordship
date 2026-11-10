@@ -332,6 +332,14 @@ public class AgentService {
                 .map(person -> issue(ar, person, rotated.get().sessionId(), rotated.get().refreshToken()));
     }
 
+    /**
+     * The agent's signed-in computers (sessions not ended), for the snapshot every request is checked with
+     * (config AgentAuthorizationLoader). An access token from any other session is refused.
+     */
+    public Set<UUID> openSessionIds(UUID agentId) {
+        return sessionService.notEndedIds(agentId);
+    }
+
     /** Log out of this computer only. Unknown tokens are ignored. */
     public void endSession(String refreshToken) {
         sessionService.end(refreshToken);
@@ -344,8 +352,8 @@ public class AgentService {
     }
 
     /**
-     * An admin signs one of the agent's computers out. That computer reaches the
-     * sign-in screen at its next refresh, within jwt.expiration-ms.
+     * An admin signs one of the agent's computers out. Its access token is refused on its very next request
+     * (JwtAuthFilter checks the token's session), so Glade there goes to the sign-in screen.
      * False (404) when the session is not this agent's or has already ended.
      */
     @Transactional
@@ -359,7 +367,10 @@ public class AgentService {
         return true;
     }
 
-    /** Signs out every computer the agent uses. False (404) for an unknown or removed agent. */
+    /**
+     * Signs out every computer the agent uses: every access token they hold is refused on its next request.
+     * False (404) for an unknown or removed agent.
+     */
     @Transactional
     public boolean signOutEverywhere(UUID agentId) {
         if (agentRepository.findById(agentId).isEmpty()) {

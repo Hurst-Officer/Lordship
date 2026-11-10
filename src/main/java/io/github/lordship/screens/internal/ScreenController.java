@@ -166,8 +166,10 @@ public class ScreenController {
                 ? personService.findByID(agent.personId()).map(PersonOwnResponse::from).orElse(null)
                 : null;
 
+        // the worker's own history is audit:view_own alone: audit:view (everyone's history bars) does not include it,
+        // so taking "See own activity log" away hides it even from someone who may see activity logs
         History.PageHistory history = null;
-        if (can.contains("audit:view_own") || can.contains("audit:view")) {
+        if (can.contains("audit:view_own")) {
             history = auditService.pageHistory(
                     List.of(new History.Ref("person", agent.personId()), new History.Ref("agent", agent.uuid())),
                     List.of(), AuditService.zoneOf(zone));
