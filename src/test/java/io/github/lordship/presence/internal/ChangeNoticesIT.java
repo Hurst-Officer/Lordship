@@ -5,7 +5,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
+import javax.sql.DataSource;
+import java.sql.Connection;
+import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -18,7 +24,7 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 
 /**
- * The database tells Lordship about every committed change to a table Glade shows (V16), and Lordship tells the
+ * The database tells Lordship about every committed change to a table Glade shows (V15), and Lordship tells the
  * open Glade windows which places changed (ChangeNotices, ChangeRelay, PresenceHub.changed).
  *
  * <p>Not @Transactional: a notice is only sent when a transaction commits. The rows these tests write are removed
@@ -38,6 +44,12 @@ public class ChangeNoticesIT extends IntegrationTest {
 
     @Autowired
     JdbcClient jdbc;
+
+    @Autowired
+    DataSource dataSource;
+
+    @Autowired
+    ObjectMapper objectMapper;
 
     private void awaitListening() throws InterruptedException {
         long until = System.currentTimeMillis() + 10_000;
@@ -117,5 +129,145 @@ public class ChangeNoticesIT extends IntegrationTest {
         // Assert: one place for the park, none for its lots
         hubHears(places -> places.containsKey("properties/" + propertyId)
                 && places.keySet().stream().noneMatch(place -> place.startsWith("properties/" + propertyId + "/lots/")));
+    }
+
+    // ---- the trigger itself (V16 lordship_notify_change): what one write to mobile_home sends ----
+
+    // One park with two lots and a home on lot A, committed, for the trigger tests
+    private record HomeOnLotA(UUID propertyId, UUID lotA, UUID lotB, UUID homeId) { }
+
+    private HomeOnLotA homeOnLotA() {
+        // a code of the park's own: property codes are unique, and these rows are committed
+        UUID propertyId = testData.insertProperty("CN" + UUID.randomUUID().toString().substring(0, 8)).uuid();
+        UUID lotA = testData.insertLot(propertyId, "A").uuid();
+        UUID lotB = testData.insertLot(propertyId, "B").uuid();
+        UUID homeId = jdbc.sql("INSERT INTO mobile_home (lot_id) VALUES (:lot) RETURNING uuid")
+                .param("lot", lotA)
+                .query(UUID.class)
+                .single();
+        return new HomeOnLotA(propertyId, lotA, lotB, homeId);
+    }
+
+    private void remove(HomeOnLotA park) {
+        jdbc.sql("DELETE FROM mobile_home WHERE uuid = :id").param("id", park.homeId()).update();
+        jdbc.sql("DELETE FROM lot WHERE property_id = :id").param("id", park.propertyId()).update();
+        jdbc.sql("DELETE FROM property WHERE uuid = :id").param("id", park.propertyId()).update();
+    }
+
+    /**
+     * The notices one write sends about one row, in the order Postgres sent them.
+     * Read on a connection of the test's own that LISTENs the way ChangeNotices does, so the test sees the notices
+     * themselves, not the places the hub makes of them. The write runs once LISTEN is in place.
+     * Waits for the expected number of notices, then a moment more, so one notice too many is caught.
+     * Notices about other rows are left out.
+     */
+    private List<JsonNode> noticesAbout(UUID rowId, int expected, Runnable write) throws Exception {
+        try (Connection listener = dataSource.getConnection();
+             Statement statement = listener.createStatement()) {
+            listener.setAutoCommit(true);
+            statement.execute("LISTEN " + ChangeNotices.CHANNEL);
+            try {
+                PgNotifications arriving = new PgNotifications(listener);
+
+                write.run();
+
+                List<JsonNode> about = new ArrayList<>();
+                long until = System.currentTimeMillis() + 10_000;
+                while (about.size() < expected && System.currentTimeMillis() < until) {
+                    addAbout(rowId, arriving.poll(250), about);
+                }
+                addAbout(rowId, arriving.poll(500), about);
+                return about;
+            } finally {
+                // the connection goes back to the pool, and must not keep collecting notices there
+                statement.execute("UNLISTEN *");
+            }
+        }
+    }
+
+    private void addAbout(UUID rowId, List<String> payloads, List<JsonNode> about) {
+        for (String payload : payloads) {
+            if (payload.contains(rowId.toString())) {
+                about.add(objectMapper.readTree(payload));
+            }
+        }
+    }
+
+    // The lot each notice names, "no lot" for a notice that carries no lot_id
+    private static List<String> lotsIn(List<JsonNode> notices) {
+        List<String> lots = new ArrayList<>();
+        for (JsonNode notice : notices) {
+            JsonNode ids = notice.get("r");
+            lots.add(ids.has("lot_id") ? ids.get("lot_id").asString() : "no lot");
+        }
+        return lots;
+    }
+
+    @Test
+    void anUpdateThatChangesNoId_sendsOneNotice() throws Exception {
+        // Arrange
+        HomeOnLotA park = homeOnLotA();
+        try {
+            // Act
+            List<JsonNode> notices = noticesAbout(park.homeId(), 1, () ->
+                    jdbc.sql("UPDATE mobile_home SET name = 'Unit 7' WHERE uuid = :id").param("id", park.homeId()).update());
+
+            // Assert
+            assertEquals(List.of(park.lotA().toString()), lotsIn(notices));
+            assertEquals("mobile_home", notices.get(0).get("t").asString());
+        } finally {
+            remove(park);
+        }
+    }
+
+    @Test
+    void movingAHomeToAnotherLot_sendsTheNewLot_thenTheLotTheHomeLeft() throws Exception {
+        // Arrange
+        HomeOnLotA park = homeOnLotA();
+        try {
+            // Act
+            List<JsonNode> notices = noticesAbout(park.homeId(), 2, () ->
+                    jdbc.sql("UPDATE mobile_home SET lot_id = :lot WHERE uuid = :id")
+                            .param("lot", park.lotB())
+                            .param("id", park.homeId())
+                            .update());
+
+            // Assert: without the second notice, a window on lot A would never load again
+            assertEquals(List.of(park.lotB().toString(), park.lotA().toString()), lotsIn(notices));
+        } finally {
+            remove(park);
+        }
+    }
+
+    @Test
+    void takingAHomeOffItsLot_stillSendsTheLotTheHomeLeft() throws Exception {
+        // Arrange
+        HomeOnLotA park = homeOnLotA();
+        try {
+            // Act
+            List<JsonNode> notices = noticesAbout(park.homeId(), 2, () ->
+                    jdbc.sql("UPDATE mobile_home SET lot_id = NULL WHERE uuid = :id").param("id", park.homeId()).update());
+
+            // Assert: the first notice (the home as saved) names no lot, so only the second notice reaches lot A
+            assertEquals(List.of("no lot", park.lotA().toString()), lotsIn(notices));
+        } finally {
+            remove(park);
+        }
+    }
+
+    @Test
+    void aDelete_sendsTheIdsTheRowHad() throws Exception {
+        // Arrange
+        HomeOnLotA park = homeOnLotA();
+        try {
+            // Act: a hard delete, which the screens never do but psql or a cleanup may
+            List<JsonNode> notices = noticesAbout(park.homeId(), 1, () ->
+                    jdbc.sql("DELETE FROM mobile_home WHERE uuid = :id").param("id", park.homeId()).update());
+
+            // Assert
+            assertEquals(List.of(park.lotA().toString()), lotsIn(notices));
+        } finally {
+            remove(park);
+        }
     }
 }

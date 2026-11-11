@@ -229,6 +229,41 @@ public class PersonControllerIT extends IntegrationTest {
            .andExpect(status().isNotFound());
     }
 
+    // Sign-in reads the agent's person. A deleted person would lock the agent out while the last-admin and
+    // last-key guards still counted the agent, so the person stays until the agent is removed.
+    @Test
+    void deletePerson_shouldReturn409_whileALiveAgentSignsInAsThePerson_and204_onceTheAgentIsRemoved() throws Exception {
+        // Arrange
+        String rootToken = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+        TestAuthSupport.TestAgent worker = TestAuthSupport.agentWithNoPermissions(mockMvc, objectMapper, rootToken);
+        UUID personUuid = agentService.findById(worker.uuid()).orElseThrow().personId();
+
+        // Act + Assert: the person delete is refused
+        mockMvc.perform(delete("/api/persons/{uuid}", personUuid)
+                .header("Authorization", "Bearer " + rootToken))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("person.is_agent"));
+
+        // the worker can still sign in
+        mockMvc.perform(post("/api/agents/auth")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        { "workEmail": "%s", "password": "%s" }
+                        """.formatted(worker.workEmail(), worker.password())))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.token").exists());
+
+        // Act: the agent is removed first
+        mockMvc.perform(delete("/api/agents/{uuid}", worker.uuid())
+                .header("Authorization", "Bearer " + rootToken))
+            .andExpect(status().isNoContent());
+
+        // Assert: the same person delete now goes through
+        mockMvc.perform(delete("/api/persons/{uuid}", personUuid)
+                .header("Authorization", "Bearer " + rootToken))
+            .andExpect(status().isNoContent());
+    }
+
     @Test
     void getAnyPerson_shouldReturn401_whenNoTokenProvided() throws Exception {
         mockMvc.perform(get("/api/persons/{uuid}", UUID.randomUUID()))

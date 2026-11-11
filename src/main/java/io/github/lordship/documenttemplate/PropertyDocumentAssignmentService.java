@@ -142,6 +142,8 @@ public class PropertyDocumentAssignmentService {
             return Optional.empty();
         }
 
+        // The document cannot be deleted between this check and the save (deleteTemplate takes the same lock)
+        documentTemplateService.lockForEdit(documentTemplateId);
         Optional<DocumentTemplate> templateOpt = documentTemplateService.findById(documentTemplateId);
         if (templateOpt.isEmpty()) {
             return Optional.empty();
@@ -234,7 +236,7 @@ public class PropertyDocumentAssignmentService {
                         section.name(), section.statuteRef());
             }
             refuseDuplicateExclusion(assignmentUuid, sectionUuid);
-            refuseIfNeeded(document, assignmentUuid, ClauseLinks.clausesOf(document, sectionUuid), "section");
+            refuseIfNeeded(document, assignmentUuid, ClauseLinks.clausesOf(document, sectionUuid), "section", sectionUuid);
 
             PropertyDocumentCustomizationRow saved = customizationRepository.excludeSection(
                     assignmentUuid, sectionUuid, ActingAgent.resolve(auditContext));
@@ -255,7 +257,7 @@ public class PropertyDocumentAssignmentService {
                         : RuleConflict.of("clause.is_required_by_statute", clause.statuteRef());
             }
             refuseDuplicateExclusion(assignmentUuid, clauseUuid);
-            refuseIfNeeded(document, assignmentUuid, Set.of(clauseUuid), "clause");
+            refuseIfNeeded(document, assignmentUuid, Set.of(clauseUuid), "clause", null);
 
             PropertyDocumentCustomizationRow saved = customizationRepository.excludeClause(
                     assignmentUuid, clauseUuid, ActingAgent.resolve(auditContext));
@@ -309,6 +311,10 @@ public class PropertyDocumentAssignmentService {
         ClauseBodyRules.validateBody(effective);
         ClauseBodyRules.validateCondition(
                 before.conditionField(), before.conditionValues(), effective);
+        // DocumentFreeze sorts a section's clauses by ordinal, so a park clause must always have one
+        if (effective.containsKey("ordinal") && effective.get("ordinal") == null) {
+            throw InvalidRequest.onField("ordinal", "customization.ordinal_required");
+        }
         if (effective.get("parent") != null && !(effective.get("parent") instanceof UUID)) {
             try {
                 effective.put("parent", UUID.fromString(String.valueOf(effective.get("parent"))));
@@ -316,6 +322,10 @@ public class PropertyDocumentAssignmentService {
                 throw InvalidRequest.onField("parent", "request.not_a_uuid", effective.get("parent"));
             }
         }
+
+        // The checks below read the document's clauses: an edit of the document waits until this change is saved
+        assignmentRepository.findById(before.assignment())
+                .ifPresent(assignment -> documentTemplateService.lockForEdit(assignment.documentTemplate()));
 
         Optional<PropertyDocumentCustomizationRow> afterOpt =
                 customizationRepository.patch(customizationUuid, effective);
@@ -328,8 +338,13 @@ public class PropertyDocumentAssignmentService {
                 .map(this::fullTemplateFor)
                 .orElseThrow(() -> new IllegalStateException(
                         "Customization " + customizationUuid + " points at an assignment that no longer exists"));
+        // New words may not cite a clause this park leaves out. A change that leaves the words alone (a move, a
+        // title) is not held to that, so a clause saved before this rule can still be moved or renamed.
+        Set<UUID> parkLeavesOut = effective.containsKey("body")
+                ? leftOut(document, customizationsOf(before.assignment()))
+                : Set.of();
         List<DomainProblem.Problem> problems = ClauseLinks.problemsWithParkClause(
-                document, afterOpt.get().toPropertyDocumentCustomization());
+                document, afterOpt.get().toPropertyDocumentCustomization(), parkLeavesOut);
         if (!problems.isEmpty()) {
             throw InvalidRequest.withDetails("customization.not_saved", problems);
         }
@@ -382,6 +397,9 @@ public class PropertyDocumentAssignmentService {
         }
         PropertyDocumentAssignmentRow row = rowOpt.get();
 
+        // The checks below read the document's clauses: an edit of the document waits until this change is saved,
+        // and this change waits for an edit already under way
+        documentTemplateService.lockForEdit(row.documentTemplate());
         change.apply(row, fullTemplateFor(row));
         return Optional.of(hydrate(row));
     }
@@ -421,20 +439,43 @@ public class PropertyDocumentAssignmentService {
      * must sit directly above -- the lease would come out refused at generate, and
      * it is better to hear that now than when an office worker is in a hurry.
      */
-    private void refuseIfNeeded(DocumentTemplate document, UUID assignmentUuid, Set<UUID> dropping, String kind) {
-        Set<UUID> alreadyDropped = new HashSet<>();
-        for (PropertyDocumentCustomization existing : customizationsOf(assignmentUuid)) {
+    // droppingSection: the section this exclusion leaves out, or null when the exclusion is of one clause
+    private void refuseIfNeeded(DocumentTemplate document, UUID assignmentUuid, Set<UUID> dropping, String kind,
+                                UUID droppingSection) {
+        List<PropertyDocumentCustomization> changes = customizationsOf(assignmentUuid);
+        Set<UUID> sectionsOut = new HashSet<>();
+        for (PropertyDocumentCustomization existing : changes) {
+            if (existing.excludedSection() != null) {
+                sectionsOut.add(existing.excludedSection());
+            }
+        }
+        if (droppingSection != null) {
+            sectionsOut.add(droppingSection);
+        }
+        // The park's own clauses that still print. A clause in a section the park leaves out does not print.
+        List<PropertyDocumentCustomization> parkClauses = changes.stream()
+                .filter(change -> change.action() == CustomizationAction.ADD_CLAUSE
+                        && !sectionsOut.contains(change.section()))
+                .toList();
+        ClauseLinks.exclusionBlocker(document, dropping, leftOut(document, changes), kind, parkClauses)
+                .ifPresent(problem -> {
+                    throw RuleConflict.of(problem.code(), problem.args().toArray());
+                });
+    }
+
+    // The template clauses a park leaves out: each clause excluded by itself, and every clause of an excluded section
+    private static Set<UUID> leftOut(DocumentTemplate document, List<PropertyDocumentCustomization> changes) {
+        Set<UUID> out = new HashSet<>();
+        for (PropertyDocumentCustomization existing : changes) {
             if (existing.excludedClause() != null) {
-                alreadyDropped.add(existing.excludedClause());
+                out.add(existing.excludedClause());
             }
             if (existing.excludedSection() != null
                     && document.sections().stream().anyMatch(s -> s.uuid().equals(existing.excludedSection()))) {
-                alreadyDropped.addAll(ClauseLinks.clausesOf(document, existing.excludedSection()));
+                out.addAll(ClauseLinks.clausesOf(document, existing.excludedSection()));
             }
         }
-        ClauseLinks.exclusionBlocker(document, dropping, alreadyDropped, kind).ifPresent(problem -> {
-            throw RuleConflict.of(problem.code(), problem.args().toArray());
-        });
+        return out;
     }
 
     private void recordInsert(PropertyDocumentCustomizationRow saved) {
@@ -532,6 +573,7 @@ public class PropertyDocumentAssignmentService {
         if (before.deletedAt() == null) {
             return Optional.of(hydrate(before));
         }
+        documentTemplateService.lockForEdit(before.documentTemplate());
         DocumentTemplate template = documentTemplateService.findById(before.documentTemplate())
                 .orElseThrow(() -> RuleConflict.of("assignment.document_deleted"));
         assignmentRepository
@@ -579,17 +621,19 @@ public class PropertyDocumentAssignmentService {
                     throw RuleConflict.of("section.is_required", section.name());
                 }
                 refuseDuplicateExclusion(before.assignment(), section.uuid());
-                refuseIfNeeded(document, before.assignment(), ClauseLinks.clausesOf(document, section.uuid()), "section");
+                refuseIfNeeded(document, before.assignment(), ClauseLinks.clausesOf(document, section.uuid()), "section",
+                        section.uuid());
             } else if (change.excludedClause() != null) {
                 TemplateClause clause = clauseIn(document, change.excludedClause());
                 if (clause.required()) {
                     throw RuleConflict.of("clause.is_required");
                 }
                 refuseDuplicateExclusion(before.assignment(), clause.uuid());
-                refuseIfNeeded(document, before.assignment(), Set.of(clause.uuid()), "clause");
+                refuseIfNeeded(document, before.assignment(), Set.of(clause.uuid()), "clause", null);
             } else {
                 sectionIn(document, change.section());
-                List<DomainProblem.Problem> problems = ClauseLinks.problemsWithParkClause(document, change);
+                List<DomainProblem.Problem> problems = ClauseLinks.problemsWithParkClause(
+                        document, change, leftOut(document, customizationsOf(before.assignment())));
                 if (!problems.isEmpty()) {
                     throw InvalidRequest.withDetails("customization.not_saved", problems);
                 }

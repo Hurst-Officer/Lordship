@@ -172,6 +172,19 @@ public final class ClauseLinks {
      */
     public static Optional<Problem> exclusionBlocker(DocumentTemplate doc, Set<UUID> dropping,
                                                      Set<UUID> alreadyDropped, String kind) {
+        return exclusionBlocker(doc, dropping, alreadyDropped, kind, List.of());
+    }
+
+    /**
+     * The same, counting the park's own clauses too: a clause the park wrote may cite a template clause, and
+     * leaving that template clause out would print the park's clause with a broken reference.
+     *
+     * @param parkClauses the clauses this park added that still print (not the ones in a section the park
+     *                    leaves out)
+     */
+    public static Optional<Problem> exclusionBlocker(DocumentTemplate doc, Set<UUID> dropping,
+                                                     Set<UUID> alreadyDropped, String kind,
+                                                     List<PropertyDocumentCustomization> parkClauses) {
         Set<UUID> gone = new HashSet<>(alreadyDropped);
         gone.addAll(withDescendants(doc, dropping));
 
@@ -187,6 +200,17 @@ public final class ClauseLinks {
                     if (!survives(doc, cited, gone)) {
                         return Optional.of(Problem.of("customization." + kind + "_is_cited", name(other)));
                     }
+                }
+            }
+        }
+        for (PropertyDocumentCustomization park : parkClauses) {
+            if (park.parent() != null && gone.contains(park.parent())) {
+                continue; // the park's clause goes with the clause above the park's clause
+            }
+            for (UUID cited : TokenSyntax.refsIn(park.body())) {
+                // only a citation this exclusion breaks: one already broken is not this exclusion's doing
+                if (survives(doc, cited, alreadyDropped) && !survives(doc, cited, gone)) {
+                    return Optional.of(Problem.of("customization." + kind + "_is_cited", name(park)));
                 }
             }
         }
@@ -208,6 +232,16 @@ public final class ClauseLinks {
      * document, and it may not land between a pair.
      */
     public static List<Problem> problemsWithParkClause(DocumentTemplate doc, PropertyDocumentCustomization added) {
+        return problemsWithParkClause(doc, added, Set.of());
+    }
+
+    /**
+     * The same, with the template clauses this park leaves out (directly, or with a whole section): the park's
+     * clause may not cite one of those, because the citation would stand unfilled on the park's paper and the
+     * lease would be refused.
+     */
+    public static List<Problem> problemsWithParkClause(DocumentTemplate doc, PropertyDocumentCustomization added,
+                                                       Set<UUID> leftOut) {
         List<Problem> problems = new ArrayList<>();
         DocumentSection section = sectionById(doc, added.section()).orElse(null);
         if (section == null) {
@@ -220,9 +254,13 @@ public final class ClauseLinks {
             problems.add(Problem.onField("parent", "clause.too_deep", MAX_DEPTH));
         }
 
+        Set<UUID> gone = withDescendants(doc, leftOut);
         for (UUID cited : TokenSyntax.refsIn(added.body())) {
             if (!isLive(doc, cited)) {
                 problems.add(Problem.onField("body", "clause.ref_not_in_document", cited));
+            } else if (!survives(doc, cited, gone)) {
+                problems.add(Problem.onField("body", "customization.cites_left_out",
+                        doc.clause(cited).map(ClauseLinks::name).orElse("")));
             }
         }
 
@@ -457,6 +495,15 @@ public final class ClauseLinks {
         return doc.sections().stream()
                 .filter(section -> section.uuid().equals(sectionUuid))
                 .findFirst();
+    }
+
+    /** A park's own clause: its title if the clause has one, then the start of its body. */
+    static String name(PropertyDocumentCustomization clause) {
+        if (clause.title() != null && !clause.title().isBlank()) {
+            return clause.title();
+        }
+        String text = clause.body() == null ? "" : clause.body().strip();
+        return text.length() <= 40 ? text : text.substring(0, 40) + "...";
     }
 
     /** A title if the clause has one, then its key, then the start of its body. */

@@ -56,6 +56,16 @@ public class DocumentTemplateRepository {
                 .optional();
     }
 
+    // Holds the document's row until the transaction ends, so two edits of one document run one after the
+    // other, and the second edit is checked against the document the first edit left behind.
+    // An unknown id locks nothing.
+    public void lockForEdit(UUID uuid) {
+        jdbc.sql("SELECT 1 FROM document_template WHERE uuid = :uuid FOR UPDATE")
+                .param("uuid", uuid)
+                .query(Integer.class)
+                .optional();
+    }
+
     /**
      * Both filters optional: the admin's document pool, narrowed or not.
      *

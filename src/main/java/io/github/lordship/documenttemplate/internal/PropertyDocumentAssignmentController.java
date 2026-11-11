@@ -65,8 +65,11 @@ public class PropertyDocumentAssignmentController {
     @PreAuthorize("hasAuthority('property_document:view')")
     @GetMapping
     public ResponseEntity<List<PropertyDocumentAssignmentResponse>> listByProperty(
-            @RequestParam("propertyId") UUID propertyId) {
+            @RequestParam("propertyId") UUID propertyId, Authentication authentication) {
 
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
+            return ResponseEntity.notFound().build();
+        }
         return ResponseEntity.ok(
                 assignmentService.findByProperty(propertyId).stream()
                         .map(PropertyDocumentAssignmentResponse::from)
@@ -83,8 +86,12 @@ public class PropertyDocumentAssignmentController {
     public ResponseEntity<PropertyDocumentAssignmentResponse> resolve(
             @RequestParam("propertyId") UUID propertyId,
             @RequestParam("agreementType") AgreementType agreementType,
-            @RequestParam("instrumentType") InstrumentType instrumentType) {
+            @RequestParam("instrumentType") InstrumentType instrumentType,
+            Authentication authentication) {
 
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
+            return ResponseEntity.notFound().build();
+        }
         return assignmentService.findForProperty(propertyId, agreementType, instrumentType)
                 .map(PropertyDocumentAssignmentResponse::from)
                 .map(ResponseEntity::ok)
@@ -103,13 +110,21 @@ public class PropertyDocumentAssignmentController {
      */
     @PreAuthorize("hasAuthority('property_document:view')")
     @GetMapping("/audit")
-    public ResponseEntity<DocumentAuditResponse> audit(@RequestParam("propertyId") UUID propertyId) {
+    public ResponseEntity<DocumentAuditResponse> audit(@RequestParam("propertyId") UUID propertyId,
+                                                       Authentication authentication) {
+        if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
+            return ResponseEntity.notFound().build();
+        }
         return ResponseEntity.ok(DocumentAuditResponse.from(documentAuditService.auditProperty(propertyId)));
     }
 
     @PreAuthorize("hasAuthority('property_document:view')")
     @GetMapping("/{uuid}")
-    public ResponseEntity<PropertyDocumentAssignmentResponse> getAssignment(@PathVariable UUID uuid) {
+    public ResponseEntity<PropertyDocumentAssignmentResponse> getAssignment(@PathVariable UUID uuid,
+                                                                            Authentication authentication) {
+        if (!inScope(assignmentService.propertyOfAssignment(uuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
         return assignmentService.findById(uuid)
                 .map(PropertyDocumentAssignmentResponse::from)
                 .map(ResponseEntity::ok)
@@ -122,8 +137,11 @@ public class PropertyDocumentAssignmentController {
     @PreAuthorize("hasAuthority('property_document:assign')")
     @PostMapping
     public ResponseEntity<PropertyDocumentAssignmentResponse> assign(
-            @Valid @RequestBody AssignDocumentRequest request) {
+            @Valid @RequestBody AssignDocumentRequest request, Authentication authentication) {
 
+        if (!AgentPrincipal.scopeOf(authentication).allows(request.propertyId())) {
+            return ResponseEntity.notFound().build();
+        }
         return assignmentService.assign(request.propertyId(), request.documentTemplateId())
                 .map(PropertyDocumentAssignmentResponse::from)
                 .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
@@ -134,8 +152,11 @@ public class PropertyDocumentAssignmentController {
     @PatchMapping("/{uuid}")
     public ResponseEntity<PropertyDocumentAssignmentResponse> patchAssignment(
             @PathVariable UUID uuid,
-            @RequestBody Map<String, Object> request) {
+            @RequestBody Map<String, Object> request, Authentication authentication) {
 
+        if (!inScope(assignmentService.propertyOfAssignment(uuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
         Map<String, Object> changes = new HashMap<>();
         PATCHABLE_COLUMNS.forEach((jsonField, column) -> {
             if (request.containsKey(jsonField)) {
@@ -153,7 +174,10 @@ public class PropertyDocumentAssignmentController {
     // generated keeps its own wording and is untouched.
     @PreAuthorize("hasAuthority('property_document:unassign')")
     @DeleteMapping("/{uuid}")
-    public ResponseEntity<Void> unassign(@PathVariable UUID uuid) {
+    public ResponseEntity<Void> unassign(@PathVariable UUID uuid, Authentication authentication) {
+        if (!inScope(assignmentService.propertyOfAssignment(uuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
         return assignmentService.unassign(uuid)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();
@@ -185,8 +209,11 @@ public class PropertyDocumentAssignmentController {
     @PostMapping("/{uuid}/exclusions/sections")
     public ResponseEntity<PropertyDocumentAssignmentResponse> excludeSection(
             @PathVariable UUID uuid,
-            @Valid @RequestBody ExcludeSectionRequest request) {
+            @Valid @RequestBody ExcludeSectionRequest request, Authentication authentication) {
 
+        if (!inScope(assignmentService.propertyOfAssignment(uuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
         return assignmentService.excludeSection(uuid, request.sectionId())
                 .map(PropertyDocumentAssignmentResponse::from)
                 .map(ResponseEntity::ok)
@@ -198,8 +225,11 @@ public class PropertyDocumentAssignmentController {
     @PostMapping("/{uuid}/exclusions/clauses")
     public ResponseEntity<PropertyDocumentAssignmentResponse> excludeClause(
             @PathVariable UUID uuid,
-            @Valid @RequestBody ExcludeClauseRequest request) {
+            @Valid @RequestBody ExcludeClauseRequest request, Authentication authentication) {
 
+        if (!inScope(assignmentService.propertyOfAssignment(uuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
         return assignmentService.excludeClause(uuid, request.clauseId())
                 .map(PropertyDocumentAssignmentResponse::from)
                 .map(ResponseEntity::ok)
@@ -212,8 +242,11 @@ public class PropertyDocumentAssignmentController {
     @PostMapping("/{uuid}/clauses")
     public ResponseEntity<PropertyDocumentAssignmentResponse> addClause(
             @PathVariable UUID uuid,
-            @Valid @RequestBody AddClauseRequest request) {
+            @Valid @RequestBody AddClauseRequest request, Authentication authentication) {
 
+        if (!inScope(assignmentService.propertyOfAssignment(uuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
         return assignmentService.addClause(uuid, request.sectionId())
                 .map(PropertyDocumentAssignmentResponse::from)
                 .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
@@ -233,8 +266,11 @@ public class PropertyDocumentAssignmentController {
     @PatchMapping("/customizations/{customizationUuid}")
     public ResponseEntity<PropertyDocumentAssignmentResponse> patchCustomization(
             @PathVariable UUID customizationUuid,
-            @RequestBody Map<String, Object> request) {
+            @RequestBody Map<String, Object> request, Authentication authentication) {
 
+        if (!inScope(assignmentService.propertyOfCustomization(customizationUuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
         Map<String, Object> changes = new HashMap<>();
         CUSTOMIZATION_COLUMNS.forEach((jsonField, column) -> {
             if (request.containsKey(jsonField)) {
@@ -254,7 +290,11 @@ public class PropertyDocumentAssignmentController {
     /** Undoes one change, putting the document back the way the template wrote it. */
     @PreAuthorize("hasAuthority('property_document:assign')")
     @DeleteMapping("/customizations/{customizationUuid}")
-    public ResponseEntity<Void> removeCustomization(@PathVariable UUID customizationUuid) {
+    public ResponseEntity<Void> removeCustomization(@PathVariable UUID customizationUuid,
+                                                    Authentication authentication) {
+        if (!inScope(assignmentService.propertyOfCustomization(customizationUuid), authentication)) {
+            return ResponseEntity.notFound().build();
+        }
         return assignmentService.removeCustomization(customizationUuid)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();
@@ -300,7 +340,7 @@ public class PropertyDocumentAssignmentController {
     }
 
     // A park outside the agent's properties is a 404, like an unknown row (an unknown row passes here and is
-    // answered 404 by the restore)
+    // answered 404 by the call that follows)
     private static boolean inScope(Optional<UUID> property, Authentication authentication) {
         return property.isEmpty() || AgentPrincipal.scopeOf(authentication).allows(property.get());
     }

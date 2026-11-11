@@ -269,6 +269,57 @@ public class ClauseLinksTest {
                 ClauseLinks.exclusionBlocker(doc, ClauseLinks.clausesOf(doc, pets.uuid()), Set.of(), "section"));
     }
 
+    // The park's own clauses count too: a clause the park wrote may cite a template clause.
+
+    @Test
+    void exclusionBlocker_shouldRefuse_whenTheParksOwnClauseCitesIt() {
+        // Arrange -- no template clause cites Septic; only the park's clause does
+        Clause septic = clause("20", "Septic");
+        DocumentSection lease = section("Lease", clause("10", "Rent"), septic);
+        DocumentTemplate doc = doc(lease);
+        PropertyDocumentCustomization parks = parkClause(lease, "30", null, "Pumping, see {{ref:" + septic.uuid() + "}}.");
+
+        // Act
+        Optional<Problem> blocker = ClauseLinks.exclusionBlocker(
+                doc, Set.of(septic.uuid()), Set.of(), "clause", List.of(parks));
+
+        // Assert -- and without the park's clause, nothing stands in the way
+        assertEquals(Optional.of("customization.clause_is_cited"), blocker.map(Problem::code));
+        assertEquals(Optional.empty(),
+                ClauseLinks.exclusionBlocker(doc, Set.of(septic.uuid()), Set.of(), "clause", List.of()));
+    }
+
+    @Test
+    void exclusionBlocker_shouldNotBlame_aCitationThatWasAlreadyBroken() {
+        // Arrange -- the park already leaves Septic out, so the park clause's citation is broken before this exclusion
+        Clause septic = clause("20", "Septic");
+        Clause pets = clause("30", "Pets");
+        DocumentSection lease = section("Lease", clause("10", "Rent"), septic, pets);
+        DocumentTemplate doc = doc(lease);
+        PropertyDocumentCustomization parks = parkClause(lease, "40", null, "Pumping, see {{ref:" + septic.uuid() + "}}.");
+
+        // Act / Assert -- leaving Pets out breaks nothing new
+        assertEquals(Optional.empty(), ClauseLinks.exclusionBlocker(
+                doc, Set.of(pets.uuid()), Set.of(septic.uuid()), "clause", List.of(parks)));
+    }
+
+    @Test
+    void exclusionBlocker_shouldSkipAParkClause_thatGoesWithTheClauseAboveIt() {
+        // Arrange -- the park's clause sits under Water and cites Faucets, which also sits under Water
+        Clause water = clause("20", "Water");
+        Clause faucets = clause("21", "Faucets").parent(water);
+        DocumentSection lease = section("Lease", clause("10", "Rent"), water, faucets);
+        DocumentTemplate doc = doc(lease);
+        String body = "Drip them, see {{ref:" + faucets.uuid() + "}}.";
+
+        // Act / Assert -- under Water, the park's clause leaves with Water; at the top level, the park's clause stays
+        assertEquals(Optional.empty(), ClauseLinks.exclusionBlocker(
+                doc, Set.of(water.uuid()), Set.of(), "clause", List.of(parkClause(lease, "22", water.uuid(), body))));
+        assertEquals(Optional.of("customization.clause_is_cited"), ClauseLinks.exclusionBlocker(
+                doc, Set.of(water.uuid()), Set.of(), "clause", List.of(parkClause(lease, "30", null, body)))
+                .map(Problem::code));
+    }
+
     // ---- a park's own clause -------------------------------------------------
 
     @Test
@@ -308,6 +359,35 @@ public class ClauseLinksTest {
         // Act / Assert
         assertEquals(List.of("customization.parent_not_in_section"),
                 codes(ClauseLinks.problemsWithParkClause(doc, parkClause(rules, "20", water.uuid(), "No hoses."))));
+    }
+
+    @Test
+    void problemsWithParkClause_shouldRefuseCitingAClauseTheParkLeavesOut() {
+        // Arrange
+        Clause septic = clause("20", "Septic");
+        DocumentSection lease = section("Lease", clause("10", "Rent"), septic);
+        DocumentTemplate doc = doc(lease);
+        PropertyDocumentCustomization parks = parkClause(lease, "30", null, "Pumping, see {{ref:" + septic.uuid() + "}}.");
+
+        // Act
+        List<Problem> problems = ClauseLinks.problemsWithParkClause(doc, parks, Set.of(septic.uuid()));
+
+        // Assert -- names the clause left out; a park that leaves nothing out may cite Septic
+        assertEquals(List.of(Problem.onField("body", "customization.cites_left_out", "Septic")), problems);
+        assertEquals(List.of(), ClauseLinks.problemsWithParkClause(doc, parks, Set.of()));
+    }
+
+    @Test
+    void problemsWithParkClause_shouldAcceptCitingALeftOutClause_whenAVariantStillPrints() {
+        // Arrange -- the park leaves the bank wording out; the flat wording prints instead, with the same number
+        Clause bank = clause("20", "NSF bank");
+        Clause flat = clause("21", "NSF flat").variantOf(bank);
+        DocumentSection lease = section("Lease", clause("10", "Rent"), bank, flat);
+        DocumentTemplate doc = doc(lease);
+        PropertyDocumentCustomization parks = parkClause(lease, "30", null, "Returned checks, see {{ref:" + bank.uuid() + "}}.");
+
+        // Act / Assert
+        assertEquals(List.of(), ClauseLinks.problemsWithParkClause(doc, parks, Set.of(bank.uuid())));
     }
 
     // ---- sections and styles -------------------------------------------------

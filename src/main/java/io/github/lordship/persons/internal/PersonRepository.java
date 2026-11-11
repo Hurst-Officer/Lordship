@@ -42,6 +42,15 @@ public class PersonRepository {
                 .update() > 0;
     }
 
+    // True when a live agent signs in as this person. agent is the access module's table, read here by name:
+    // access already depends on persons, so persons cannot call access.
+    public boolean isLiveAgent(UUID personId) {
+        return jdbc.sql("SELECT EXISTS (SELECT 1 FROM agent WHERE person_id = :personId AND deleted_at IS NULL)")
+                .param("personId", personId)
+                .query(Boolean.class)
+                .single();
+    }
+
     public Optional<PersonRow> findById(UUID uuid){
         return jdbc.sql("SELECT * FROM person WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)

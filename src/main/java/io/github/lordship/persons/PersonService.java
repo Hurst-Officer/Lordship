@@ -6,6 +6,7 @@ import io.github.lordship.persons.internal.PersonRepository;
 import io.github.lordship.persons.internal.PersonRow;
 import io.github.lordship.shared.EncryptionService;
 import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RuleConflict;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -183,6 +184,12 @@ public class PersonService {
     @Transactional
     public boolean deletePerson(UUID uuid) {
         return personRepository.findById(uuid).map(person -> {
+            // Sign-in and session refresh read the agent's person, so deleting the person of a live agent would lock
+            // the agent out while the last-admin and last-key guards still counted the agent. The agent is removed
+            // first (DELETE /api/agents/{id}), which runs those guards.
+            if (personRepository.isLiveAgent(uuid)) {
+                throw RuleConflict.of("person.is_agent");
+            }
             if (!personRepository.softDelete(uuid)) {
                 return false;
             }
