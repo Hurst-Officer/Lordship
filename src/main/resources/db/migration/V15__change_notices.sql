@@ -16,6 +16,7 @@ CREATE FUNCTION lordship_notify_change() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
     r   jsonb;
     ids jsonb;
+    was jsonb;
 BEGIN
     IF TG_OP = 'DELETE' THEN
         r := to_jsonb(OLD);
@@ -28,6 +29,18 @@ BEGIN
                       'template', 'section', 'property', 'document_template', 'assignment']) AS k
     WHERE jsonb_typeof(r -> k) = 'string';
     PERFORM pg_notify('lordship_change', jsonb_build_object('t', TG_TABLE_NAME, 'r', COALESCE(ids, '{}'::jsonb))::text);
+    -- An UPDATE that moves the row to another parent (a home to another lot, or off its lot) sends a second
+    -- notice with the ids the row had before, so the place the row left loads again too.
+    IF TG_OP = 'UPDATE' THEN
+        r := to_jsonb(OLD);
+        SELECT jsonb_object_agg(k, r -> k) INTO was
+        FROM unnest(ARRAY['uuid', 'property_id', 'lot_id', 'agent_id', 'role_id', 'person_id', 'mobile_home_id',
+                          'template', 'section', 'property', 'document_template', 'assignment']) AS k
+        WHERE jsonb_typeof(r -> k) = 'string';
+        IF was IS DISTINCT FROM ids THEN
+            PERFORM pg_notify('lordship_change', jsonb_build_object('t', TG_TABLE_NAME, 'r', COALESCE(was, '{}'::jsonb))::text);
+        END IF;
+    END IF;
     RETURN NULL;
 END
 $$;

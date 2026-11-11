@@ -511,7 +511,8 @@ public final class DocumentFreeze {
         }
         candidates.addAll(extraBySection.getOrDefault(section.uuid(), List.of()));
 
-        candidates.sort(Comparator.comparing(Candidate::ordinal));
+        // A park clause saved without an ordinal (possible before patchCustomization refused null) prints last
+        candidates.sort(Comparator.comparing(Candidate::ordinal, Comparator.nullsLast(Comparator.naturalOrder())));
         return candidates;
     }
 

@@ -65,7 +65,8 @@ public final class Patches {
         if (value == null) return null;
         BigDecimal plain = value.stripTrailingZeros();
         if (plain.scale() > scale) throw InvalidRequest.onField(field, "value.too_many_decimals", scale);
-        int wholeDigits = plain.precision() - plain.scale();
+        // long: a scale near Integer.MIN_VALUE (1E+2147483647) would wrap an int and slip past the check below
+        long wholeDigits = (long) plain.precision() - plain.scale();
         if (wholeDigits > precision - scale) throw InvalidRequest.onField(field, "value.too_large");
         return value;
     }

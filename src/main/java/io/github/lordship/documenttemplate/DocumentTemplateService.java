@@ -223,6 +223,7 @@ public class DocumentTemplateService {
 
     @Transactional
     public boolean deleteTemplate(UUID uuid) {
+        documentTemplateRepository.lockForEdit(uuid);
         return documentTemplateRepository.findById(uuid).map(existing -> {
             if (documentTemplateRepository.isAssignedToAnyProperty(uuid)) {
                 throw RuleConflict.of("template.still_assigned", existing.name());
@@ -261,6 +262,7 @@ public class DocumentTemplateService {
         if (templateOpt.isEmpty()) {
             return Optional.empty();
         }
+        documentTemplateRepository.lockForEdit(templateId);
 
         DocumentSectionRow saved = documentSectionRepository.save(
                 templateId, name, ActingAgent.resolve(auditContext));
@@ -271,7 +273,7 @@ public class DocumentTemplateService {
 
     @Transactional
     public Optional<DocumentTemplate> patchSection(UUID sectionUuid, Map<String, Object> changes) {
-        Optional<DocumentSectionRow> beforeOpt = documentSectionRepository.findById(sectionUuid);
+        Optional<DocumentSectionRow> beforeOpt = sectionForEdit(sectionUuid);
         if (beforeOpt.isEmpty()) {
             return Optional.empty();
         }
@@ -300,7 +302,7 @@ public class DocumentTemplateService {
     // this is not the screen for it.
     @Transactional
     public boolean deleteSection(UUID sectionUuid) {
-        return documentSectionRepository.findById(sectionUuid).map(existing -> {
+        return sectionForEdit(sectionUuid).map(existing -> {
             if (existing.required()) {
                 throw existing.statuteRef() == null
                         ? RuleConflict.of("section.is_required", existing.name())
@@ -339,7 +341,7 @@ public class DocumentTemplateService {
     // an empty clause to type into rather than a form to fill in first.
     @Transactional
     public Optional<DocumentTemplate> createClause(UUID sectionId) {
-        Optional<DocumentSectionRow> sectionOpt = documentSectionRepository.findById(sectionId);
+        Optional<DocumentSectionRow> sectionOpt = sectionForEdit(sectionId);
         if (sectionOpt.isEmpty()) {
             return Optional.empty();
         }
@@ -353,7 +355,7 @@ public class DocumentTemplateService {
 
     @Transactional
     public Optional<DocumentTemplate> patchClause(UUID clauseUuid, Map<String, Object> changes) {
-        Optional<TemplateClauseRow> beforeOpt = templateClauseRepository.findById(clauseUuid);
+        Optional<TemplateClauseRow> beforeOpt = clauseForEdit(clauseUuid);
         if (beforeOpt.isEmpty()) {
             return Optional.empty();
         }
@@ -393,7 +395,7 @@ public class DocumentTemplateService {
 
     @Transactional
     public boolean deleteClause(UUID clauseUuid) {
-        return templateClauseRepository.findById(clauseUuid).map(existing -> {
+        return clauseForEdit(clauseUuid).map(existing -> {
             if (existing.required()) {
                 throw existing.statuteRef() == null
                         ? RuleConflict.of("clause.is_required")
@@ -426,6 +428,7 @@ public class DocumentTemplateService {
         if (documentTemplateRepository.findById(templateId).isEmpty()) {
             return Optional.empty();
         }
+        documentTemplateRepository.lockForEdit(templateId);
         DocumentStyleRow saved = documentStyleRepository.save(templateId, name, ActingAgent.resolve(auditContext));
         auditService.recordInsert("document_style", saved.uuid(), AuditMapper.toMap(saved));
         return Optional.of(reload(templateId, false));
@@ -442,6 +445,7 @@ public class DocumentTemplateService {
             return Optional.empty();
         }
         DocumentStyleRow before = beforeOpt.get();
+        documentTemplateRepository.lockForEdit(before.template());
 
         changes = withName(changes, "style.name_blank");
         if (changes.containsKey("target") && changes.get("target") != null) {
@@ -480,6 +484,7 @@ public class DocumentTemplateService {
     @Transactional
     public boolean deleteStyle(UUID styleUuid) {
         return documentStyleRepository.findById(styleUuid).map(existing -> {
+            documentTemplateRepository.lockForEdit(existing.template());
             if (documentStyleRepository.isInUse(styleUuid)) {
                 throw RuleConflict.of("style.in_use", existing.name());
             }
@@ -489,6 +494,42 @@ public class DocumentTemplateService {
             auditService.recordDelete("document_style", styleUuid, AuditMapper.toMap(existing));
             return true;
         }).orElse(false);
+    }
+
+    // ---- one edit at a time per document -------------------------------------
+    // Every edit checks the document's links (parents, variants, kept-together pairs, citations, styles) against
+    // the document as the edit leaves the document. Two edits of one document at the same moment would each be
+    // checked against a document the other edit had not reached yet, and both could save links the checks
+    // refuse (two clauses each the other's parent, a citation of a clause deleted in the same instant).
+    // So each edit first takes the document's row lock, and reads the row the edit changes after that.
+
+    /**
+     * Holds the document's row until the caller's transaction ends. For an edit made elsewhere that depends on
+     * the document's sections and clauses staying as they are (a park's changes to the document).
+     */
+    public void lockForEdit(UUID templateId) {
+        documentTemplateRepository.lockForEdit(templateId);
+    }
+
+    // A live section, read after its document's row is locked
+    private Optional<DocumentSectionRow> sectionForEdit(UUID sectionUuid) {
+        Optional<DocumentSectionRow> found = documentSectionRepository.findById(sectionUuid);
+        if (found.isEmpty()) {
+            return found;
+        }
+        documentTemplateRepository.lockForEdit(found.get().template());
+        return documentSectionRepository.findById(sectionUuid);
+    }
+
+    // A live clause, read after its document's row is locked
+    private Optional<TemplateClauseRow> clauseForEdit(UUID clauseUuid) {
+        Optional<TemplateClauseRow> found = templateClauseRepository.findById(clauseUuid);
+        if (found.isEmpty()) {
+            return found;
+        }
+        documentSectionRepository.findById(found.get().section())
+                .ifPresent(section -> documentTemplateRepository.lockForEdit(section.template()));
+        return templateClauseRepository.findById(clauseUuid);
     }
 
     // ---- validation ----------------------------------------------------------
@@ -668,6 +709,7 @@ public class DocumentTemplateService {
             return Optional.empty();
         }
         DocumentSectionRow before = found.get();
+        documentTemplateRepository.lockForEdit(before.template());
         if (documentTemplateRepository.findById(before.template()).isEmpty()) {
             throw RuleConflict.of("section.document_deleted", before.name());
         }
@@ -717,6 +759,7 @@ public class DocumentTemplateService {
             throw RuleConflict.of("clause.section_deleted");
         }
         UUID templateId = section.get().template();
+        documentTemplateRepository.lockForEdit(templateId);
         if (documentTemplateRepository.findById(templateId).isEmpty()) {
             throw RuleConflict.of("clause.section_deleted");
         }
@@ -758,6 +801,7 @@ public class DocumentTemplateService {
             return Optional.empty();
         }
         DocumentStyleRow before = found.get();
+        documentTemplateRepository.lockForEdit(before.template());
         if (documentTemplateRepository.findById(before.template()).isEmpty()) {
             throw RuleConflict.of("style.document_deleted", before.name());
         }
@@ -794,7 +838,7 @@ public class DocumentTemplateService {
      */
     @Transactional
     public Optional<DocumentTemplate> moveSection(UUID sectionUuid, UUID afterId) {
-        Optional<DocumentSectionRow> found = documentSectionRepository.findById(sectionUuid);
+        Optional<DocumentSectionRow> found = sectionForEdit(sectionUuid);
         if (found.isEmpty()) {
             return Optional.empty();
         }
@@ -852,7 +896,7 @@ public class DocumentTemplateService {
      */
     @Transactional
     public Optional<DocumentTemplate> moveClause(UUID clauseUuid, UUID parentId, UUID afterId) {
-        Optional<TemplateClauseRow> found = templateClauseRepository.findById(clauseUuid);
+        Optional<TemplateClauseRow> found = clauseForEdit(clauseUuid);
         if (found.isEmpty()) {
             return Optional.empty();
         }

@@ -159,7 +159,7 @@ public class TokenResolverTest {
 
     @Test
     void render_shouldPrintTheChartInsideTheTieredClause() {
-        // Arrange -- the table part of the LATE_CHARGES_TIERED clause in V15
+        // Arrange -- the table part of the LATE_CHARGES_TIERED clause
         String body = "| Payment received | Late fee |\n"
                 + "{{#each term.late_fee_tiers}}| {{late_fee_tier.period}} | {{late_fee_tier.amount}} |\n{{/each}}";
         TokenValues values = TokenResolver.resolve(facts(List.of(tieredTerm(List.of(

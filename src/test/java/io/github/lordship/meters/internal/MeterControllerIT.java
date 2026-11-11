@@ -204,4 +204,71 @@ public class MeterControllerIT extends IntegrationTest {
                                 """.formatted(sub)))
                 .andExpect(status().isForbidden());
     }
+
+    @Test
+    void theGrid_showsEachMetersReadsBetweenTwoDays_countedFromTheReadBefore() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("MT8").uuid();
+        UUID sub = waterSubmeter(token, propertyId);
+        UUID main = testData.insertMain(propertyId).uuid();
+        create(token, "/api/meter-reads", """
+                { "submeterId": "%s", "readOn": "2026-08-15", "reading": 1000 }
+                """.formatted(sub));
+        create(token, "/api/meter-reads", """
+                { "submeterId": "%s", "readOn": "2026-09-15", "reading": 1200 }
+                """.formatted(sub));
+        create(token, "/api/meter-reads", """
+                { "submeterId": "%s", "readOn": "2026-10-15", "reading": 1350 }
+                """.formatted(sub));
+        create(token, "/api/meter-reads", """
+                { "mainId": "%s", "readOn": "2026-09-10", "reading": 4410 }
+                """.formatted(main));
+
+        // September only: the submeter's September read counts from the August read (200 on the dial, in tens of gallons),
+        // the October read is left out, and the main's only read has no earlier read.
+        // The submeter comes first because the submeter has the earliest read.
+        mockMvc.perform(get("/api/meter-reads/grid")
+                        .param("propertyId", propertyId.toString())
+                        .param("from", "2026-09-01")
+                        .param("to", "2026-09-30")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].submeterId").value(sub.toString()))
+                .andExpect(jsonPath("$[0].reads.length()").value(1))
+                .andExpect(jsonPath("$[0].reads[0].read.readOn").value("2026-09-15"))
+                .andExpect(jsonPath("$[0].reads[0].previousReading").value(1000))
+                .andExpect(jsonPath("$[0].reads[0].baseUsage").value("2000.000000"))
+                .andExpect(jsonPath("$[1].mainId").value(main.toString()))
+                .andExpect(jsonPath("$[1].reads[0].flags[0]").value("NO_PREVIOUS"));
+    }
+
+    @Test
+    void aReadLeftAboveACorrectedDial_stillTakesANote_andANewNumberIsHeldToTheDial() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("MT9").uuid();
+        UUID sub = waterSubmeter(token, propertyId);
+        UUID read = create(token, "/api/meter-reads", """
+                { "submeterId": "%s", "readOn": "2026-09-15", "reading": 50000 }
+                """.formatted(sub));
+        // the dial turns out to stop at 9,999 from 1 September on, which leaves the saved read above the dial
+        create(token, "/api/meters/settings", """
+                { "submeterId": "%s", "effectiveFrom": "2026-09-01", "dialMax": 9999 }
+                """.formatted(sub));
+
+        mockMvc.perform(patch("/api/meter-reads/" + read)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"notes\": \"checked on site\" }"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.read.notes").value("checked on site"))
+                .andExpect(jsonPath("$.flags[0]").value("ABOVE_DIAL"));
+
+        mockMvc.perform(patch("/api/meter-reads/" + read)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"reading\": 50001 }"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("meter_read.above_dial"));
+    }
 }

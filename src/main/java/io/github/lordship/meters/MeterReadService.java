@@ -240,7 +240,9 @@ public class MeterReadService {
             refuseInsideBill(before.mainId(), before.readOn());
             refuseInsideBill(before.mainId(), readOn);
         }
-        requireReadable(before.mainId(), before.submeterId(), readOn, reading);
+        // A read whose day, number and kind stay the same (a note or the estimated mark changed) is not measured
+        // against the dial again: the dial may have been corrected since the read was saved
+        if (countChanges) requireReadable(before.mainId(), before.submeterId(), readOn, reading);
         if (!readOn.equals(before.readOn())) {
             reads.onDay(before.mainId(), before.submeterId(), readOn)
                     .filter(other -> !other.uuid().equals(uuid))

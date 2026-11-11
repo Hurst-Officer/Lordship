@@ -15,7 +15,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Hears every change to a table Glade shows (V16: pg_notify on lordship_change, sent when a transaction commits),
+ * Hears every change to a table Glade shows (V15: pg_notify on lordship_change, sent when a transaction commits),
  * whoever made it, and passes it on to the open Glade windows (ChangeRelay). So a screen follows changes made by a
  * coworker, by the server itself (a sign-in, a billing run), or outside Glade (psql, an import), not only saves
  * another Glade window announced.

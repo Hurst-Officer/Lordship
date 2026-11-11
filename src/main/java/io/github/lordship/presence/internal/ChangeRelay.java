@@ -42,7 +42,7 @@ class ChangeRelay {
         this.hub = hub;
     }
 
-    // One batch of notices, as Postgres sent them (V16 lordship_notify_change)
+    // One batch of notices, as Postgres sent them (V15 lordship_notify_change)
     void relay(List<String> payloads) {
         List<Notice> notices = new ArrayList<>();
         for (String payload : payloads) {

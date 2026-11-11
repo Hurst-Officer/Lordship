@@ -177,6 +177,13 @@ public class UtilityBillService {
                     null, start, end, (BigDecimal) changes.getOrDefault("printed_total", before.printedTotal()),
                     null, null, null, null, null);
             refuseLookAlikes(as);
+            // addMeter checked each main against the old dates: the new dates get the same check
+            for (UtilityBillMeter m : bills.metersOf(uuid)) {
+                if (!bills.billsNamingMain(m.mainId(), uuid, start, end).isEmpty()) {
+                    String title = meterService.findAnyMain(m.mainId()).map(MeterMain::title).orElse("");
+                    throw RuleConflict.of("utility_bill.main_already_billed", title);
+                }
+            }
         }
         if (changes.containsKey("rate_group_id") && !Objects.equals(changes.get("rate_group_id"), before.rateGroupId())) {
             // The mains on the bill were checked against the old group; they must be in the new one now

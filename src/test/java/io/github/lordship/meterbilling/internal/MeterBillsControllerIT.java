@@ -14,6 +14,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.UUID;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -53,6 +54,44 @@ public class MeterBillsControllerIT extends IntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return UUID.fromString(JsonPath.read(body, "$.bill.uuid"));
+    }
+
+    private ResultActions change(String token, String url, String json) throws Exception {
+        return mockMvc.perform(patch(url)
+                .header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(json));
+    }
+
+    // The id found at a JSON path of a 201 answer
+    private String made(ResultActions answer, String idPath) throws Exception {
+        return JsonPath.read(answer.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString(), idPath);
+    }
+
+    // One record through PATCH, DELETE and restore.
+    // The PATCH answers 200 with the changed value. The DELETE answers 204, and a second DELETE
+    // answers 404 because the record is no longer live. The restore answers 200 with the changed value again.
+    private void changeDeleteRestore(String token, String url, String patchJson, String changedPath, Object changedValue)
+            throws Exception {
+        change(token, url, patchJson)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(changedPath).value(changedValue));
+        mockMvc.perform(delete(url).header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(delete(url).header("Authorization", "Bearer " + token))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post(url + "/restore").header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(changedPath).value(changedValue));
+    }
+
+    // Assigns an agent to a property, so the agent's scope is that property only
+    private void assign(String rootToken, UUID agentId, UUID propertyId) throws Exception {
+        send(rootToken, "/api/property-assignments/assign", """
+                { "agentId": "%s", "propertyId": "%s" }
+                """.formatted(agentId, propertyId)).andExpect(status().isCreated());
+        // the agent's scope is read again on the agent's next request
+        authorizationCache.invalidateAll();
     }
 
     @Test
@@ -294,5 +333,185 @@ public class MeterBillsControllerIT extends IntegrationTest {
                 """)
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("utility_bill.no_cycle"));
+    }
+
+    // ── Changing, deleting and restoring, against the real tables ──
+
+    // The only test that runs the UPDATE each PATCH builds, and each soft delete and restore, for the meter and bill tables
+    @Test
+    void everyKindOfRecord_canBeChanged_deleted_andRestored() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB9").uuid();
+        UUID lotId = testData.insertLot(propertyId, "1").uuid();
+        UUID mainId = testData.insertMain(propertyId).uuid();
+
+        // the tree: a main, a rate group and a submeter, each while no link or bill names the record yet
+        changeDeleteRestore(token, "/api/meters/mains/" + mainId, """
+                { "title": "North main", "provider": "City of Port Orchard" }
+                """, "$.title", "North main");
+
+        String group = made(send(token, "/api/meters/rate-groups", """
+                { "propertyId": "%s", "name": "Phase 2 (County)" }
+                """.formatted(propertyId)), "$.uuid");
+        changeDeleteRestore(token, "/api/meters/rate-groups/" + group, """
+                { "name": "Phase 2" }
+                """, "$.name", "Phase 2");
+
+        String submeter = made(send(token, "/api/meters/submeters", """
+                { "propertyId": "%s", "utilityType": "WATER", "unit": "GAL", "multiplier": "10" }
+                """.formatted(propertyId)), "$.uuid");
+        changeDeleteRestore(token, "/api/meters/submeters/" + submeter, """
+                { "title": "Lots 1 and 2" }
+                """, "$.title", "Lots 1 and 2");
+
+        // the dated links: submeter to main, submeter to lot
+        String mainLink = made(send(token, "/api/meters/submeters/" + submeter + "/main", """
+                { "mainId": "%s", "effectiveFrom": "2026-01-01" }
+                """.formatted(mainId)), "$.uuid");
+        changeDeleteRestore(token, "/api/meters/main-links/" + mainLink, """
+                { "effectiveTo": "2026-06-01" }
+                """, "$.effectiveTo", "2026-06-01");
+
+        String lotLink = made(send(token, "/api/meters/submeters/" + submeter + "/lots", """
+                { "lotId": "%s", "effectiveFrom": "2026-01-01" }
+                """.formatted(lotId)), "$.uuid");
+        changeDeleteRestore(token, "/api/meters/lot-links/" + lotLink, """
+                { "effectiveTo": "2026-06-01" }
+                """, "$.effectiveTo", "2026-06-01");
+
+        // a dated setting of the main (the unit is an enum column, so the UPDATE casts the unit)
+        String setting = made(send(token, "/api/meters/settings", """
+                { "mainId": "%s", "effectiveFrom": "2026-03-01", "dialMax": 999999 }
+                """.formatted(mainId)), "$.uuid");
+        changeDeleteRestore(token, "/api/meters/settings/" + setting, """
+                { "unit": "KGAL", "dialMax": 9999999 }
+                """, "$.unit", "KGAL");
+
+        // a staff read of the main (the kind is an enum column too)
+        String read = made(send(token, "/api/meter-reads", """
+                { "mainId": "%s", "readOn": "2026-09-01", "reading": 4410 }
+                """.formatted(mainId)), "$.read.uuid");
+        changeDeleteRestore(token, "/api/meter-reads/" + read, """
+                { "reading": 4420, "kind": "START", "isEstimated": true }
+                """, "$.read.reading", 4420);
+
+        // a bill with one main (usage printed, no reads) and one line
+        UUID billId = newBill(token, propertyId, "2026-08-01", "2026-10-01");
+        String billMeter = made(send(token, "/api/utility-bills/" + billId + "/meters", """
+                { "mainId": "%s", "printedUsage": "412", "printedUnit": "CCF" }
+                """.formatted(mainId)), "$.meters[0].meter.uuid");
+        changeDeleteRestore(token, "/api/utility-bills/meters/" + billMeter, """
+                { "printedUsage": "308", "printedUnit": "KGAL" }
+                """, "$.meters[0].meter.printedUnit", "KGAL");
+
+        String line = made(send(token, "/api/utility-bills/" + billId + "/lines", """
+                { "service": "WATER", "description": "Water usage", "amount": "100.00", "billingMonth": "2026-11-01" }
+                """), "$.lines[0].uuid");
+        changeDeleteRestore(token, "/api/utility-bills/lines/" + line, """
+                { "service": "SEWER", "description": "Sewer", "amount": "88.50", "printedRate": "4.25", "rateUnit": "CCF" }
+                """, "$.lines[0].service", "SEWER");
+
+        // the bill last: restoring the bill checks the bill's main again
+        changeDeleteRestore(token, "/api/utility-bills/" + billId, """
+                { "notes": "checked against the scan", "statementDate": "2026-10-05" }
+                """, "$.bill.notes", "checked against the scan");
+
+        String cycle = made(send(token, "/api/utility-cycles", """
+                { "propertyId": "%s", "service": "WATER", "cycleMonths": 1, "anchorMonth": 1, "lagMonths": 1,
+                  "effectiveFrom": "2026-01-01" }
+                """.formatted(propertyId)), "$.uuid");
+        changeDeleteRestore(token, "/api/utility-cycles/" + cycle, """
+                { "lagMonths": 2, "readDay": 15 }
+                """, "$.lagMonths", 2);
+    }
+
+    @Test
+    void aSettingThatWouldChangeABillsUsage_isRefused_andOneStartingAfterTheBillIsTaken() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB10").uuid();
+        UUID mainId = testData.insertMain(propertyId).uuid();
+        send(token, "/api/utility-bills/" + newBill(token, propertyId, "2026-08-01", "2026-10-01") + "/meters", """
+                { "mainId": "%s", "priorReadOn": "2026-08-01", "priorReading": 4410,
+                  "currentReadOn": "2026-10-01", "currentReading": 4822 }
+                """.formatted(mainId)).andExpect(status().isCreated());
+
+        // the bill counts the main's reads after 1 August up to 1 October: a setting from 1 September would change that usage
+        send(token, "/api/meters/settings", """
+                { "mainId": "%s", "effectiveFrom": "2026-09-01", "multiplier": "10" }
+                """.formatted(mainId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("meter_setting.covers_billed_reads"));
+
+        // the day after the bill's new read is past the bill
+        send(token, "/api/meters/settings", """
+                { "mainId": "%s", "effectiveFrom": "2026-10-02", "multiplier": "10" }
+                """.formatted(mainId))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.effectiveFrom").value("2026-10-02"));
+    }
+
+    @Test
+    void movingABillsPeriodOntoAnotherBillOfTheSameMain_isRefused_untilThePersonConfirms() throws Exception {
+        String token = root();
+        UUID propertyId = testData.insertProperty("UB11").uuid();
+        UUID mainId = testData.insertMain(propertyId).uuid();
+        String usage = """
+                { "mainId": "%s", "printedUsage": "412", "printedUnit": "CCF" }
+                """.formatted(mainId);
+
+        // the first bill names the main for June and July
+        send(token, "/api/utility-bills/" + newBill(token, propertyId, "2026-06-01", "2026-08-01") + "/meters", usage)
+                .andExpect(status().isCreated());
+
+        // the second bill shares no provider, account or total with the first, so only the main ties the two bills together
+        String second = made(send(token, "/api/utility-bills", """
+                { "propertyId": "%s", "provider": "County", "accountNumber": "ACCT-2",
+                  "periodStart": "2026-08-01", "periodEnd": "2026-10-01" }
+                """.formatted(propertyId)), "$.bill.uuid");
+        send(token, "/api/utility-bills/" + second + "/meters", usage).andExpect(status().isCreated());
+
+        change(token, "/api/utility-bills/" + second, """
+                { "periodStart": "2026-06-01", "periodEnd": "2026-08-01" }
+                """)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("utility_bill.main_already_billed"));
+
+        change(token, "/api/utility-bills/" + second, """
+                { "periodStart": "2026-06-01", "periodEnd": "2026-08-01", "allowDuplicate": true }
+                """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bill.periodStart").value("2026-06-01"));
+    }
+
+    @Test
+    void aParkOutsideTheAgentsScope_hidesItsReadsBillsAndCycles() throws Exception {
+        String rootToken = root();
+        UUID propertyId = testData.insertProperty("UB12").uuid();
+        UUID mainId = testData.insertMain(propertyId).uuid();
+        UUID billId = newBill(rootToken, propertyId, "2026-08-01", "2026-10-01");
+        String cycle = made(send(rootToken, "/api/utility-cycles", """
+                { "propertyId": "%s", "service": "WATER", "cycleMonths": 1, "anchorMonth": 1, "lagMonths": 1,
+                  "effectiveFrom": "2026-01-01" }
+                """.formatted(propertyId)), "$.uuid");
+
+        // the agent holds the permissions, and is assigned to another park only
+        UUID ownPropertyId = testData.insertProperty("UB13").uuid();
+        var agent = TestAuthSupport.agentWithPermissions(mockMvc, objectMapper, rootToken,
+                "meters:view", "meterbills:view", "meterbills:edit");
+        assign(rootToken, agent.uuid(), ownPropertyId);
+
+        mockMvc.perform(get("/api/meter-reads").param("mainId", mainId.toString())
+                        .header("Authorization", "Bearer " + agent.token()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/api/utility-bills/" + billId)
+                        .header("Authorization", "Bearer " + agent.token()))
+                .andExpect(status().isNotFound());
+        change(agent.token(), "/api/utility-cycles/" + cycle, "{ \"lagMonths\": 3 }")
+                .andExpect(status().isNotFound());
+
+        // the same agent is answered for the agent's own park, so the 404s above come from the scope
+        mockMvc.perform(get("/api/utility-cycles").param("propertyId", ownPropertyId.toString())
+                        .header("Authorization", "Bearer " + agent.token()))
+                .andExpect(status().isOk());
     }
 }

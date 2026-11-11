@@ -10,9 +10,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -378,5 +380,152 @@ public class DocumentTemplateControllerIT extends IntegrationTest {
 
         mockMvc.perform(get("/api/document-templates/tokens"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // ---- moving --------------------------------------------------------------
+    // A move names where the clause goes (under parentId, directly after afterId) and the server picks the
+    // ordinal. Every answer is the whole document with the section's clauses in ordinal order.
+
+    @Test
+    void moveClause_shouldPutAClauseFirst_last_andBetweenTwo() throws Exception {
+        UUID sectionId = createSection(createTemplate("Move scratch"), "Rules");
+        UUID a = addClause(sectionId);
+        UUID b = addClause(sectionId);
+        UUID c = addClause(sectionId);
+
+        // first: no clause to come after
+        moveClause(c, null, null)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sections[0].clauses[*].id").value(Matchers.contains(id(c), id(a), id(b))));
+        // last: after the last of the others
+        moveClause(c, null, b)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sections[0].clauses[*].id").value(Matchers.contains(id(a), id(b), id(c))));
+        // between two: after the first of the two
+        moveClause(c, null, a)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sections[0].clauses[*].id").value(Matchers.contains(id(a), id(c), id(b))));
+    }
+
+    // Ordinals keep four decimals. With no number left between two neighbours, the section's clauses are spread
+    // out to 10, 20, 30 in the order the clauses had (renumberSection), and the move then takes the middle.
+    @Test
+    void moveClause_shouldRenumberTheSection_whenTwoNeighboursLeaveNoRoom() throws Exception {
+        UUID sectionId = createSection(createTemplate("Renumber scratch"), "Rules");
+        UUID a = addClause(sectionId);
+        UUID b = addClause(sectionId);
+        UUID c = addClause(sectionId);
+        // clause a sits at 1; clause b now sits one ten-thousandth after clause a
+        mockMvc.perform(patch("/api/document-templates/clauses/{uuid}", b)
+                        .header("Authorization", "Bearer " + token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ordinal\": 1.0001}"))
+                .andExpect(status().isOk());
+
+        moveClause(c, null, a)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sections[0].clauses[*].id").value(Matchers.contains(id(a), id(c), id(b))))
+                .andExpect(jsonPath("$.sections[0].clauses[0].ordinal").value(10.0))
+                .andExpect(jsonPath("$.sections[0].clauses[1].ordinal").value(15.0))
+                .andExpect(jsonPath("$.sections[0].clauses[2].ordinal").value(20.0));
+    }
+
+    @Test
+    void moveClause_shouldRefuseAMove_thatPutsAClauseUnderItsOwnSubClause() throws Exception {
+        UUID sectionId = createSection(createTemplate("Cycle scratch"), "Rules");
+        UUID a = addClause(sectionId);
+        UUID b = addClause(sectionId);
+        // clause b goes under clause a
+        moveClause(b, a, null).andExpect(status().isOk());
+
+        // clause a under clause b would make each the parent of the other
+        moveClause(a, b, null)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("clause.not_saved"))
+                .andExpect(jsonPath("$.problems[*].code").value(Matchers.hasItem("clause.parent_cycle")));
+    }
+
+    @Test
+    void moveSection_shouldPutASectionDirectlyAfterAnother() throws Exception {
+        UUID templateId = createTemplate("Section move scratch");
+        UUID lease = addSection(templateId, "Lease");
+        UUID rules = addSection(templateId, "Rules");
+        UUID pets = addSection(templateId, "Pets");
+
+        mockMvc.perform(post("/api/document-templates/sections/{uuid}/move", lease)
+                        .header("Authorization", "Bearer " + token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"afterId\": \"" + rules + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.sections[*].id").value(Matchers.contains(id(rules), id(lease), id(pets))));
+    }
+
+    // ---- starting from another document ---------------------------------------
+    // What each copied link points at is DocumentCopyRepositoryTest's; this is the call itself, on the seeded packet.
+
+    @Test
+    void createTemplate_shouldStartFromAnotherDocumentsWording() throws Exception {
+        String token = token();
+        MvcResult original = mockMvc.perform(get("/api/document-templates/{uuid}", WA_LEASE)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andReturn();
+        String originalSection = JsonPath.read(original.getResponse().getContentAsString(), "$.sections[0].id");
+
+        mockMvc.perform(post("/api/document-templates")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "name": "WA Lot Lease 2027", "agreementType": "LAND", "instrumentType": "LEASE",
+                                  "copyFromId": "%s" }
+                                """.formatted(WA_LEASE)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("WA Lot Lease 2027"))
+                .andExpect(jsonPath("$.version").value(1))
+                .andExpect(jsonPath("$.sections.length()").value(8))
+                .andExpect(jsonPath("$.sections[0].sectionKey").value("CHECKLIST"))
+                // the copy's sections are new rows, not the original's
+                .andExpect(jsonPath("$.sections[0].id").value(Matchers.not(originalSection)));
+    }
+
+    // The id of the section a POST .../sections just added. A new section lands last.
+    private UUID addSection(UUID templateId, String name) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/document-templates/{uuid}/sections", templateId)
+                        .header("Authorization", "Bearer " + token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\": \"" + name + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        List<String> ids = JsonPath.read(result.getResponse().getContentAsString(), "$.sections[*].id");
+        return UUID.fromString(ids.get(ids.size() - 1));
+    }
+
+    // The id of the clause a POST .../clauses just added. A new clause lands last in the section.
+    private UUID addClause(UUID sectionId) throws Exception {
+        MvcResult result = mockMvc.perform(
+                        post("/api/document-templates/sections/{uuid}/clauses", sectionId)
+                                .header("Authorization", "Bearer " + token()))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        List<String> ids = JsonPath.read(result.getResponse().getContentAsString(), "$.sections[0].clauses[*].id");
+        return UUID.fromString(ids.get(ids.size() - 1));
+    }
+
+    // POST .../clauses/{id}/move. A null parentId is the top level; a null afterId is first under that parent.
+    private ResultActions moveClause(UUID clauseId, UUID parentId, UUID afterId) throws Exception {
+        return mockMvc.perform(post("/api/document-templates/clauses/{uuid}/move", clauseId)
+                .header("Authorization", "Bearer " + token())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"parentId\": " + quoted(parentId) + ", \"afterId\": " + quoted(afterId) + "}"));
+    }
+
+    private static String quoted(UUID id) {
+        return id == null ? "null" : "\"" + id + "\"";
+    }
+
+    private static String id(UUID id) {
+        return id.toString();
     }
 }
