@@ -27,7 +27,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 // The map screens: GET /api/sitemaps/footprints and GET /api/sitemaps/{propertyId}.
-// The seed (V15) places CD on the map with 54 lot outlines.
+// The seed (V16) places CD on the map with 54 lot outlines.
 @Transactional
 public class SiteMapScreenIT extends IntegrationTest {
 

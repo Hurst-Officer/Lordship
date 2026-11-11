@@ -219,37 +219,44 @@ public class PropertyDocumentCustomizationRepository {
     }
 
     /**
-     * Whether a park's own clause still leans on this template clause -- sits
-     * under it, or cites it. Deleting the template clause would silently drop or
-     * break that park's rule.
+     * A park named in a refusal: the park's code (or name, for a park with no code), and whether the park still
+     * uses the document. A park that stopped using a document keeps the clauses the park added to the document,
+     * and that park's page no longer shows them, so a refusal has to say which park is meant.
      */
-    public boolean existsLeaningOn(UUID templateClause) {
+    public record ParkUse(String park, boolean stillUses) { }
+
+    // The parks whose live clauses of their own match the condition. property is the properties module's table,
+    // read here by name for the park's code alone.
+    private List<ParkUse> parksWithOwnClause(String condition, String param, UUID value) {
         return jdbc.sql("""
-                        SELECT EXISTS (
-                            SELECT 1 FROM property_document_customization
-                             WHERE deleted_at IS NULL
-                               AND action = 'ADD_CLAUSE'
-                               AND (parent = :clause OR body LIKE '%ref:' || CAST(:clause AS text) || '%')
-                        )
-                        """)
-                .param("clause", templateClause)
-                .query(Boolean.class)
-                .single();
+                        SELECT DISTINCT COALESCE(p.property_code, p.property_name) AS park,
+                                        (a.deleted_at IS NULL) AS still_uses
+                          FROM property_document_customization c
+                          JOIN property_document_assignment a ON a.uuid = c.assignment
+                          JOIN property p ON p.uuid = a.property
+                         WHERE c.deleted_at IS NULL
+                           AND c.action = 'ADD_CLAUSE'
+                           AND %s
+                         ORDER BY 1, 2
+                        """.formatted(condition))
+                .param(param, value)
+                .query((rs, rowNum) -> new ParkUse(rs.getString("park"), rs.getBoolean("still_uses")))
+                .list();
     }
 
-    /** Whether a park added a clause of its own to this section, which deleting the section would drop. */
-    public boolean existsInSection(UUID section) {
-        return jdbc.sql("""
-                        SELECT EXISTS (
-                            SELECT 1 FROM property_document_customization
-                             WHERE deleted_at IS NULL
-                               AND action = 'ADD_CLAUSE'
-                               AND section = :section
-                        )
-                        """)
-                .param("section", section)
-                .query(Boolean.class)
-                .single();
+    /**
+     * The parks whose own clause still leans on this template clause -- sits under the template clause, or cites
+     * the template clause. Deleting the template clause would silently drop or break that park's rule.
+     * Empty when no park's clause does.
+     */
+    public List<ParkUse> parksLeaningOn(UUID templateClause) {
+        return parksWithOwnClause(
+                "(c.parent = :clause OR c.body LIKE '%ref:' || CAST(:clause AS text) || '%')", "clause", templateClause);
+    }
+
+    /** The parks that added a clause of their own to this section, which deleting the section would drop. */
+    public List<ParkUse> parksWithClausesIn(UUID section) {
+        return parksWithOwnClause("c.section = :section", "section", section);
     }
 
     /** Undoing a customization puts the document back the way the template wrote it. */

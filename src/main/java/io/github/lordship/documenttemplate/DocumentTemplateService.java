@@ -318,13 +318,17 @@ public class DocumentTemplateService {
                         });
                 // A park's own rules would quietly drop off that park's paper, or cite a clause no longer there
                 for (UUID clause : ClauseLinks.clausesOf(doc, sectionUuid)) {
-                    if (customizationRepository.existsLeaningOn(clause)) {
-                        throw RuleConflict.of("section.used_by_property");
+                    List<PropertyDocumentCustomizationRepository.ParkUse> leaning =
+                            customizationRepository.parksLeaningOn(clause);
+                    if (!leaning.isEmpty()) {
+                        throw heldBy("section.used_by_property", leaning);
                     }
                 }
             });
-            if (customizationRepository.existsInSection(sectionUuid)) {
-                throw RuleConflict.of("section.has_park_clauses");
+            List<PropertyDocumentCustomizationRepository.ParkUse> added =
+                    customizationRepository.parksWithClausesIn(sectionUuid);
+            if (!added.isEmpty()) {
+                throw heldBy("section.has_park_clauses", added);
             }
             if (!documentSectionRepository.softDelete(sectionUuid)) {
                 return false;
@@ -407,8 +411,10 @@ public class DocumentTemplateService {
                     .ifPresent(problem -> {
                         throw RuleConflict.of(problem.code(), problem.args().toArray());
                     });
-            if (customizationRepository.existsLeaningOn(clauseUuid)) {
-                throw RuleConflict.of("clause.used_by_property");
+            List<PropertyDocumentCustomizationRepository.ParkUse> leaning =
+                    customizationRepository.parksLeaningOn(clauseUuid);
+            if (!leaning.isEmpty()) {
+                throw heldBy("clause.used_by_property", leaning);
             }
             if (!templateClauseRepository.softDelete(clauseUuid)) {
                 return false;
@@ -494,6 +500,21 @@ public class DocumentTemplateService {
             auditService.recordDelete("document_style", styleUuid, AuditMapper.toMap(existing));
             return true;
         }).orElse(false);
+    }
+
+    // A refusal that names the parks whose own clauses are in the way. The parks that still use the document
+    // come first: their clauses can be changed on each park's page. Only when none is left does the refusal
+    // name the parks that stopped using the document (code + "_ended"), whose pages no longer show the document.
+    private static RuleConflict heldBy(String code, List<PropertyDocumentCustomizationRepository.ParkUse> parks) {
+        List<String> using = parks.stream()
+                .filter(PropertyDocumentCustomizationRepository.ParkUse::stillUses)
+                .map(PropertyDocumentCustomizationRepository.ParkUse::park)
+                .toList();
+        if (!using.isEmpty()) {
+            return RuleConflict.of(code, String.join(", ", using));
+        }
+        return RuleConflict.of(code + "_ended", String.join(", ",
+                parks.stream().map(PropertyDocumentCustomizationRepository.ParkUse::park).distinct().toList()));
     }
 
     // ---- one edit at a time per document -------------------------------------

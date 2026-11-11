@@ -1,5 +1,5 @@
 -- ============================================================
--- V16: Change notices
+-- V15: Change notices
 --
 -- Every write to a table Glade shows tells Lordship, whoever made it: Glade, psql, an import, a billing job.
 -- Postgres sends the notice (pg_notify on channel lordship_change) only when the transaction commits, drops it
@@ -10,6 +10,17 @@
 --
 -- A table added later that Glade shows watches itself in its own migration:  SELECT lordship_watch('new_table');
 -- (presence ChangeNoticesIT fails for a table with a property_id or lot_id column that does not.)
+--
+-- A NEW GLADE CONCERN touches three things. Each one fails without a word when missed: the concern's screens
+-- still load again after a save made in the same window, and never after a change made anywhere else.
+--   1. The concern's tables are watched. A table with a property_id or lot_id column is watched by the SELECT at
+--      the end of this file. A table keyed another way (meter_read by its meter, utility_bill_line by its bill)
+--      is NOT: add the table to the list in that SELECT.
+--   2. Every id column a place is built from is in BOTH arrays of lordship_notify_change below, and in
+--      ChangePlaces.CARRIED_IDS. A column missing from the arrays is dropped from the notice.
+--   3. ChangePlaces.placesOf has a case for the table that names the concern's own places. A table without a
+--      case tells the Properties places only.
+-- ChangePlacesTest and ChangeNoticesIT fail for a table in AuditService.SCREEN_TABLES that misses one of the three.
 -- ============================================================
 
 CREATE FUNCTION lordship_notify_change() RETURNS trigger LANGUAGE plpgsql AS $$

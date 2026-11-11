@@ -1,6 +1,7 @@
 package io.github.lordship.presence.internal;
 
 import io.github.lordship.IntegrationTest;
+import io.github.lordship.audit.AuditService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -32,7 +33,7 @@ import static org.mockito.Mockito.verify;
  */
 public class ChangeNoticesIT extends IntegrationTest {
 
-    // Tables V16 leaves out on purpose (see the migration)
+    // Tables V15 leaves out on purpose (see the migration)
     private static final List<String> NOT_WATCHED = List.of(
             "site_elevation", "property_footprint_stale", "map_feature_edit", "agent_session_spent_token");
 
@@ -62,6 +63,44 @@ public class ChangeNoticesIT extends IntegrationTest {
     // The hub is told, within a few seconds, about places that pass the test
     private void hubHears(Predicate<Map<String, String>> places) {
         verify(hub, timeout(10_000).atLeastOnce()).changed(argThat(places::test));
+    }
+
+    // Guards the next concern: AuditService.SCREEN_TABLES is the list a concern's history bars already need
+    @Test
+    void everyTableAScreenShows_isWatched() {
+        List<String> watched = jdbc.sql("""
+                        SELECT DISTINCT cl.relname
+                        FROM pg_trigger tr
+                        JOIN pg_class cl ON cl.oid = tr.tgrelid
+                        WHERE tr.tgname = 'lordship_change'
+                        """)
+                .query(String.class)
+                .list();
+
+        List<String> unwatched = AuditService.SCREEN_TABLES.stream()
+                .filter(table -> !watched.contains(table))
+                .sorted()
+                .toList();
+
+        assertEquals(List.of(), unwatched,
+                "a screen shows these tables but they tell Glade nothing: add each to the list in V15, "
+                        + "or SELECT lordship_watch('<table>') in the table's own migration");
+    }
+
+    // A parent id column named in ChangePlaces.CARRIED_IDS but not in the trigger never arrives in a notice
+    @Test
+    void theNotice_carriesEveryIdAPlaceIsBuiltFrom() {
+        String function = jdbc.sql("SELECT prosrc FROM pg_proc WHERE proname = 'lordship_notify_change'")
+                .query(String.class)
+                .single();
+
+        List<String> missing = ChangePlaces.CARRIED_IDS.stream()
+                .filter(key -> !function.contains("'" + key + "'"))
+                .toList();
+
+        assertEquals(List.of(), missing,
+                "ChangePlaces.CARRIED_IDS names these id columns but V15 lordship_notify_change does not send them: "
+                        + "add each to both arrays in the function");
     }
 
     @Test
@@ -131,7 +170,7 @@ public class ChangeNoticesIT extends IntegrationTest {
                 && places.keySet().stream().noneMatch(place -> place.startsWith("properties/" + propertyId + "/lots/")));
     }
 
-    // ---- the trigger itself (V16 lordship_notify_change): what one write to mobile_home sends ----
+    // ---- the trigger itself (V15 lordship_notify_change): what one write to mobile_home sends ----
 
     // One park with two lots and a home on lot A, committed, for the trigger tests
     private record HomeOnLotA(UUID propertyId, UUID lotA, UUID lotB, UUID homeId) { }
