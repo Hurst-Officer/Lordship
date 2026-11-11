@@ -163,7 +163,7 @@ public class AgentService {
         return true;
     }
 
-    // Longest values the agent table holds (V3, V16)
+    // Longest values the agent table holds (V3)
     private static final int WORK_PHONE_MAX = 20;
     private static final int HOURS_MAX = 200;
 

@@ -1,5 +1,6 @@
 package io.github.lordship.presence.internal;
 
+import io.github.lordship.audit.AuditService;
 import io.github.lordship.presence.internal.ChangePlaces.Notice;
 import io.github.lordship.presence.internal.ChangePlaces.Parents;
 import org.junit.jupiter.api.Test;
@@ -7,12 +8,15 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * A database change notice becomes the Glade places whose screens show the row (V16, ChangeNotices).
+ * A database change notice becomes the Glade places whose screens show the row (V15, ChangeNotices).
  * The places must be spelled the way Glade's screens report them (views/&lt;concern&gt;/steps.ts), or nothing reloads.
  */
 public class ChangePlacesTest {
@@ -23,6 +27,43 @@ public class ChangePlacesTest {
             ids.put(keyValues[i], keyValues[i + 1]);
         }
         return new Notice(table, ids);
+    }
+
+    // The tables the Properties screens show. For these the Properties places are the right places.
+    private static final Set<String> SHOWN_ON_PROPERTIES = Set.of("property", "lot", "mobile_home");
+
+    /**
+     * Guards the next concern. A table a screen shows (AuditService.SCREEN_TABLES, the list a concern's history
+     * bars already need) must tell a place of that concern. A table placesOf has no case for falls to the default
+     * and tells the Properties places only, so the new concern's screens would never load again after a change
+     * made elsewhere.
+     */
+    @Test
+    void everyTableAScreenShows_tellsAPlaceOfItsOwnConcern() {
+        // one notice carrying every id V15 can send, and parents that answer every lookup
+        Map<String, String> ids = new LinkedHashMap<>();
+        for (String key : ChangePlaces.CARRIED_IDS) {
+            ids.put(key, key.toUpperCase());
+        }
+        Parents parents = new Parents(
+                Map.of("LOT_ID", "PROPERTY_ID"),
+                Map.of("MOBILE_HOME_ID", "LOT_ID"),
+                Map.of("UUID", "AGENT_ID"),
+                Map.of("SECTION", "TEMPLATE"),
+                Map.of("ASSIGNMENT", new String[] {"PROPERTY", "TEMPLATE"}));
+
+        for (String table : new TreeSet<>(AuditService.SCREEN_TABLES)) {
+            List<String> places = ChangePlaces.placesOf(new Notice(table, ids), parents);
+
+            assertFalse(places.isEmpty(), table + " is shown by a screen, but a change to " + table
+                    + " tells no place: add a case to ChangePlaces.placesOf");
+            if (!SHOWN_ON_PROPERTIES.contains(table)) {
+                assertTrue(places.stream().anyMatch(place -> !place.startsWith("properties")),
+                        table + " is shown by a screen outside Properties, but a change to " + table + " tells only "
+                                + places + ": add a case to ChangePlaces.placesOf, and any new parent id column to "
+                                + "ChangePlaces.CARRIED_IDS and to V15 lordship_notify_change");
+            }
+        }
     }
 
     @Test

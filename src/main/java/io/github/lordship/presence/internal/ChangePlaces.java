@@ -9,16 +9,29 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Turns a database change notice (V16 lordship_notify_change) into the Glade places that show the changed row,
+ * Turns a database change notice (V15 lordship_notify_change) into the Glade places that show the changed row,
  * so the screens on those places load again. A place is what Glade's screens report to presence:
  * "properties/&lt;propertyId&gt;/lots/&lt;lotId&gt;", "roles/person/&lt;agentId&gt;", "documents/doc/&lt;templateId&gt;"...
  *
  * <p>No database here: ids a notice does not carry (a home's lot, a clause's document) come in Parents,
  * looked up for the whole batch at once (ChangeRelay).
+ *
+ * <p>A new Glade concern touches three things, and each fails without a word when missed (the concern's screens
+ * then load again only after a save made in the same window):
+ * the concern's tables are watched (V15, lordship_watch; automatic only for a table with a property_id or lot_id
+ * column), every id column a place is built from is in CARRIED_IDS and in V15's lordship_notify_change, and
+ * placesOf has a case that names the concern's own places (a table without a case tells the Properties places).
+ * ChangePlacesTest and ChangeNoticesIT fail for a table in AuditService.SCREEN_TABLES that misses one of the three.
  */
 final class ChangePlaces {
 
     private ChangePlaces() { }
+
+    // The id columns a notice carries: the row's own uuid, and the parent ids places are built from.
+    // The same names as the two arrays in V15's lordship_notify_change. A column missing from either list
+    // never reaches placesOf.
+    static final List<String> CARRIED_IDS = List.of("uuid", "property_id", "lot_id", "agent_id", "role_id",
+            "person_id", "mobile_home_id", "template", "section", "property", "document_template", "assignment");
 
     // "*": every window loads everything it shows again (Glade treats it like its own reconnect)
     static final String EVERYTHING = "*";
