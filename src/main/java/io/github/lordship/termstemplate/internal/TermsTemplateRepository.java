@@ -224,6 +224,22 @@ public class TermsTemplateRepository {
                 .update() > 0;
     }
 
+    // A template whether the template is deleted or not
+    public Optional<TermsTemplateRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM terms_template WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
+    // Brings a deleted template back. Empty when the template was not deleted.
+    public Optional<TermsTemplateRow> restore(UUID uuid) {
+        return jdbc.sql("UPDATE terms_template SET deleted_at = NULL WHERE uuid = :uuid AND deleted_at IS NOT NULL RETURNING *")
+                .param("uuid", uuid)
+                .query(rowMapper)
+                .optional();
+    }
+
     private static String nameOf(Enum<?> value) {
         return value == null ? null : value.name();
     }

@@ -11,7 +11,8 @@ import java.util.Set;
 /**
  * Turns a database change notice (V15 lordship_notify_change) into the Glade places that show the changed row,
  * so the screens on those places load again. A place is what Glade's screens report to presence:
- * "properties/&lt;propertyId&gt;/lots/&lt;lotId&gt;", "roles/person/&lt;agentId&gt;", "documents/doc/&lt;templateId&gt;"...
+ * "properties/&lt;propertyId&gt;/lots/&lt;lotId&gt;", "roles/person/&lt;agentId&gt;", "documents/doc/&lt;templateId&gt;",
+ * "rates/&lt;propertyId&gt;"...
  *
  * <p>No database here: ids a notice does not carry (a home's lot, a clause's document) come in Parents,
  * looked up for the whole batch at once (ChangeRelay).
@@ -129,6 +130,20 @@ final class ChangePlaces {
                     add(places, park(pt[0], pt[1]));
                 }
             }
+            // Rates and deals. Only these two tables are the concern's own. The Rates screens also show lots and
+            // whether each is taken, so in Glade they listen on the Properties places as well (a lot or a tenancy
+            // changing tells "properties/<p>" and "properties/<p>/lots/<l>" through the cases above and below).
+            case "lot_permissible_agreement_type" -> {
+                String propertyId = n.id("lot_id") == null ? null : parents.lotProperty().get(n.id("lot_id"));
+                places.add("rates");
+                add(places, ratesProperty(propertyId));
+                add(places, ratesLot(propertyId, n.id("lot_id")));
+            }
+            case "terms_template" -> {
+                // a global template (no property) only changes what a property can copy in
+                places.add("rates");
+                add(places, ratesProperty(n.id("property")));
+            }
             default -> {
                 // Anything else that belongs to a lot or a property: its lot's place and its property's
                 if (n.id("lot_id") != null) {
@@ -167,12 +182,12 @@ final class ChangePlaces {
         return result;
     }
 
-    // The place a screen of the parent listens on: a lot's property ("properties/<p>" for "properties/<p>/lots/<l>"),
-    // a section's document ("documents/doc/<d>" for "documents/doc/<d>/section/<s>"). Null for anything else,
-    // which is never folded into another place.
+    // The place a screen of the parent listens on: a lot's property ("properties/<p>" for "properties/<p>/lots/<l>",
+    // and "rates/<p>" for "rates/<p>/lots/<l>"), a section's document ("documents/doc/<d>" for
+    // "documents/doc/<d>/section/<s>"). Null for anything else, which is never folded into another place.
     static String parentOf(String place) {
         String[] parts = place.split("/");
-        if (parts.length == 4 && parts[0].equals("properties") && parts[2].equals("lots")) {
+        if (parts.length == 4 && (parts[0].equals("properties") || parts[0].equals("rates")) && parts[2].equals("lots")) {
             return parts[0] + "/" + parts[1];
         }
         if (parts.length == 5 && parts[0].equals("documents") && parts[1].equals("doc") && parts[3].equals("section")) {
@@ -203,6 +218,14 @@ final class ChangePlaces {
 
     private static String lot(String propertyId, String lotId) {
         return propertyId == null || lotId == null ? null : "properties/" + propertyId + "/lots/" + lotId;
+    }
+
+    private static String ratesProperty(String propertyId) {
+        return propertyId == null ? null : "rates/" + propertyId;
+    }
+
+    private static String ratesLot(String propertyId, String lotId) {
+        return propertyId == null || lotId == null ? null : "rates/" + propertyId + "/lots/" + lotId;
     }
 
     private static String rolesPerson(String agentId) {

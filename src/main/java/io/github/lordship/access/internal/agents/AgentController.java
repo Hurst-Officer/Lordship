@@ -131,11 +131,15 @@ public class AgentController {
 
 
     /**
-     * The signed-in agent changes their own work phone and the hours they can be reached.
-     * Body: any of {@code workPhone}, {@code hoursAvailable}; a missing key is left alone, blank or null clears it.
+     * The signed-in agent changes their own work phone, the hours they can be reached, and the color coworkers
+     * see them in (Glade: their initials, the boxes they have selected, the lots they have picked).
+     * Body: any of {@code workPhone}, {@code hoursAvailable}, {@code color}; a missing key is left alone, blank or
+     * null clears it. {@code color} is one of AgentColors.NAMES ("lake", "honey"...); cleared, Glade goes back to
+     * the color it gives the agent by the agent's id. Coworkers' open windows get the new color at once (the
+     * presence roster, through ChangeRelay).
      * 200 with the agent's own details (AgentOwnResponse). 404 for an agent that is gone.
      * 400 {@code agent.work_phone_too_long} (field workPhone), {@code agent.hours_too_long} (field hoursAvailable),
-     * {@code agent.not_text}. Audited on the agent table.
+     * {@code agent.color_unknown} (field color), {@code agent.not_text}. Audited on the agent table.
      */
     @PreAuthorize("hasAuthority('agents:edit_own')")
     @PatchMapping("/self")
@@ -146,6 +150,7 @@ public class AgentController {
         Map<String, Object> changes = new HashMap<>();
         if (request.containsKey("workPhone")) changes.put("work_phone", request.get("workPhone"));
         if (request.containsKey("hoursAvailable")) changes.put("hours_available", request.get("hoursAvailable"));
+        if (request.containsKey("color")) changes.put("color", request.get("color"));
 
         return agentService.patchOwn(principal.agentUuid(), changes)
                 .map(AgentOwnResponse::from)

@@ -41,14 +41,19 @@ import java.util.UUID;
  * person confirms it (allowDuplicate), after Glade has shown them the other one.
  *
  * <p>Nothing here passes a bill on to tenants yet. That waits for tenancies:
- * the rate is the bill's passed-on lines over the mains' usage, and a shared
- * submeter's share falls on the occupied lots it feeds.
+ * the rate is the bill's passed-on lines over the mains' usage, each lot is
+ * charged its submeter usage at that rate, and the lots together are never
+ * charged more than the passed-on lines. A shared submeter's share falls on the
+ * occupied lots it feeds.
  */
 @Service
 public class UtilityBillService {
 
-    // Reads and printed usage further apart than this are worth a look
+    // Reads and printed usage further apart than this share of the printed usage are worth a look
     private static final BigDecimal USAGE_TOLERANCE = new BigDecimal("0.01");
+    // A provider prints usage rounded to whole units (Puyallup: whole hundreds of cubic feet),
+    // so half a printed unit of difference is rounding, not a disagreement
+    private static final BigDecimal HALF_A_PRINTED_UNIT = new BigDecimal("0.5");
     // How far back the bill list looks when no month is asked for
     private static final int DEFAULT_LIST_MONTHS = 13;
 
@@ -483,12 +488,17 @@ public class UtilityBillService {
                 : m.printedUnit().toBase(m.printedUsage());
         BigDecimal used = printedUsage != null ? printedUsage : readsUsage;
         return new BillDetail.Meter(m, title, prior, current, readsUsage, printedUsage, used,
-                usageMatches(readsUsage, printedUsage));
+                usageMatches(readsUsage, printedUsage, m.printedUnit()));
     }
 
-    static Boolean usageMatches(BigDecimal fromReads, BigDecimal printed) {
-        if (fromReads == null || printed == null) return null;
-        BigDecimal allowed = printed.abs().multiply(USAGE_TOLERANCE);
+    /**
+     * Whether the usage worked out from the reads agrees with the usage printed on the bill,
+     * both in base units (gallons or kWh). The allowed gap is the larger of 1% of the printed
+     * usage and half of one printed unit: at 44 CCF, rounding alone can be off by 1.1%.
+     */
+    static Boolean usageMatches(BigDecimal fromReads, BigDecimal printed, MeterUnit printedUnit) {
+        if (fromReads == null || printed == null || printedUnit == null) return null;
+        BigDecimal allowed = printed.abs().multiply(USAGE_TOLERANCE).max(printedUnit.toBase(HALF_A_PRINTED_UNIT));
         return fromReads.subtract(printed).abs().compareTo(allowed) <= 0;
     }
 

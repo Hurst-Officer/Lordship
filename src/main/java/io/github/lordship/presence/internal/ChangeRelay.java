@@ -26,6 +26,10 @@ import java.util.UUID;
  * <p>The parents a notice does not carry (a home's lot, a lot's property, a person's agent, a clause's document)
  * are read here, one query per kind for the whole batch. These read other modules' tables by name on purpose:
  * the notices themselves come from the database, below every module.
+ *
+ * <p>A changed agent or person also changes how that agent is shown on the roster (their name, and the color they
+ * picked), so their open windows are given both again (PresenceHub.agentsChanged). A coworker's new color or new
+ * name then shows at once, without anyone opening a new window.
  */
 @Component
 class ChangeRelay {
@@ -58,6 +62,34 @@ class ChangeRelay {
             }
         }
         hub.changed(ChangePlaces.coalesced(tableByPlace));
+        refreshAgents(notices, parents);
+    }
+
+    // The agents whose own row or whose person changed: the roster takes their name and color as they are now.
+    // A failure here is only logged, because the places above were already told.
+    private void refreshAgents(List<Notice> notices, Parents parents) {
+        Set<String> agentIds = new LinkedHashSet<>(idsOf(notices, "agent", "uuid"));
+        for (String personId : idsOf(notices, "person", "uuid")) {
+            String agentId = parents.personAgent().get(personId);
+            if (agentId != null) agentIds.add(agentId);
+        }
+        List<UUID> asked = uuids(agentIds);
+        if (asked.isEmpty()) return;
+        try {
+            Map<UUID, PresenceHub.Shown> shown = new HashMap<>();
+            jdbc.sql("SELECT a.uuid, p.name_full, a.color FROM agent a JOIN person p ON p.uuid = a.person_id WHERE a.uuid IN (:ids)")
+                    .param("ids", asked)
+                    .query((rs, i) -> {
+                        String name = rs.getString(2);
+                        shown.put(UUID.fromString(rs.getString(1)),
+                                new PresenceHub.Shown(name == null || name.isBlank() ? PresenceHub.NO_NAME : name, rs.getString(3)));
+                        return i;
+                    })
+                    .list();
+            hub.agentsChanged(shown);
+        } catch (RuntimeException e) {
+            log.warn("The roster could not take {} changed agents ({})", asked.size(), e.toString());
+        }
     }
 
     // Notices may have been missed (the listener was away): every window loads everything again

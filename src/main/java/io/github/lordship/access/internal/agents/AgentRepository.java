@@ -52,9 +52,10 @@ public class AgentRepository {
     }
 
     // The columns an agent may change on their own page
-    private static final Set<String> OWN_COLUMNS = Set.of("work_phone", "hours_available");
+    private static final Set<String> OWN_COLUMNS = Set.of("work_phone", "hours_available", "color");
 
-    // Changes the agent's own contact columns, keyed by column name. Empty for an unknown or removed agent.
+    // Changes the agent's own columns (how to reach them, and their color), keyed by column name.
+    // Empty for an unknown or removed agent.
     public Optional<AgentRow> patchOwn(UUID agentId, Map<String, Object> changes) {
         if (changes.isEmpty()) return findById(agentId);
         for (String col : changes.keySet()) {

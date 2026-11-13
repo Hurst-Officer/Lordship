@@ -6,13 +6,15 @@ import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
+import org.springframework.modulith.NamedInterface;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 
-
+// Shared with the screens module, so the Rates and deals screens' one call sends a deal in this same shape
+@NamedInterface("responses")
 public record TermsTemplateResponse(
         UUID id,
         UUID propertyId, // NOTE: A null propertyId means this is a global template.

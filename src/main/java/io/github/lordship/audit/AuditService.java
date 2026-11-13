@@ -239,10 +239,13 @@ public class AuditService {
     // The tables whose history the screens may read. agent_role and agent are the Roles screens
     // (access RoleHistory writes their "permissions", "holders" and "roles" entries).
     // person and agent are also the agent's own page (GET /api/screens/self), for their own record only.
-    // The rest are the Documents screens: a document, its sections, clauses and styles, and the parks using it.
+    // The document tables are the Documents screens: a document, its sections, clauses and styles, and the parks using it.
+    // lot_permissible_agreement_type and terms_template are the Rates and deals screens: what a lot offers and at
+    // what rates, and a property's deals.
     public static final Set<String> SCREEN_TABLES = Set.of("property", "lot", "mobile_home", "agent_role", "agent", "person",
             "document_template", "document_section", "template_clause", "document_style",
-            "property_document_assignment", "property_document_customization");
+            "property_document_assignment", "property_document_customization",
+            "lot_permissible_agreement_type", "terms_template");
 
     // The history bars reach back this many years
     public static final int HISTORY_YEARS = 3;

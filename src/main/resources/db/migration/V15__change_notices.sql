@@ -82,7 +82,9 @@ FROM (
         'person', 'agent', 'agent_session', 'agent_role', 'role_permission', 'granted_role', 'denied_permission',
         'mobile_home_secured_party',
         'document_template', 'document_style', 'document_section', 'template_clause',
-        'property_document_assignment', 'property_document_customization'])
+        'property_document_assignment', 'property_document_customization',
+        -- a property's deals (Glade's Rates and deals). Keyed by "property", so not found by the columns above.
+        'terms_template'])
 ) AS watched
 WHERE watched.table_name NOT IN ('site_elevation', 'property_footprint_stale', 'map_feature_edit',
                                  'agent_session_spent_token');

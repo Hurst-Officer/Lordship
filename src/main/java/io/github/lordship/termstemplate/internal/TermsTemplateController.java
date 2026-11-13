@@ -20,7 +20,7 @@ import java.util.UUID;
 @RequestMapping("/api/terms-templates")
 public class TermsTemplateController {
 
-    // JSON field -> column.
+    // JSON field -> column. A number may arrive as text ("650.00"): the service reads text digit for digit.
     private static final Map<String, String> PATCHABLE_COLUMNS = Map.ofEntries(
             Map.entry("name", "name"),
             Map.entry("targetRate", "target_rate"),
@@ -149,13 +149,20 @@ public class TermsTemplateController {
                 : ResponseEntity.notFound().build();
     }
 
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Void> badRequest() {
-        return ResponseEntity.badRequest().build();
+    // Brings a deleted template back, like an undo. A template that is not deleted is answered as the template is.
+    // 404 for an unknown template. 409 when the property took on another template for the same kind of
+    // agreement meanwhile (terms_template.type_taken), or another global template took the name
+    // (terms_template.name_taken).
+    @PreAuthorize("hasAuthority('terms_template:delete')")
+    @PostMapping("/{uuid}/restore")
+    public ResponseEntity<TermsTemplateResponse> restoreTermsTemplate(@PathVariable UUID uuid) {
+        return termsTemplateService.restoreTermsTemplate(uuid)
+                .map(TermsTemplateResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 
-    @ExceptionHandler(IllegalStateException.class)
-    ResponseEntity<Void> conflict() {
-        return ResponseEntity.status(HttpStatus.CONFLICT).build();
-    }
+    // No @ExceptionHandler here. A local one would win over ApiExceptionHandler and answer a refusal with
+    // no words at all. ApiExceptionHandler answers with the same statuses (400, 409) and the sentence,
+    // which Glade shows under the box that was refused.
 }

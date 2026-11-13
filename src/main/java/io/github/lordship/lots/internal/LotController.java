@@ -79,6 +79,41 @@ public class LotController {
 
     public record SetRatesResult(int updated) { }
 
+    // Empties one or both rates across a selection, for one kind of deal. A lot with an empty rate has no
+    // rate of the lot's own, and the property's standard rate applies. A rate left out or false is left alone.
+    public record ClearRatesRequest(
+            @NotEmpty
+            @Size(max = 2000)
+            List<UUID> lotIds,
+
+            @NotNull
+            AgreementType agreementType,
+
+            Boolean targetRate,
+
+            Boolean askingRate
+    ) { }
+
+    // Offers one kind of deal on a selection of lots (permitted true), or withdraws the kind from them.
+    // The rates are for the lots that gain the kind; either rate left out takes the property's template figure.
+    public record SetAgreementTypeRequest(
+            @NotEmpty
+            @Size(max = 2000)
+            List<UUID> lotIds,
+
+            @NotNull
+            AgreementType agreementType,
+
+            @NotNull
+            Boolean permitted,
+
+            @PositiveOrZero
+            BigDecimal targetRate,
+
+            @PositiveOrZero
+            BigDecimal askingRate
+    ) { }
+
     // Rentable or not across a selection, from the map or the lots list.
     // notRentableReason is needed when isRentable is false, and replaces each lot's old reason.
     public record SetRentableRequest(
@@ -235,6 +270,36 @@ public class LotController {
                 request.targetRate(), request.askingRate());
 
         return ResponseEntity.ok(new SetRatesResult(updated));
+    }
+
+    // The pricing pass's other half: empties a rate across a selection, so the property's standard rate applies.
+    // Glade's undo uses this to put a lot back to "no rate of the lot's own". updated counts the lots that changed.
+    @PreAuthorize("hasAuthority('lots:set_rates')")
+    @PutMapping("/rates/clear")
+    public ResponseEntity<SetRatesResult> clearRates(@Valid @RequestBody ClearRatesRequest request,
+                                                     Authentication authentication) {
+        lotService.requireInScope(request.lotIds(), AgentPrincipal.scopeOf(authentication));
+
+        int updated = lotService.clearRates(request.lotIds(), request.agreementType(),
+                Boolean.TRUE.equals(request.targetRate()), Boolean.TRUE.equals(request.askingRate()));
+
+        return ResponseEntity.ok(new SetRatesResult(updated));
+    }
+
+    // Offers a kind of deal on a selection of lots, or withdraws the kind from them. All or nothing.
+    // A lot that already offers the kind keeps the lot's rates; a lot that does not offer the kind is skipped
+    // by a withdrawal. 400 for an unknown lot, 409 when the property has no terms template for the kind.
+    // updated counts the lots that actually changed.
+    @PreAuthorize("hasAuthority('lots:edit')")
+    @PutMapping("/agreement-types")
+    public ResponseEntity<LotCountResult> setAgreementType(@Valid @RequestBody SetAgreementTypeRequest request,
+                                                           Authentication authentication) {
+        lotService.requireInScope(request.lotIds(), AgentPrincipal.scopeOf(authentication));
+
+        int updated = lotService.setAgreementType(request.lotIds(), request.agreementType(),
+                request.permitted(), request.targetRate(), request.askingRate());
+
+        return ResponseEntity.ok(new LotCountResult(updated));
     }
 
     // All or nothing. 400 when a lot is unknown or the reason is missing, and then nothing is saved.
