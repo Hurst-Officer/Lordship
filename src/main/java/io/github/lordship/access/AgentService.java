@@ -168,11 +168,14 @@ public class AgentService {
     private static final int HOURS_MAX = 200;
 
     /**
-     * The agent changes their own work phone and the hours they can be reached, from their own page.
-     * changes is keyed by column (work_phone, hours_available); a missing key is left alone.
-     * Spaces at either end are dropped, and blank text clears the value.
+     * The agent changes their own work phone, the hours they can be reached, and the color coworkers see them in,
+     * from their own page.
+     * changes is keyed by column (work_phone, hours_available, color); a missing key is left alone.
+     * Spaces at either end are dropped, and blank text clears the value. A cleared color goes back to the color
+     * Glade gives the agent by the agent's id.
      * Empty (404) for an unknown or removed agent, and for the SYSTEM agent.
      * Throws InvalidRequest (400) agent.work_phone_too_long on workPhone, agent.hours_too_long on hoursAvailable,
+     * agent.color_unknown on color for a color that is not one of AgentColors.NAMES,
      * or agent.not_text when a value is not text.
      */
     @Transactional
@@ -183,6 +186,9 @@ public class AgentService {
         }
         if (changes.containsKey("hours_available")) {
             clean.put("hours_available", ownText(changes.get("hours_available"), "hoursAvailable", HOURS_MAX, "agent.hours_too_long"));
+        }
+        if (changes.containsKey("color")) {
+            clean.put("color", ownColor(changes.get("color")));
         }
         if (SystemPrincipal.AGENT_UUID.equals(agentId)) {
             return Optional.empty();
@@ -203,6 +209,24 @@ public class AgentService {
             auditService.recordUpdate("agent", agentId, diff.before(), diff.after());
         }
         return Optional.of(after.get().toAgent());
+    }
+
+    // A color from the agent's own page: one of the names Glade offers, or null for "no color of my own"
+    private static String ownColor(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof String text)) {
+            throw InvalidRequest.onField("color", "agent.not_text");
+        }
+        String stripped = text.strip();
+        if (stripped.isEmpty()) {
+            return null;
+        }
+        if (!AgentColors.NAMES.contains(stripped)) {
+            throw InvalidRequest.onField("color", "agent.color_unknown");
+        }
+        return stripped;
     }
 
     // Text from the agent's own page: stripped, blank is null, and no longer than max

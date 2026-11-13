@@ -5,9 +5,11 @@ import io.github.lordship.audit.History;
 import io.github.lordship.documenttemplate.PropertyDocumentAssignmentService;
 import io.github.lordship.homes.HomeService;
 import io.github.lordship.identity.AgentPrincipal;
+import io.github.lordship.lots.LotOffers;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.PropertyScope;
+import io.github.lordship.termstemplate.TermsTemplateService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -51,7 +53,10 @@ public class RecordHistoryController {
             Map.entry("template_clause", "document_template:view"),
             Map.entry("document_style", "document_template:view"),
             Map.entry("property_document_assignment", "property_document:view"),
-            Map.entry("property_document_customization", "property_document:view"));
+            Map.entry("property_document_customization", "property_document:view"),
+            // what a lot offers and at what rates, and a property's deals (Glade's Rates and deals)
+            Map.entry("lot_permissible_agreement_type", "lots:view"),
+            Map.entry("terms_template", "terms_template:view"));
 
     // An agent's history is read for the roles they were given and lost, and the permissions taken from them alone
     // and given back ("permissions.lots:edit"), and nothing else of theirs
@@ -60,25 +65,31 @@ public class RecordHistoryController {
     // On their own page, an agent reads the history of their own details. Never the social security number.
     private static final Map<String, Set<String>> OWN_FIELDS = Map.of(
             "person", Set.of("nameFull", "birthday", "personalPhone", "personalEmail", "mailingAddress"),
-            "agent", Set.of("workPhone", "hoursAvailable", "title", "workEmail"));
+            "agent", Set.of("workPhone", "hoursAvailable", "title", "workEmail", "color"));
 
     private final AuditService auditService;
     private final LotService lotService;
     private final HomeService homeService;
     private final PropertyDocumentAssignmentService assignmentService;
+    private final LotOffers lotOffers;
+    private final TermsTemplateService termsTemplateService;
 
     public RecordHistoryController(AuditService auditService, LotService lotService, HomeService homeService,
-                                   PropertyDocumentAssignmentService assignmentService) {
+                                   PropertyDocumentAssignmentService assignmentService,
+                                   LotOffers lotOffers, TermsTemplateService termsTemplateService) {
         this.auditService = auditService;
         this.lotService = lotService;
         this.homeService = homeService;
         this.assignmentService = assignmentService;
+        this.lotOffers = lotOffers;
+        this.termsTemplateService = termsTemplateService;
     }
 
     /**
      * One record's changes to some of its fields, newest first, ten at a time.
-     * table is property, lot, mobile_home, agent_role, agent, or a Documents table (document_template, document_section,
-     * template_clause, document_style, property_document_assignment, property_document_customization).
+     * table is property, lot, mobile_home, agent_role, agent, a Documents table (document_template, document_section,
+     * template_clause, document_style, property_document_assignment, property_document_customization), or a Rates and
+     * deals table (lot_permissible_agreement_type: one kind of agreement a lot offers; terms_template: a deal).
      * Anything else is a 400 (audit.table_unknown).
      * For agent, every field must be a role ("roles.<roleId>") or a permission taken from them or given back
      * ("permissions.<name>"); anything else is a 400 (audit.field_not_shown).
@@ -152,6 +163,12 @@ public class RecordHistoryController {
             // a park's use of a document is that park's
             case "property_document_assignment" -> assignmentService.propertyOfAssignment(id).map(scope::allows).orElse(false);
             case "property_document_customization" -> assignmentService.propertyOfCustomization(id).map(scope::allows).orElse(false);
+            // what a lot offers is the lot's property's
+            case "lot_permissible_agreement_type" -> lotOffers.propertyOfOffer(id).map(scope::allows).orElse(false);
+            // a property's deal is that property's; a global template is tied to no property
+            case "terms_template" -> termsTemplateService.findById(id)
+                    .map(deal -> deal.property() == null || scope.allows(deal.property()))
+                    .orElse(false);
             default -> false;
         };
     }

@@ -4,6 +4,8 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.RemovalCause;
 import com.github.benmanes.caffeine.cache.Scheduler;
+import io.github.lordship.access.Agent;
+import io.github.lordship.access.AgentService;
 import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.persons.Person;
 import io.github.lordship.persons.PersonService;
@@ -58,6 +60,7 @@ public class PresenceHub {
     static final int MAX_PICKS = 2000;
 
     private final PersonService personService;
+    private final AgentService agentService;
 
     // Each check-in puts the window again, which restarts its time.
     // When a window runs out, everyone else is told it left.
@@ -86,8 +89,9 @@ public class PresenceHub {
     // True while a roster broadcast is waiting to run. Ten quick changes then send one roster, not ten.
     private final AtomicBoolean rosterQueued = new AtomicBoolean(false);
 
-    public PresenceHub(PersonService personService) {
+    public PresenceHub(PersonService personService, AgentService agentService) {
         this.personService = personService;
+        this.agentService = agentService;
         sender.scheduleWithFixedDelay(this::ping, PING_SECONDS, PING_SECONDS, TimeUnit.SECONDS);
     }
 
@@ -186,6 +190,12 @@ public class PresenceHub {
             return true;
         }
         String cleanField = clean(field);
+        String name;
+        String color;
+        synchronized (sender) {
+            name = sender.name;
+            color = sender.color;
+        }
 
         later(() -> {
             for (Map.Entry<UUID, Window> entry : windows.entrySet()) {
@@ -194,7 +204,7 @@ public class PresenceHub {
                     continue;
                 }
                 boolean byYou = viewer.agentId.equals(sender.agentId);
-                SavedEvent saved = new SavedEvent(sender.agentId, sender.name, cleanPlace, cleanField, byYou);
+                SavedEvent saved = new SavedEvent(sender.agentId, name, color, cleanPlace, cleanField, byYou);
                 write(entry.getKey(), viewer, SseEmitter.event().name("saved").data(saved, MediaType.APPLICATION_JSON));
             }
         });
@@ -226,6 +236,37 @@ public class PresenceHub {
                 }
             }
         });
+    }
+
+    // How an agent is shown to coworkers: their name, and the color they picked (null when they picked none)
+    record Shown(String name, String color) { }
+
+    /**
+     * Agents whose name or color may have changed in the database (ChangeRelay, from a change notice on agent or
+     * person). Their open windows take the name and color given, and everyone else gets one roster when anything
+     * is different. An agent with no open window is skipped.
+     */
+    public void agentsChanged(Map<UUID, Shown> shownByAgent) {
+        if (shownByAgent.isEmpty()) {
+            return;
+        }
+        boolean changed = false;
+        for (Window window : windows.values()) {
+            Shown shown = shownByAgent.get(window.agentId);
+            if (shown == null) {
+                continue;
+            }
+            synchronized (window) {
+                if (!Objects.equals(window.name, shown.name()) || !Objects.equals(window.color, shown.color())) {
+                    window.name = shown.name();
+                    window.color = shown.color();
+                    changed = true;
+                }
+            }
+        }
+        if (changed) {
+            queueRoster();
+        }
     }
 
     /** The window is closing. Everyone else sees it leave right away. */
@@ -319,8 +360,8 @@ public class PresenceHub {
             }
             synchronized (other) {
                 if (other.place != null && visibleTo(viewer.agentId, scope, other.place)) {
-                    agents.add(new PresentAgent(other.agentId, other.name, other.place, other.field, other.typing,
-                            other.picks));
+                    agents.add(new PresentAgent(other.agentId, other.name, other.color, other.place, other.field,
+                            other.typing, other.picks));
                 }
             }
         }
@@ -337,8 +378,8 @@ public class PresenceHub {
     private Window windowFor(AgentPrincipal who, UUID client) {
         Window window = windows.get(client);
         if (window == null) {
-            // the name is looked up outside the map, so the map is never held during a database call
-            Window made = new Window(who.agentUuid(), nameOf(who), who.propertyScope());
+            // the name and the color are looked up outside the map, so the map is never held during a database call
+            Window made = new Window(who.agentUuid(), nameOf(who), colorOf(who), who.propertyScope());
             Window raced = windows.putIfAbsent(client, made);
             window = raced == null ? made : raced;
         }
@@ -349,8 +390,16 @@ public class PresenceHub {
         return personService.findByID(who.personUuid())
                 .map(Person::nameFull)
                 .filter(name -> !name.isBlank())
-                .orElse("Someone");
+                .orElse(NO_NAME);
     }
+
+    // The color the agent picked to be shown in, or null when they picked none
+    private String colorOf(AgentPrincipal who) {
+        return agentService.findById(who.agentUuid()).map(Agent::color).orElse(null);
+    }
+
+    // What an agent without a name is called on the roster
+    static final String NO_NAME = "Someone";
 
     // The stream ended normally. The window stays until it stops checking in.
     private void detach(UUID client, SseEmitter stream) {
@@ -453,11 +502,13 @@ public class PresenceHub {
                 .toList();
     }
 
-    // One Glade window. Everything after name can change, so it is read and written while holding the window.
+    // One Glade window. Everything after agentId can change, so it is read and written while holding the window.
     // The lock is only held for these fields, never while writing to the stream.
+    // name and color are the agent's as they were when the window opened; agentsChanged keeps them current.
     static final class Window {
         final UUID agentId;
-        final String name;
+        String name;
+        String color;
         PropertyScope scope;
         String place;
         String field;
@@ -465,9 +516,10 @@ public class PresenceHub {
         List<String> picks = List.of();
         SseEmitter stream;
 
-        Window(UUID agentId, String name, PropertyScope scope) {
+        Window(UUID agentId, String name, String color, PropertyScope scope) {
             this.agentId = agentId;
             this.name = name;
+            this.color = color;
             this.scope = scope;
         }
     }

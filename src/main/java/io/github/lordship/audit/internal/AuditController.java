@@ -50,7 +50,10 @@ public class AuditController {
             Map.entry("template_clause", Set.of("document_template:view")),
             Map.entry("document_style", Set.of("document_template:view")),
             Map.entry("property_document_assignment", Set.of("property_document:view")),
-            Map.entry("property_document_customization", Set.of("property_document:view")));
+            Map.entry("property_document_customization", Set.of("property_document:view")),
+            // what a lot offers and at what rates, and a property's deals (Glade's Rates and deals)
+            Map.entry("lot_permissible_agreement_type", Set.of("lots:view")),
+            Map.entry("terms_template", Set.of("terms_template:view")));
 
     /**
      * The signed-in agent's own saves, for "My activity" on their own page in Glade: one per save (a bulk change

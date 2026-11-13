@@ -33,7 +33,12 @@ import java.util.UUID;
 @Service
 public class MeterService {
 
-    private static final long DEFAULT_DIAL_MAX = 99999;
+    // A submeter's dial is read by park staff, so its digits can be counted on site.
+    private static final long DEFAULT_SUBMETER_DIAL_MAX = 99999;
+    // A main's dial is often unknown to the office, and providers print reads of 8 digits
+    // (City of Ephrata: 20,403,800). A dial max set too low refuses the bill's printed reads;
+    // one set too high matters only across a rollover, where the bill's printed usage shows the mistake.
+    private static final long DEFAULT_MAIN_DIAL_MAX = 999_999_999;
 
     private final MeterRepository meters;
     private final MeterLinkRepository links;
@@ -116,7 +121,7 @@ public class MeterService {
                                 String provider, String accountNumber, String serialNumber) {
         requireUnitSuits(unit, type);
         BigDecimal checkedMultiplier = checkedMultiplier(multiplier);
-        long checkedDial = checkedDialMax(dialMax);
+        long checkedDial = dialMax == null ? DEFAULT_MAIN_DIAL_MAX : checkedDialMax(dialMax);
         String cleanTitle = Patches.requiredText(title, "title");
         if (rateGroupId != null) requireRateGroupIn(rateGroupId, propertyId);
 
@@ -198,7 +203,7 @@ public class MeterService {
                                    Long dialMax, String title, String serialNumber) {
         requireUnitSuits(unit, type);
         BigDecimal checkedMultiplier = checkedMultiplier(multiplier);
-        long checkedDial = checkedDialMax(dialMax);
+        long checkedDial = dialMax == null ? DEFAULT_SUBMETER_DIAL_MAX : checkedDialMax(dialMax);
         Submeter saved = meters.insertSubmeter(propertyId, type, Patches.text(title), Patches.text(serialNumber));
         auditService.recordInsert(MeterRepository.SUBMETER, saved.uuid(), AuditMapper.toMap(saved));
         insertSetting(null, saved.uuid(), propertyId, type, null, unit, checkedMultiplier, checkedDial, null);
@@ -660,8 +665,8 @@ public class MeterService {
         return Patches.fits(multiplier, 16, 6, "multiplier");
     }
 
+    // A dial max left out gets its default (mains and submeters differ) before reaching checkedDialMax
     private static long checkedDialMax(Long dialMax) {
-        if (dialMax == null) return DEFAULT_DIAL_MAX;
         if (dialMax <= 0) throw InvalidRequest.onField("dialMax", "meter.dial_max_not_positive");
         return dialMax;
     }

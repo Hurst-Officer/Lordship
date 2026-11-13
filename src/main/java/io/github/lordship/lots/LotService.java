@@ -5,6 +5,7 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.internal.*;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.Patches;
 import io.github.lordship.shared.PropertyScope;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.termstemplate.TermsTemplate;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -347,6 +349,61 @@ public class LotService {
     }
 
     /**
+     * Offers one kind of agreement on a selection of lots, or withdraws the kind from them.
+     * The office picks the lots on the map or in the list, then changes them all at once.
+     *
+     * <p>Offering: a lot that already offers the kind is left as the lot is, rates included. A lot that gains the
+     * kind starts at the given rates; a rate left null takes the property's template figure for the kind, the
+     * same as {@link #permitAgreementType}. Refused when the lot's property has no terms template for the kind.
+     *
+     * <p>Withdrawing: governs new agreements only, the same as {@link #revokeAgreementType}. The lot's rates for
+     * the kind go with the row. A lot that does not offer the kind is skipped.
+     *
+     * <p>All or nothing: an unknown lot, or a property with no template, changes none of them.
+     * Each lot that actually changed gets an audit entry. Returns how many changed.
+     */
+    @Transactional
+    public int setAgreementType(Collection<UUID> lotIds, AgreementType agreementType, boolean permitted,
+                                BigDecimal targetRate, BigDecimal askingRate) {
+        BigDecimal target = cents(targetRate, "target_rate");
+        BigDecimal asking = cents(askingRate, "asking_rate");
+
+        // one template lookup for each property in the selection (a selection is usually one property's lots)
+        Map<UUID, TermsTemplate> templates = new HashMap<>();
+        int changed = 0;
+        // a lot picked twice is changed once
+        for (UUID lotId : new LinkedHashSet<>(lotIds)) {
+            // locked, so a coworker's change to the same lot waits for this one
+            LotRow lot = lotRepository.findByIdForUpdate(lotId)
+                    .orElseThrow(() -> InvalidRequest.of("lot.unknown", lotId));
+            Optional<LotPermissibleAgreementTypeRow> existing = permissibleRow(lotId, agreementType);
+
+            if (!permitted) {
+                if (existing.isPresent() && lotPermissibleAgreementTypeRepository.delete(lotId, agreementType)) {
+                    auditService.recordDelete("lot_permissible_agreement_type",
+                            existing.get().uuid(), AuditMapper.toMap(existing.get()));
+                    changed++;
+                }
+                continue;
+            }
+            if (existing.isPresent()) {
+                continue;
+            }
+            TermsTemplate template = templates.get(lot.propertyId());
+            if (template == null) {
+                template = termsTemplateService.findForProperty(lot.propertyId(), agreementType)
+                        .orElseThrow(() -> RuleConflict.of("property.no_template", agreementType));
+                templates.put(lot.propertyId(), template);
+            }
+            savePermissible(lotId, agreementType,
+                    (target != null) ? target : template.targetRate(),
+                    (asking != null) ? asking : template.askingRate());
+            changed++;
+        }
+        return changed;
+    }
+
+    /**
      * One or both rates across a selection of lots, for one agreement type.
      * This is the owner's pricing pass: filter the park to a kind of deal,
      * select the lots that should share a figure, type it once. Passing both
@@ -385,6 +442,50 @@ public class LotService {
                     row.uuid(), row.lotId(), agreementType,
                     (targetRate != null) ? targetRate : row.targetRate(),
                     (askingRate != null) ? askingRate : row.askingRate());
+
+            AuditMapper.Diff diff = AuditMapper.diff(row, after);
+            if (!diff.before().isEmpty()) {
+                auditService.recordUpdate(
+                        "lot_permissible_agreement_type", row.uuid(), diff.before(), diff.after());
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Empties one or both rates across a selection of lots, for one agreement type.
+     * A lot with an empty rate has no rate of the lot's own, and the property's template rate applies
+     * (the COALESCE a charge term's rate is made from). setRates cannot do this: a rate left null there
+     * is left alone. Glade's undo also needs this, to put a lot back to "no rate of the lot's own".
+     *
+     * <p>Only lots that already permit the type are touched, like setRates. A rate whose flag is false is
+     * left alone. Returns how many lots actually changed.
+     */
+    @Transactional
+    public int clearRates(Collection<UUID> lotIds, AgreementType agreementType,
+                          boolean clearTargetRate, boolean clearAskingRate) {
+        if (!clearTargetRate && !clearAskingRate) {
+            throw InvalidRequest.of("lot.rates_need_a_figure");
+        }
+        if (lotIds.isEmpty()) {
+            return 0;
+        }
+
+        List<LotPermissibleAgreementTypeRow> before = lotPermissibleAgreementTypeRepository
+                .findByLotIds(lotIds).stream()
+                .filter(row -> row.agreementType() == agreementType)
+                .toList();
+
+        lotPermissibleAgreementTypeRepository.clearRates(lotIds, agreementType, clearTargetRate, clearAskingRate);
+
+        int changed = 0;
+        for (LotPermissibleAgreementTypeRow row : before) {
+            // Mirrors the CASE in the UPDATE, so the diff reflects what the database actually did
+            LotPermissibleAgreementTypeRow after = new LotPermissibleAgreementTypeRow(
+                    row.uuid(), row.lotId(), agreementType,
+                    clearTargetRate ? null : row.targetRate(),
+                    clearAskingRate ? null : row.askingRate());
 
             AuditMapper.Diff diff = AuditMapper.diff(row, after);
             if (!diff.before().isEmpty()) {
@@ -446,6 +547,17 @@ public class LotService {
         }
     }
 
+    // A rate as the NUMERIC(12,2) column holds it: not negative, at most two decimals, written to the cent
+    // (650 becomes 650.00, the value the column gives back). field is the API's own name for the rate,
+    // like "target_rate". Null stays null.
+    private static BigDecimal cents(BigDecimal rate, String field) {
+        if (rate == null) {
+            return null;
+        }
+        requireNotNegative(rate, field);
+        return Patches.fits(rate, 12, 2, field).setScale(2, RoundingMode.UNNECESSARY);
+    }
+
     private Optional<LotPermissibleAgreementTypeRow> permissibleRow(UUID lotId, AgreementType agreementType) {
         return lotPermissibleAgreementTypeRepository.findByLotId(lotId).stream()
                 .filter(row -> row.agreementType() == agreementType)
@@ -474,4 +586,4 @@ public class LotService {
                     "lot_permissible_agreement_type", after.uuid(), diff.before(), diff.after());
         }
     }
-}
+}

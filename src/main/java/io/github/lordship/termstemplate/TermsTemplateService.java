@@ -9,6 +9,8 @@ import io.github.lordship.shared.DomainProblem;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.LateFeeTier;
+import io.github.lordship.shared.Patches;
+import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.termstemplate.internal.TermsTemplateRepository;
 import io.github.lordship.termstemplate.internal.TermsTemplateRow;
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -46,6 +49,18 @@ public class TermsTemplateService {
 
     // if only these things change - DO NOT do an audit log
     private static final Set<String> HOUSEKEEPING_KEYS = Set.of("updatedAt");
+
+    // The NUMERIC(12,2) columns: dollars and cents (or, for a late fee and a deposit, a percent or a multiple)
+    private static final Set<String> AMOUNT_COLUMNS = Set.of(
+            "target_rate", "asking_rate", "car_fee", "pet_fee",
+            "rule_violation_fee_amount", "nsf_fee_amount", "late_fee_amount",
+            "water_flat_amount", "power_flat_amount", "sewer_flat_amount", "trash_flat_amount",
+            "security_deposit_amount");
+
+    // The INT columns: counts and days
+    private static final Set<String> WHOLE_COLUMNS = Set.of(
+            "escalation_months", "allowed_cars", "cars_max", "allowed_pets",
+            "payment_due_day", "grace_period_days");
 
     /**
      * One method column and the amount column it governs.
@@ -165,6 +180,8 @@ public class TermsTemplateService {
         }
         TermsTemplateRow before = beforeOpt.get();
 
+        changes = withTextNumbersRead(changes);
+
         if (changes.containsKey("late_fee_tiers")) {
             changes.put("late_fee_tiers", LateFeeTier.fromRequest(changes.get("late_fee_tiers")));
         }
@@ -191,6 +208,43 @@ public class TermsTemplateService {
         }
 
         return Optional.of(after.toTermsTemplate());
+    }
+
+    /**
+     * Glade sends amounts and counts as text ("650.00", "2"), so every digit arrives: a JSON number in a map
+     * body arrives as a double. Each number sent as text becomes a number the number's column holds exactly:
+     * an amount with more than two decimals, or a count that is not whole, is refused instead of rounded.
+     * Blank text is null. A value that arrived as a JSON number is left as the value arrived.
+     *
+     * <p>The caller's map is not changed: when any value is read, the result is a copy.
+     */
+    private static Map<String, Object> withTextNumbersRead(Map<String, Object> changes) {
+        Map<String, Object> read = null;
+        for (Map.Entry<String, Object> entry : changes.entrySet()) {
+            String column = entry.getKey();
+            if (!(entry.getValue() instanceof String)) {
+                continue;
+            }
+            Object number;
+            if (AMOUNT_COLUMNS.contains(column)) {
+                number = Patches.fits(Patches.decimal(entry.getValue(), column), 12, 2, column);
+            } else if (column.equals("escalation_percent")) {
+                number = Patches.fits(Patches.decimal(entry.getValue(), column), 5, 2, column);
+            } else if (WHOLE_COLUMNS.contains(column)) {
+                Long whole = Patches.whole(entry.getValue(), column);
+                if (whole != null && (whole > Integer.MAX_VALUE || whole < Integer.MIN_VALUE)) {
+                    throw InvalidRequest.onField(column, "value.too_large");
+                }
+                number = (whole == null) ? null : whole.intValue();
+            } else {
+                continue;
+            }
+            if (read == null) {
+                read = new HashMap<>(changes);
+            }
+            read.put(column, number);
+        }
+        return (read == null) ? changes : read;
     }
 
     private static void validateDepositCeiling(TermsTemplateRow before, Map<String, Object> changes) {
@@ -223,6 +277,42 @@ public class TermsTemplateService {
             auditService.recordDelete("terms_template", uuid, AuditMapper.toMap(existing));
             return true;
         }).orElse(false);
+    }
+
+    /**
+     * Brings a deleted terms template back, like an undo. A template that is not deleted is answered as the
+     * template is, so a restore whose first answer was lost can be sent again. Empty for an unknown template.
+     *
+     * <p>Refused (409) when the template's place was taken while the template was deleted: the property now has
+     * another template for the same kind of agreement, or another global template has the same name.
+     * The restore is written to the audit log as an update of deletedAt (from the time back to empty).
+     */
+    @Transactional
+    public Optional<TermsTemplate> restoreTermsTemplate(UUID uuid) {
+        Optional<TermsTemplateRow> beforeOpt = termsTemplateRepository.findAnyById(uuid);
+        if (beforeOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        TermsTemplateRow before = beforeOpt.get();
+        if (before.deletedAt() == null) {
+            return Optional.of(before.toTermsTemplate());
+        }
+
+        if (before.property() != null) {
+            if (termsTemplateRepository.findByPropertyAndAgreementType(before.property(), before.agreementType()).isPresent()) {
+                throw RuleConflict.of("terms_template.type_taken", before.agreementType());
+            }
+        } else if (termsTemplateRepository.findGlobalByName(before.name()).isPresent()) {
+            throw RuleConflict.of("terms_template.name_taken", before.name());
+        }
+
+        Optional<TermsTemplateRow> afterOpt = termsTemplateRepository.restore(uuid);
+        if (afterOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        AuditMapper.Diff diff = AuditMapper.diff(before, afterOpt.get());
+        auditService.recordUpdate("terms_template", uuid, diff.before(), diff.after());
+        return Optional.of(afterOpt.get().toTermsTemplate());
     }
 
     // A property may hold only one set per agreement type.

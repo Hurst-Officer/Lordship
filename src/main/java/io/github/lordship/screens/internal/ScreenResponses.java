@@ -6,9 +6,14 @@ import io.github.lordship.access.RoleService;
 import io.github.lordship.access.internal.agents.AgentOwnResponse;
 import io.github.lordship.audit.History;
 import io.github.lordship.homes.internal.HomeResponse;
+import io.github.lordship.lots.LotOffers;
 import io.github.lordship.lots.internal.LotResponse;
 import io.github.lordship.persons.internal.PersonOwnResponse;
+import io.github.lordship.properties.Property;
 import io.github.lordship.properties.internal.PropertyResponse;
+import io.github.lordship.shared.AgreementType;
+import io.github.lordship.termstemplate.TermsTemplate;
+import io.github.lordship.termstemplate.internal.TermsTemplateResponse;
 
 import java.util.List;
 import java.util.UUID;
@@ -61,6 +66,61 @@ public final class ScreenResponses {
             List<RoleDirectory.EffectivePermission> denied,
             boolean allProperties,
             List<RoleDirectory.AssignedProperty> properties,
+            History.PageHistory history
+    ) { }
+
+    // ---- Rates and deals ----
+
+    // A property as the Rates and deals screens name the property: enough for a header, a row of the list,
+    // and the property's place on the map of every property.
+    // titleLink is the link the office set for the property's name (in Properties), or null: the name at the
+    // top of the page opens the link.
+    public record RatesPark(UUID id, String propertyCode, String propertyName, String propertyStreet,
+                            String propertyCity, String propertyState, String propertyZip,
+                            Double latitude, Double longitude, String titleLink) {
+        static RatesPark from(Property property) {
+            return new RatesPark(property.uuid(), property.propertyCode(), property.propertyName(),
+                    property.propertyStreet(), property.propertyCity(), property.propertyState(),
+                    property.propertyZip(), property.latitude(), property.longitude(), property.titleLink());
+        }
+    }
+
+    // The two standard rates of one of a property's deals, as text ("650.00") or null when the deal has none.
+    // A lot with no rate of the lot's own for the kind of agreement uses these. Sent to anyone who may see lots,
+    // because a lot's rate cannot be shown without them; the rest of a deal needs terms_template:view.
+    public record RatesStandard(AgreementType agreementType, String targetRate, String askingRate) {
+        static RatesStandard from(TermsTemplate deal) {
+            return new RatesStandard(deal.agreementType(),
+                    deal.targetRate() == null ? null : deal.targetRate().toPlainString(),
+                    deal.askingRate() == null ? null : deal.askingRate().toPlainString());
+        }
+    }
+
+    // The list of every property (X1): each property in the agent's scope, and one line for each kind of
+    // agreement a property has a deal for or one of the property's lots offers
+    public record RatesScreen(
+            List<RatesPark> properties,
+            List<LotOffers.ParkLine> lines
+    ) { }
+
+    // One property (X2). standards has one entry for each deal. deals is null without terms_template:view,
+    // in the same shape as GET /api/terms-templates/{id}, so the page can save through that endpoint.
+    // history is null without audit:view.
+    public record RatesPropertyScreen(
+            RatesPark property,
+            List<LotOffers.LotLine> lots,
+            List<RatesStandard> standards,
+            List<TermsTemplateResponse> deals,
+            History.PageHistory history
+    ) { }
+
+    // One lot (X3). property is the lot's property, for the page's header.
+    // deals is null without terms_template:view. history is null without audit:view.
+    public record RatesLotScreen(
+            LotOffers.LotLine lot,
+            RatesPark property,
+            List<RatesStandard> standards,
+            List<TermsTemplateResponse> deals,
             History.PageHistory history
     ) { }
 

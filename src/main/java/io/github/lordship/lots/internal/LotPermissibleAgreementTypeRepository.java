@@ -44,7 +44,7 @@ public class LotPermissibleAgreementTypeRepository {
      * permit the type means the selection went stale, not that the lot should
      * be enrolled. COALESCE leaves a figure alone when it was not supplied, so
      * setting only the asking rate cannot wipe the target; clearing a rate is
-     * the single-lot endpoint's job.
+     * clearRates' job.
      */
     public int updateRates(Collection<UUID> lotIds, AgreementType agreementType,
                            BigDecimal targetRate, BigDecimal askingRate) {
@@ -62,6 +62,30 @@ public class LotPermissibleAgreementTypeRepository {
                 .param("agreementType", agreementType.name())
                 .param("targetRate", targetRate)
                 .param("askingRate", askingRate)
+                .update();
+    }
+
+    /**
+     * Empties one or both rates across a selection, for one kind of deal. A lot with an empty
+     * rate has no rate of the lot's own, and the property's template rate applies.
+     * A rate whose flag is false is left alone. Like updateRates, only lots that permit the type are touched.
+     */
+    public int clearRates(Collection<UUID> lotIds, AgreementType agreementType,
+                          boolean clearTargetRate, boolean clearAskingRate) {
+        if (lotIds.isEmpty()) {
+            return 0;
+        }
+        return jdbc.sql("""
+            UPDATE lot_permissible_agreement_type
+            SET target_rate = CASE WHEN :clearTargetRate THEN NULL ELSE target_rate END,
+                asking_rate = CASE WHEN :clearAskingRate THEN NULL ELSE asking_rate END
+            WHERE lot_id IN (:lotIds)
+              AND agreement_type = :agreementType::agreement_type
+            """)
+                .param("lotIds", lotIds)
+                .param("agreementType", agreementType.name())
+                .param("clearTargetRate", clearTargetRate)
+                .param("clearAskingRate", clearAskingRate)
                 .update();
     }
 

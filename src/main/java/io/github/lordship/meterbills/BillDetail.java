@@ -27,6 +27,7 @@ public record BillDetail(
      * @param printedBaseUsage the printed usage in gallons or kWh
      * @param baseUsage        what the rate uses: the printed usage when there is one, else the reads'
      * @param usageMatches     null unless both are known; false when they differ by more than 1%
+     *                         and by more than half of one printed unit (the provider's rounding)
      */
     public record Meter(
             UtilityBillMeter meter,
