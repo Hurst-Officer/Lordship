@@ -142,6 +142,16 @@ public class AgentSessionService {
         return ended;
     }
 
+    /**
+     * Log out of every computer but one. Used when an agent changes their own password: the computer the
+     * change came from (keepSessionId) stays signed in, and every other computer is refused on its next request.
+     */
+    public int endAllExcept(UUID agentId, UUID keepSessionId) {
+        int ended = sessionRepository.endAllForAgentExcept(agentId, keepSessionId);
+        authorizationCache.invalidate(agentId);
+        return ended;
+    }
+
     /** The agent's sessions that were not ended, for the check on every request (JwtAuthFilter). */
     public Set<UUID> notEndedIds(UUID agentId) {
         return Set.copyOf(sessionRepository.findNotEndedIds(agentId));

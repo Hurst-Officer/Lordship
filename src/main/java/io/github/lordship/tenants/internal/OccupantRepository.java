@@ -92,6 +92,22 @@ public class OccupantRepository {
                 .list();
     }
 
+    // A stay whether deleted or not, for the restore
+    public Optional<OccupantRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM occupant WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(OccupantRow.class)
+                .optional();
+    }
+
+    // Brings a deleted stay back. Empty when the stay is unknown or not deleted.
+    public Optional<OccupantRow> restore(UUID uuid) {
+        return jdbc.sql("UPDATE occupant SET deleted_at = NULL WHERE uuid = :uuid AND deleted_at IS NOT NULL RETURNING *")
+                .param("uuid", uuid)
+                .query(OccupantRow.class)
+                .optional();
+    }
+
     public boolean softDelete(UUID uuid) {
         return jdbc.sql("UPDATE occupant SET deleted_at = CURRENT_TIMESTAMP WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)

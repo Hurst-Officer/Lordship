@@ -88,6 +88,22 @@ public class InterestedPartyRepository {
                 .list();
     }
 
+    // An interest whether deleted or not, for the restore
+    public Optional<InterestedPartyRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM tenancy_interested_party WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(InterestedPartyRow.class)
+                .optional();
+    }
+
+    // Brings a deleted interest back. Empty when the interest is unknown or not deleted.
+    public Optional<InterestedPartyRow> restore(UUID uuid) {
+        return jdbc.sql("UPDATE tenancy_interested_party SET deleted_at = NULL WHERE uuid = :uuid AND deleted_at IS NOT NULL RETURNING *")
+                .param("uuid", uuid)
+                .query(InterestedPartyRow.class)
+                .optional();
+    }
+
     public boolean softDelete(UUID uuid) {
         return jdbc.sql("UPDATE tenancy_interested_party SET deleted_at = CURRENT_TIMESTAMP WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)

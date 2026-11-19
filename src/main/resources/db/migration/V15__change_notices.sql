@@ -37,7 +37,8 @@ BEGIN
     -- The row's id and every parent id a place is built from. A column the table does not have is left out.
     SELECT jsonb_object_agg(k, r -> k) INTO ids
     FROM unnest(ARRAY['uuid', 'property_id', 'lot_id', 'agent_id', 'role_id', 'person_id', 'mobile_home_id',
-                      'template', 'section', 'property', 'document_template', 'assignment']) AS k
+                      'template', 'section', 'property', 'document_template', 'assignment',
+                      'tenancy_id', 'tenancy']) AS k
     WHERE jsonb_typeof(r -> k) = 'string';
     PERFORM pg_notify('lordship_change', jsonb_build_object('t', TG_TABLE_NAME, 'r', COALESCE(ids, '{}'::jsonb))::text);
     -- An UPDATE that moves the row to another parent (a home to another lot, or off its lot) sends a second
@@ -46,7 +47,8 @@ BEGIN
         r := to_jsonb(OLD);
         SELECT jsonb_object_agg(k, r -> k) INTO was
         FROM unnest(ARRAY['uuid', 'property_id', 'lot_id', 'agent_id', 'role_id', 'person_id', 'mobile_home_id',
-                          'template', 'section', 'property', 'document_template', 'assignment']) AS k
+                          'template', 'section', 'property', 'document_template', 'assignment',
+                      'tenancy_id', 'tenancy']) AS k
         WHERE jsonb_typeof(r -> k) = 'string';
         IF was IS DISTINCT FROM ids THEN
             PERFORM pg_notify('lordship_change', jsonb_build_object('t', TG_TABLE_NAME, 'r', COALESCE(was, '{}'::jsonb))::text);
@@ -84,7 +86,10 @@ FROM (
         'document_template', 'document_style', 'document_section', 'template_clause',
         'property_document_assignment', 'property_document_customization',
         -- a property's deals (Glade's Rates and deals). Keyed by "property", so not found by the columns above.
-        'terms_template'])
+        'terms_template',
+        -- the people on a tenancy, the rent a tenancy is under and the document the rent came from (Glade's
+        -- Tenancies). Keyed by "tenancy_id" or "tenancy", so not found by the columns above.
+        'tenant', 'occupant', 'tenancy_interested_party', 'tenancy_charge_term', 'instrument'])
 ) AS watched
 WHERE watched.table_name NOT IN ('site_elevation', 'property_footprint_stale', 'map_feature_edit',
                                  'agent_session_spent_token');

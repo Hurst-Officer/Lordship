@@ -121,16 +121,9 @@ public class InterestedPartyController {
                 : ResponseEntity.notFound().build();
     }
 
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("message", String.valueOf(e.getMessage())));
-    }
-
-    @ExceptionHandler(IllegalStateException.class)
-    ResponseEntity<Map<String, String>> conflict(IllegalStateException e) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("message", String.valueOf(e.getMessage())));
-    }
+    // Refusals are answered by config ApiExceptionHandler: a rule the service refused
+    // (interested_party.already_on) comes back as { message, code } in the worker's language. The restore of a
+    // deleted interest is in HouseholdController.
 
     @ExceptionHandler(EntityNotFoundException.class)
     ResponseEntity<Map<String, String>> notFound(EntityNotFoundException e) {

@@ -778,6 +778,8 @@ public class TenancyChargeTermService {
         Map<String, Object> coerced = new LinkedHashMap<>(changes);
         coerced.replaceAll((column, value) -> switch (column) {
             case "valid_at" -> toDate(column, value);
+            // Glade sends money as text ("650.00"); the column is NUMERIC, and a text parameter is refused there
+            case "rate" -> toRent(column, value);
             case "late_fee_tiers" -> LateFeeTier.fromRequest(value);
             default -> value;
         });
@@ -797,6 +799,18 @@ public class TenancyChargeTermService {
         } catch (DateTimeParseException e) {
             throw InvalidRequest.onField(column, "term.not_a_date", text);
         }
+    }
+
+    // A rent as a number, from a JSON number or from text. A rent is never empty and never below zero.
+    private static BigDecimal toRent(String column, Object raw) {
+        BigDecimal amount = toAmount(raw, column);
+        if (amount == null) {
+            throw InvalidRequest.onField(column, "term.not_a_number");
+        }
+        if (amount.signum() < 0) {
+            throw InvalidRequest.onField(column, "term.amount_negative");
+        }
+        return amount;
     }
 
     private static BigDecimal toAmount(Object raw, String column) {

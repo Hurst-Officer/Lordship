@@ -118,18 +118,20 @@ public class TenancyController {
                 : ResponseEntity.notFound().build();
     }
 
-    // "Lot 14 cannot take a new tenancy: condemned after the flood" is the whole
-    // content of the refusal, and an empty 409 throws it away.
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("message", String.valueOf(e.getMessage())));
+    // Brings a deleted tenancy back (Glade's undo of a delete). A tenancy that is not deleted is answered as the
+    // tenancy is. 404 for an unknown tenancy. 409 tenancy.lot_deleted, tenancy.lot_taken or
+    // tenancy.lot_full_in_month when the lot can no longer take the tenancy back.
+    @PreAuthorize("hasAuthority('tenancy:delete')")
+    @PostMapping("/{uuid}/restore")
+    public ResponseEntity<TenancyResponse> restoreTenancy(@PathVariable UUID uuid) {
+        return tenancyService.restore(uuid)
+                .map(t -> ResponseEntity.ok(TenancyResponse.from(t)))
+                .orElse(ResponseEntity.notFound().build());
     }
 
-    @ExceptionHandler(IllegalStateException.class)
-    ResponseEntity<Map<String, String>> conflict(IllegalStateException e) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("message", String.valueOf(e.getMessage())));
-    }
+    // Refusals are answered by config ApiExceptionHandler: a rule the service refused (InvalidRequest,
+    // RuleConflict) comes back as { message, code } in the worker's language, 400 or 409. A handler here for
+    // IllegalArgumentException or IllegalStateException would catch those first and answer the code alone.
 
     @ExceptionHandler(EntityNotFoundException.class)
     ResponseEntity<Map<String, String>> notFound(EntityNotFoundException e) {

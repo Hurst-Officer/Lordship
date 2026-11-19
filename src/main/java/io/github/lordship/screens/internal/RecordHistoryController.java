@@ -5,10 +5,15 @@ import io.github.lordship.audit.History;
 import io.github.lordship.documenttemplate.PropertyDocumentAssignmentService;
 import io.github.lordship.homes.HomeService;
 import io.github.lordship.identity.AgentPrincipal;
+import io.github.lordship.instruments.Instrument;
+import io.github.lordship.instruments.InstrumentService;
 import io.github.lordship.lots.LotOffers;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.PropertyScope;
+import io.github.lordship.tenancy.TenancyRoll;
+import io.github.lordship.tenancyterms.TenancyChargeTerm;
+import io.github.lordship.tenancyterms.TenancyChargeTermService;
 import io.github.lordship.termstemplate.TermsTemplateService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -56,7 +61,15 @@ public class RecordHistoryController {
             Map.entry("property_document_customization", "property_document:view"),
             // what a lot offers and at what rates, and a property's deals (Glade's Rates and deals)
             Map.entry("lot_permissible_agreement_type", "lots:view"),
-            Map.entry("terms_template", "terms_template:view"));
+            Map.entry("terms_template", "terms_template:view"),
+            // a tenancy, and each person's stay on a tenancy (Glade's Tenancies)
+            Map.entry("tenancy", "tenancy:view"),
+            Map.entry("tenant", "tenants:view"),
+            Map.entry("occupant", "tenants:view"),
+            Map.entry("tenancy_interested_party", "tenants:view"),
+            // a tenancy's documents, and the rent steps a document carries (the lease panel of Glade's Tenancies)
+            Map.entry("instrument", "instrument:view"),
+            Map.entry("tenancy_charge_term", "tenancy_term:view"));
 
     // An agent's history is read for the roles they were given and lost, and the permissions taken from them alone
     // and given back ("permissions.lots:edit"), and nothing else of theirs
@@ -73,10 +86,18 @@ public class RecordHistoryController {
     private final PropertyDocumentAssignmentService assignmentService;
     private final LotOffers lotOffers;
     private final TermsTemplateService termsTemplateService;
+    private final TenancyRoll tenancyRoll;
+    private final InstrumentService instrumentService;
+    private final TenancyChargeTermService chargeTermService;
 
     public RecordHistoryController(AuditService auditService, LotService lotService, HomeService homeService,
                                    PropertyDocumentAssignmentService assignmentService,
-                                   LotOffers lotOffers, TermsTemplateService termsTemplateService) {
+                                   LotOffers lotOffers, TermsTemplateService termsTemplateService,
+                                   TenancyRoll tenancyRoll, InstrumentService instrumentService,
+                                   TenancyChargeTermService chargeTermService) {
+        this.tenancyRoll = tenancyRoll;
+        this.instrumentService = instrumentService;
+        this.chargeTermService = chargeTermService;
         this.auditService = auditService;
         this.lotService = lotService;
         this.homeService = homeService;
@@ -89,7 +110,9 @@ public class RecordHistoryController {
      * One record's changes to some of its fields, newest first, ten at a time.
      * table is property, lot, mobile_home, agent_role, agent, a Documents table (document_template, document_section,
      * template_clause, document_style, property_document_assignment, property_document_customization), or a Rates and
-     * deals table (lot_permissible_agreement_type: one kind of agreement a lot offers; terms_template: a deal).
+     * deals table (lot_permissible_agreement_type: one kind of agreement a lot offers; terms_template: a deal),
+     * or a Tenancies table (tenancy, one person's stay: tenant, occupant, tenancy_interested_party, a tenancy's
+     * document: instrument, and a rent step of a document: tenancy_charge_term).
      * Anything else is a 400 (audit.table_unknown).
      * For agent, every field must be a role ("roles.<roleId>") or a permission taken from them or given back
      * ("permissions.<name>"); anything else is a 400 (audit.field_not_shown).
@@ -168,6 +191,21 @@ public class RecordHistoryController {
             // a property's deal is that property's; a global template is tied to no property
             case "terms_template" -> termsTemplateService.findById(id)
                     .map(deal -> deal.property() == null || scope.allows(deal.property()))
+                    .orElse(false);
+            // a tenancy is the property's of the tenancy's lot, and a stay is the stay's tenancy's
+            case "tenancy" -> tenancyRoll.propertyOfTenancy(id).map(scope::allows).orElse(false);
+            case "tenant", "occupant", "tenancy_interested_party" ->
+                    tenancyRoll.propertyOfMember(table, id).map(scope::allows).orElse(false);
+            // a document and a rent step are their tenancy's
+            case "instrument" -> instrumentService.findById(id)
+                    .map(Instrument::tenancy)
+                    .flatMap(tenancyRoll::propertyOfTenancy)
+                    .map(scope::allows)
+                    .orElse(false);
+            case "tenancy_charge_term" -> chargeTermService.findById(id)
+                    .map(TenancyChargeTerm::tenancy)
+                    .flatMap(tenancyRoll::propertyOfTenancy)
+                    .map(scope::allows)
                     .orElse(false);
             default -> false;
         };
