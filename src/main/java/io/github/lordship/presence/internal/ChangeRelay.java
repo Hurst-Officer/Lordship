@@ -23,7 +23,8 @@ import java.util.UUID;
  * A batch of database change notices (ChangeNotices) to every open Glade window: each notice becomes the places
  * that show its row (ChangePlaces), and PresenceHub tells the windows that may see them.
  *
- * <p>The parents a notice does not carry (a home's lot, a lot's property, a person's agent, a clause's document)
+ * <p>The parents a notice does not carry (a home's lot, a lot's property, a person's agent, a clause's document,
+ * a tenant's tenancy and the tenancy's lot)
  * are read here, one query per kind for the whole batch. These read other modules' tables by name on purpose:
  * the notices themselves come from the database, below every module.
  *
@@ -118,8 +119,20 @@ class ChangeRelay {
     private Parents parentsOf(List<Notice> notices) {
         Map<String, String> homeLot = pairs("SELECT uuid, lot_id FROM mobile_home WHERE uuid IN (:ids)",
                 idsOf(notices, "mobile_home_secured_party", "mobile_home_id"));
-        Map<String, String> lotProperty = pairs("SELECT uuid, property_id FROM lot WHERE uuid IN (:ids)",
-                ChangePlaces.lotIdsNeeded(notices, homeLot));
+        // Tenancies: the tenancies each changed person is on, then the lot of every tenancy a notice names
+        Map<String, List<String>> personTenancies = tenanciesOf(idsOf(notices, "person", "uuid"));
+        Set<String> tenancyIds = new LinkedHashSet<>();
+        for (String table : List.of("tenant", "occupant", "tenancy_interested_party")) {
+            tenancyIds.addAll(idsOf(notices, table, "tenancy_id"));
+        }
+        tenancyIds.addAll(idsOf(notices, "tenancy_charge_term", "tenancy"));
+        tenancyIds.addAll(idsOf(notices, "instrument", "tenancy"));
+        personTenancies.values().forEach(tenancyIds::addAll);
+        Map<String, String> tenancyLot = pairs("SELECT uuid, lot_id FROM tenancy WHERE uuid IN (:ids)", tenancyIds);
+
+        Set<String> lotIds = new LinkedHashSet<>(ChangePlaces.lotIdsNeeded(notices, homeLot));
+        lotIds.addAll(tenancyLot.values());
+        Map<String, String> lotProperty = pairs("SELECT uuid, property_id FROM lot WHERE uuid IN (:ids)", lotIds);
         Map<String, String> personAgent = pairs("SELECT person_id, uuid FROM agent WHERE person_id IN (:ids)",
                 idsOf(notices, "person", "uuid"));
         Map<String, String> sectionTemplate = pairs("SELECT uuid, template FROM document_section WHERE uuid IN (:ids)",
@@ -132,7 +145,29 @@ class ChangeRelay {
                     .query((rs, i) -> assignments.put(rs.getString(1), new String[] { rs.getString(2), rs.getString(3) }))
                     .list();
         }
-        return new Parents(lotProperty, homeLot, personAgent, sectionTemplate, assignments);
+        return new Parents(lotProperty, homeLot, personAgent, sectionTemplate, assignments, tenancyLot, personTenancies);
+    }
+
+    // person id -> the tenancies the person is on as a tenant, an occupant or an interested party (live stays)
+    private Map<String, List<String>> tenanciesOf(Set<String> personIds) {
+        List<UUID> asked = uuids(personIds);
+        Map<String, List<String>> found = new HashMap<>();
+        if (asked.isEmpty()) return found;
+        jdbc.sql("""
+                        SELECT person_id, tenancy_id FROM tenant WHERE person_id IN (:ids) AND deleted_at IS NULL
+                        UNION
+                        SELECT person_id, tenancy_id FROM occupant WHERE person_id IN (:ids) AND deleted_at IS NULL
+                        UNION
+                        SELECT person_id, tenancy_id FROM tenancy_interested_party
+                        WHERE person_id IN (:ids) AND deleted_at IS NULL
+                        """)
+                .param("ids", asked)
+                .query((rs, i) -> {
+                    found.computeIfAbsent(rs.getString(1), id -> new ArrayList<>()).add(rs.getString(2));
+                    return i;
+                })
+                .list();
+        return found;
     }
 
     // The values of one id key, over the notices of one table

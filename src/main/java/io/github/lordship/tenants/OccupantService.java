@@ -62,9 +62,8 @@ public class OccupantService {
 
         occupantRepository.findActiveByTenancyAndPerson(tenancy.uuid(), personId)
                 .ifPresent(existing -> {
-                    throw new IllegalStateException(
-                            "Person " + personId + " is already an active occupant on tenancy "
-                                    + tenancy.uuid() + " (occupant " + existing.uuid() + ")");
+                    throw io.github.lordship.shared.RuleConflict.of(
+                            "occupant.already_on", personId, tenancy.uuid(), existing.uuid());
                 });
 
         LocalDate startDate = startDateOpt != null

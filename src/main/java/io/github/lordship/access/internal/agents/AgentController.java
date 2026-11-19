@@ -159,6 +159,41 @@ public class AgentController {
     }
 
     /**
+     * The signed-in agent changes their own password (Glade: My information, Signing in).
+     * Body: {@code currentPassword} and {@code newPassword}. Any signed-in agent may; no permission is needed.
+     * <ul>
+     *   <li>204 -- changed. The computer that sent the request stays signed in. Every other computer the agent
+     *       is signed in on is signed out: its next request is refused (401) and Glade there shows the sign-in screen.</li>
+     *   <li>400 with {@code code} and {@code field} -- {@code password.current_missing} or
+     *       {@code password.current_wrong} on {@code currentPassword}; {@code password.length} (12 to 64 characters),
+     *       {@code password.too_long} (over 72 bytes) or {@code password.same_as_current} on {@code newPassword}.
+     *       Show {@code message} under that box.</li>
+     *   <li>429, {@code code: auth.too_many_attempts} plus {@code Retry-After} -- a wrong current password counts
+     *       as a sign-in attempt (LoginThrottle), so a stolen window cannot be used to guess the password.
+     *       Disable the button until Retry-After runs out; do not retry on a loop.</li>
+     *   <li>404 -- the agent is gone.</li>
+     * </ul>
+     * Audited on the agent table, with the password itself never written.
+     */
+    @PreAuthorize("isAuthenticated()")
+    @PutMapping("/self/password")
+    public ResponseEntity<Void> changeOwnPassword(@RequestBody ChangeOwnPasswordRequest request,
+                                                  Authentication authentication,
+                                                  HttpServletRequest httpRequest) {
+        if (!(authentication.getPrincipal() instanceof AgentPrincipal principal)) {
+            return ResponseEntity.notFound().build();
+        }
+        // the session the request's access token came from: the computer that stays signed in
+        UUID callerSessionId = (UUID) httpRequest.getAttribute(JwtService.SESSION_ID_ATTRIBUTE);
+
+        return agentService.changeOwnPassword(principal.agentUuid(), request.currentPassword(), request.newPassword(),
+                        callerSessionId, httpRequest.getRemoteAddr())
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
+
+    /**
+     * An admin sets a new password for any agent (a reset). The agent's own change is {@code /self/password} above.
      * 204 when set, and every token the agent held stops working (they sign in again).
      * Over 72 bytes: 400, {@code code: password.too_long}, {@code field: newPassword}.
      * Does not reset LoginThrottle -- an agent locked out at sign-in still waits out the window.

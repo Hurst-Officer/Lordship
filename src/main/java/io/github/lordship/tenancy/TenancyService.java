@@ -6,6 +6,9 @@ import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
+import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.tenancy.internal.TenancyRepository;
 import io.github.lordship.tenancy.internal.TenancyRow;
 import jakarta.persistence.EntityNotFoundException;
@@ -79,8 +82,7 @@ public class TenancyService {
                 .orElseThrow(() -> new EntityNotFoundException("Lot not found: " + lotId));
 
         if (Boolean.FALSE.equals(lot.isRentable())) {
-            throw new IllegalStateException("Lot " + lot.lotNumber()
-                    + " cannot take a new tenancy: " + lot.notRentableReason());
+            throw RuleConflict.of("tenancy.lot_not_rentable", lot.lotNumber(), reasonOf(lot));
         }
 
         LocalDate start = (startDate != null) ? startDate : billingPeriodStart(LocalDate.now());
@@ -93,6 +95,71 @@ public class TenancyService {
         // log
         auditService.recordInsert("tenancy", row.uuid(), AuditMapper.toMap(row));
         return tenancy;
+    }
+
+    /**
+     * Starts a tenancy the way Glade's "New tenancy" does: on a lot that is open for the kind of agreement picked.
+     *
+     * <p>Three things are asked of the lot. The lot is rentable. The lot offers the kind
+     * (lot_permissible_agreement_type, what Rates and deals edits). And fewer than two tenancies hold the lot on
+     * the start date: a tenancy holds the lot until the tenancy's end date, and while the tenancy has none.
+     *
+     * <p>One tenancy already on the lot is allowed on purpose, end date or not. A household that is wrapping up
+     * rarely has an exact last day yet, and the office has to be able to set up the next household meanwhile.
+     * The two tenancies overlap until the first is given an end date. Two is the ceiling, the same ceiling the
+     * database keeps (tenancy_active_limit).
+     *
+     * <p>A STORAGE or UTILITY_SERVICE agreement never shares a lot with a land lease, overlap or not: refused
+     * when a tenancy that holds the lot has a charge term of the other kind. A tenancy with no charge term yet
+     * has no kind, and rules nothing out.
+     *
+     * <p>The kind is checked here and not stored: a tenancy has no kind of the tenancy's own. The kind lives on
+     * the tenancy's charge terms, which the lease creates.
+     *
+     * <p>A blank start date becomes the billing period the office is working in ({@link #billingPeriodStart}).
+     *
+     * <p>Throws InvalidRequest (400) lot.unknown or tenancy.kind_needed, and RuleConflict (409)
+     * tenancy.lot_not_rentable, lot.does_not_permit, tenancy.lot_full or tenancy.kind_conflict.
+     */
+    @Transactional
+    public Tenancy openOn(UUID lotId, AgreementType agreementType, LocalDate startDate) {
+        Lot lot = lotService.findById(lotId)
+                .orElseThrow(() -> InvalidRequest.onField("lotId", "lot.unknown", lotId));
+        if (agreementType == null) {
+            throw InvalidRequest.onField("agreementType", "tenancy.kind_needed");
+        }
+        if (Boolean.FALSE.equals(lot.isRentable())) {
+            throw RuleConflict.of("tenancy.lot_not_rentable", lot.lotNumber(), reasonOf(lot));
+        }
+        if (!lot.permits(agreementType)) {
+            throw RuleConflict.of("lot.does_not_permit", lot.lotNumber(), agreementType);
+        }
+
+        LocalDate start = (startDate != null) ? startDate : billingPeriodStart(LocalDate.now());
+        if (tenancyRepository.countHolding(lotId, null, start) >= 2) {
+            throw RuleConflict.of("tenancy.lot_full", lot.lotNumber());
+        }
+        List<String> never = kindsNeverBeside(agreementType);
+        if (!never.isEmpty() && tenancyRepository.holdsKind(lotId, never, start)) {
+            throw RuleConflict.of("tenancy.kind_conflict", lot.lotNumber(), agreementType);
+        }
+        return create(lotId, start);
+    }
+
+    // The kinds of agreement that never share a lot with this kind: storage and utility service on one side,
+    // a land lease on the other. Empty for a kind that may sit beside anything.
+    private static List<String> kindsNeverBeside(AgreementType agreementType) {
+        return switch (agreementType) {
+            case LAND -> List.of(AgreementType.STORAGE.name(), AgreementType.UTILITY_SERVICE.name());
+            case STORAGE, UTILITY_SERVICE -> List.of(AgreementType.LAND.name());
+            default -> List.of();
+        };
+    }
+
+    // Why a lot is not rentable, for a refusal. A lot marked not rentable without a reason says so.
+    private static String reasonOf(Lot lot) {
+        String reason = lot.notRentableReason();
+        return (reason == null || reason.isBlank()) ? "-" : reason;
     }
 
     public Optional<Tenancy> findTenancyById(UUID uuid) {
@@ -151,7 +218,7 @@ public class TenancyService {
                     }
                 }
             } catch(DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date"); // Throws error if updated date is not valid
+                throw InvalidRequest.onField("startDate", "tenancy.date_invalid", raw); // Throws error if updated date is not valid
             }
         }
 
@@ -176,7 +243,7 @@ public class TenancyService {
                     }
                 }
             } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date"); // Same as startDate
+                throw InvalidRequest.onField("endDate", "tenancy.date_invalid", raw); // Same as startDate
             }
         }
 
@@ -195,8 +262,7 @@ public class TenancyService {
                 : before.endDate();
 
         if (startAfter != null && endAfter != null && endAfter.isBefore(startAfter)) {
-            throw new IllegalArgumentException(
-                    "endDate " + endAfter + " cannot be before startDate " + startAfter);
+            throw InvalidRequest.onField("endDate", "tenancy.end_before_start", endAfter, startAfter);
         }
 
         // Moving either date (reopening included) must not put a third tenancy in any month.
@@ -248,8 +314,7 @@ public class TenancyService {
                 MonthSpan shared = target.intersect(others.get(a));
                 if (shared.overlaps(others.get(b))) {
                     YearMonth month = shared.intersect(others.get(b)).from();
-                    throw new IllegalStateException(
-                            "Lot already has two tenancies in " + month + ". A lot can have at most two in any month");
+                    throw RuleConflict.of("tenancy.lot_full_in_month", month);
                 }
             }
         }
@@ -279,14 +344,67 @@ public class TenancyService {
         }
     }
 
+    /**
+     * Deleting is for a tenancy entered by mistake. A tenancy that happened is ended (an end date), not deleted.
+     *
+     * <p>A tenancy whose account has anything on the ledger cannot be deleted (409 tenancy.has_ledger): the
+     * charges and payments would be left on an account nobody can reach. The account created with the tenancy is
+     * left as the account is, so restoring the tenancy finds the same account again.
+     *
+     * <p>A tenancy with a generated document that was not abandoned cannot be deleted either (409
+     * tenancy.has_paper): the paper carries a serial and may be in a tenant's hands. A draft does not stop the
+     * delete; the draft stays with the deleted tenancy and comes back with a restore.
+     */
     @Transactional
     public boolean softDelete(UUID uuid) {
         return tenancyRepository.findById(uuid).map(tenancy -> {
+            if (tenancyRepository.hasLedgerEntries(uuid)) {
+                throw RuleConflict.of("tenancy.has_ledger");
+            }
+            if (tenancyRepository.hasPaperOut(uuid)) {
+                throw RuleConflict.of("tenancy.has_paper");
+            }
             if (!tenancyRepository.softDelete(uuid)) {
                 return false;
             }
             auditService.recordDelete("tenancy", uuid, AuditMapper.toMap(tenancy));
             return true;
         }).orElse(false);
+    }
+
+    /**
+     * Brings a deleted tenancy back, for the undo of a delete. A tenancy that is not deleted is answered as the
+     * tenancy is, so sending the restore twice is safe. Empty for an unknown tenancy.
+     *
+     * <p>Throws RuleConflict (409): tenancy.lot_deleted when the tenancy's lot was deleted meanwhile,
+     * tenancy.lot_full when two other tenancies took the lot meanwhile, and
+     * tenancy.lot_full_in_month when the tenancy would be a third in some month.
+     */
+    @Transactional
+    public Optional<Tenancy> restore(UUID uuid) {
+        Optional<TenancyRow> beforeOpt = tenancyRepository.findAnyById(uuid);
+        if (beforeOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        TenancyRow before = beforeOpt.get();
+        if (before.deletedAt() == null) {
+            return Optional.of(before.toTenancy());
+        }
+
+        Lot lot = lotService.findById(before.lotId())
+                .orElseThrow(() -> RuleConflict.of("tenancy.lot_deleted"));
+        boolean ended = before.endDate() != null && before.endDate().isBefore(LocalDate.now());
+        if (!ended && tenancyRepository.countHolding(before.lotId(), uuid, before.startDate()) >= 2) {
+            throw RuleConflict.of("tenancy.lot_full", lot.lotNumber());
+        }
+        requireRoomOnLot(before.lotId(), uuid, before.startDate(), before.endDate());
+
+        Optional<TenancyRow> afterOpt = tenancyRepository.restore(uuid);
+        if (afterOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        AuditMapper.Diff diff = AuditMapper.diff(before, afterOpt.get());
+        auditService.recordUpdate("tenancy", uuid, diff.before(), diff.after());
+        return Optional.of(afterOpt.get().toTenancy());
     }
 }

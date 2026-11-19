@@ -12,7 +12,7 @@ import java.util.Set;
  * Turns a database change notice (V15 lordship_notify_change) into the Glade places that show the changed row,
  * so the screens on those places load again. A place is what Glade's screens report to presence:
  * "properties/&lt;propertyId&gt;/lots/&lt;lotId&gt;", "roles/person/&lt;agentId&gt;", "documents/doc/&lt;templateId&gt;",
- * "rates/&lt;propertyId&gt;"...
+ * "rates/&lt;propertyId&gt;", "tenancies/&lt;propertyId&gt;/lots/&lt;lotId&gt;"...
  *
  * <p>No database here: ids a notice does not carry (a home's lot, a clause's document) come in Parents,
  * looked up for the whole batch at once (ChangeRelay).
@@ -32,7 +32,9 @@ final class ChangePlaces {
     // The same names as the two arrays in V15's lordship_notify_change. A column missing from either list
     // never reaches placesOf.
     static final List<String> CARRIED_IDS = List.of("uuid", "property_id", "lot_id", "agent_id", "role_id",
-            "person_id", "mobile_home_id", "template", "section", "property", "document_template", "assignment");
+            "person_id", "mobile_home_id", "template", "section", "property", "document_template", "assignment",
+            // a stay's tenancy (tenant, occupant, tenancy_interested_party), and a charge term's or a document's
+            "tenancy_id", "tenancy");
 
     // "*": every window loads everything it shows again (Glade treats it like its own reconnect)
     static final String EVERYTHING = "*";
@@ -51,11 +53,24 @@ final class ChangePlaces {
     }
 
     // The parents a notice does not carry, by child id. A missing entry (a row deleted since) is simply skipped.
+    // tenancyLot: the lot of each tenancy a notice names. personTenancies: the tenancies each changed person is on,
+    // as a tenant, an occupant or an interested party.
     record Parents(Map<String, String> lotProperty,
                    Map<String, String> homeLot,
                    Map<String, String> personAgent,
                    Map<String, String> sectionTemplate,
-                   Map<String, String[]> assignmentPropertyTemplate) {
+                   Map<String, String[]> assignmentPropertyTemplate,
+                   Map<String, String> tenancyLot,
+                   Map<String, List<String>> personTenancies) {
+
+        // The parents as they were before Tenancies: no tenancy looked up
+        Parents(Map<String, String> lotProperty,
+                Map<String, String> homeLot,
+                Map<String, String> personAgent,
+                Map<String, String> sectionTemplate,
+                Map<String, String[]> assignmentPropertyTemplate) {
+            this(lotProperty, homeLot, personAgent, sectionTemplate, assignmentPropertyTemplate, Map.of(), Map.of());
+        }
 
         static Parents none() {
             return new Parents(Map.of(), Map.of(), Map.of(), Map.of(), Map.of());
@@ -82,7 +97,27 @@ final class ChangePlaces {
             case "person" -> {
                 String agentId = parents.personAgent().get(id);
                 if (agentId != null) person(places, agentId);
+                // a tenant's name, phone or email: the roll of the tenant's property, and the tenancy's page
+                for (String tenancyId : parents.personTenancies().getOrDefault(id, List.of())) {
+                    String lotId = parents.tenancyLot().get(tenancyId);
+                    String propertyId = lotId == null ? null : parents.lotProperty().get(lotId);
+                    add(places, tenanciesProperty(propertyId));
+                    add(places, tenanciesLot(propertyId, lotId));
+                }
             }
+            // Tenancies. A tenancy also decides whether a lot is taken, which the Properties and the Rates and
+            // deals screens show, so a tenancy tells the Properties places too (Rates listens there).
+            case "tenancy" -> {
+                String lotId = n.id("lot_id");
+                String propertyId = lotId == null ? null : parents.lotProperty().get(lotId);
+                tenancy(places, propertyId, lotId);
+                add(places, property(propertyId));
+                add(places, lot(propertyId, lotId));
+            }
+            // one person's stay on a tenancy
+            case "tenant", "occupant", "tenancy_interested_party" -> tenancyOf(places, n.id("tenancy_id"), parents);
+            // the rent a tenancy is under, and the document the rent came from
+            case "tenancy_charge_term", "instrument" -> tenancyOf(places, n.id("tenancy"), parents);
             case "agent" -> {
                 places.add("roles");
                 person(places, id);
@@ -187,7 +222,8 @@ final class ChangePlaces {
     // "documents/doc/<d>/section/<s>"). Null for anything else, which is never folded into another place.
     static String parentOf(String place) {
         String[] parts = place.split("/");
-        if (parts.length == 4 && (parts[0].equals("properties") || parts[0].equals("rates")) && parts[2].equals("lots")) {
+        if (parts.length == 4 && parts[2].equals("lots")
+                && (parts[0].equals("properties") || parts[0].equals("rates") || parts[0].equals("tenancies"))) {
             return parts[0] + "/" + parts[1];
         }
         if (parts.length == 5 && parts[0].equals("documents") && parts[1].equals("doc") && parts[3].equals("section")) {
@@ -200,6 +236,28 @@ final class ChangePlaces {
         String propertyId = lotId == null ? null : parents.lotProperty().get(lotId);
         add(places, property(propertyId));
         add(places, lot(propertyId, lotId));
+    }
+
+    // A tenancy: the list of every property (its counts), the property's roll, and the lot's tenancy page
+    private static void tenancy(List<String> places, String propertyId, String lotId) {
+        places.add("tenancies");
+        add(places, tenanciesProperty(propertyId));
+        add(places, tenanciesLot(propertyId, lotId));
+    }
+
+    // A row that names its tenancy: the tenancy's places, through the tenancy's lot
+    private static void tenancyOf(List<String> places, String tenancyId, Parents parents) {
+        String lotId = tenancyId == null ? null : parents.tenancyLot().get(tenancyId);
+        String propertyId = lotId == null ? null : parents.lotProperty().get(lotId);
+        tenancy(places, propertyId, lotId);
+    }
+
+    private static String tenanciesProperty(String propertyId) {
+        return propertyId == null ? null : "tenancies/" + propertyId;
+    }
+
+    private static String tenanciesLot(String propertyId, String lotId) {
+        return propertyId == null || lotId == null ? null : "tenancies/" + propertyId + "/lots/" + lotId;
     }
 
     // A person who signs in: their page in Roles and their own page

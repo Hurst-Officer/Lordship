@@ -52,6 +52,100 @@ public class TenancyRepository {
                 .optional();
     }
 
+    // A tenancy whether deleted or not, for the restore
+    public Optional<TenancyRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM tenancy WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(TenancyRow.class)
+                .optional();
+    }
+
+    // Brings a deleted tenancy back. Empty when the tenancy is unknown or not deleted.
+    public Optional<TenancyRow> restore(UUID uuid) {
+        return jdbc.sql("UPDATE tenancy SET deleted_at = NULL WHERE uuid = :uuid AND deleted_at IS NOT NULL RETURNING *")
+                .param("uuid", uuid)
+                .query(TenancyRow.class)
+                .optional();
+    }
+
+    /**
+     * How many other live tenancies hold the lot on a day. A tenancy holds the lot until the tenancy's end date
+     * (the end date itself is the day the next tenancy may start), and while the tenancy has no end date.
+     * self is the tenancy being checked, left out of the count; null when creating. A null day means today.
+     */
+    public int countHolding(UUID lotId, UUID self, LocalDate day) {
+        return jdbc.sql("""
+                        SELECT count(*)::int FROM tenancy t
+                        WHERE t.lot_id = :lotId
+                          AND t.deleted_at IS NULL
+                          AND (CAST(:self AS uuid) IS NULL OR t.uuid <> CAST(:self AS uuid))
+                          AND (t.end_date IS NULL OR t.end_date > COALESCE(CAST(:day AS date), CURRENT_DATE))
+                        """)
+                .param("lotId", lotId)
+                .param("self", self)
+                .param("day", day)
+                .query(Integer.class)
+                .single();
+    }
+
+    /**
+     * Whether a tenancy that holds the lot on a day (see countHolding) has a charge term of one of these kinds.
+     * kinds are agreement_type names ("LAND"). Cancelled and deleted terms do not count. tenancy_charge_term is
+     * the tenancyterms module's table, read here by name: that module depends on this one.
+     */
+    public boolean holdsKind(UUID lotId, List<String> kinds, LocalDate day) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1 FROM tenancy t
+                            JOIN tenancy_charge_term c ON c.tenancy = t.uuid
+                            WHERE t.lot_id = :lotId
+                              AND t.deleted_at IS NULL
+                              AND (t.end_date IS NULL OR t.end_date > COALESCE(CAST(:day AS date), CURRENT_DATE))
+                              AND c.deleted_at IS NULL
+                              AND c.status <> 'CANCELLED'
+                              AND c.agreement_type::text IN (:kinds)
+                        )
+                        """)
+                .param("lotId", lotId)
+                .param("kinds", kinds)
+                .param("day", day)
+                .query(Boolean.class)
+                .single();
+    }
+
+    // Whether the tenancy's account has any charge, payment or adjustment on the ledger. account and transaction
+    // are other modules' tables, read here by name, so that this one question adds nothing to the accounts and
+    // transactions packages. The query only reads.
+    public boolean hasLedgerEntries(UUID tenancyId) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1 FROM "transaction" x
+                            JOIN account a ON a.uuid = x.account_id
+                            WHERE a.tenancy_id = :tenancyId
+                              AND x.deleted_at IS NULL
+                        )
+                        """)
+                .param("tenancyId", tenancyId)
+                .query(Boolean.class)
+                .single();
+    }
+
+    // Whether a document of the tenancy was generated and not abandoned: paper with a serial exists, and may be
+    // in a tenant's hands. instrument is the instruments module's table, read here by name: that module depends
+    // on this one. The query only reads.
+    public boolean hasPaperOut(UUID tenancyId) {
+        return jdbc.sql("""
+                        SELECT EXISTS (
+                            SELECT 1 FROM instrument i
+                            WHERE i.tenancy = :tenancyId
+                              AND i.status IN ('GENERATED', 'SENT', 'SERVED', 'APPROVED')
+                        )
+                        """)
+                .param("tenancyId", tenancyId)
+                .query(Boolean.class)
+                .single();
+    }
+
     // Every tenancy on the lot, ended ones included. Used by the two-per-month rule.
     public List<TenancyRow> findByLot(UUID lotId) {
         return jdbc.sql("SELECT * FROM tenancy WHERE lot_id = :lotId AND deleted_at IS NULL")

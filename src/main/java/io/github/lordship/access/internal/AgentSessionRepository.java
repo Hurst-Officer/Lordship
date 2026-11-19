@@ -128,4 +128,15 @@ public class AgentSessionRepository {
                 .param("agentId", agentId)
                 .update();
     }
+
+    // Ends every session of the agent but the one named, which stays signed in.
+    public int endAllForAgentExcept(UUID agentId, UUID keepSessionId) {
+        return jdbc.sql("""
+                UPDATE agent_session SET ended_at = now()
+                WHERE agent_id = :agentId AND uuid <> :keepSessionId AND ended_at IS NULL
+                """)
+                .param("agentId", agentId)
+                .param("keepSessionId", keepSessionId)
+                .update();
+    }
 }

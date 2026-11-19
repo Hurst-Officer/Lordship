@@ -113,18 +113,9 @@ public class TenantController {
                 : ResponseEntity.notFound().build();
     }
 
-    // "Person ... is already an active tenant on tenancy ..." is the whole content
-    // of the refusal, and an empty 409 throws it away.
-    @ExceptionHandler(IllegalArgumentException.class)
-    ResponseEntity<Map<String, String>> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(Map.of("message", String.valueOf(e.getMessage())));
-    }
-
-    @ExceptionHandler(IllegalStateException.class)
-    ResponseEntity<Map<String, String>> conflict(IllegalStateException e) {
-        return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("message", String.valueOf(e.getMessage())));
-    }
+    // Refusals are answered by config ApiExceptionHandler: a rule the service refused (tenant.already_on,
+    // tenancy.end_before_start...) comes back as { message, code } in the worker's language, 400 or 409.
+    // The restore of a deleted stay is in HouseholdController.
 
     @ExceptionHandler(EntityNotFoundException.class)
     ResponseEntity<Map<String, String>> notFound(EntityNotFoundException e) {

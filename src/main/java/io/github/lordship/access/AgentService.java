@@ -130,6 +130,74 @@ public class AgentService {
         return true;
     }
 
+    // The fewest and the most characters a password may have: the same limits as AgentRegistrationRequest
+    // and ChangePasswordRequest
+    private static final int PASSWORD_MIN = 12;
+    private static final int PASSWORD_MAX = 64;
+
+    /**
+     * The agent changes their own password, from their own page. The agent must give their current password.
+     * The computer the change came from (keepSessionId) stays signed in; every other computer the agent is
+     * signed in on is signed out. When the access token named no session (keepSessionId is null), every
+     * computer is signed out, as after an admin's reset.
+     * A wrong current password counts as a sign-in attempt from ipAddress (LoginThrottle), so a window left
+     * signed in cannot be used to guess the password any faster than the sign-in screen can.
+     * False (404) for an unknown or removed agent, and for the SYSTEM agent.
+     * Throws InvalidRequest (400) password.current_missing or password.current_wrong on currentPassword;
+     * password.length, password.too_long or password.same_as_current on newPassword.
+     * Throws LoginRefused (429) after too many wrong current passwords.
+     */
+    @Transactional
+    public boolean changeOwnPassword(UUID agentId, String currentPassword, String newPassword,
+                                     UUID keepSessionId, String ipAddress) {
+        if (currentPassword == null || currentPassword.isEmpty()) {
+            throw InvalidRequest.onField("currentPassword", "password.current_missing");
+        }
+        if (newPassword == null || newPassword.length() < PASSWORD_MIN || newPassword.length() > PASSWORD_MAX) {
+            throw InvalidRequest.onField("newPassword", "password.length", PASSWORD_MIN, PASSWORD_MAX);
+        }
+        passwordService.requireFits(newPassword, "newPassword");
+
+        if (SystemPrincipal.AGENT_UUID.equals(agentId)) {
+            return false;
+        }
+        Optional<AgentRow> found = agentRepository.findById(agentId);
+        if (found.isEmpty()) {
+            return false;
+        }
+        AgentRow agentRow = found.get();
+
+        // Counted before the check and given back when the password is right, the same as a sign-in
+        loginThrottle.admit(ipAddress, agentRow.workEmail());
+        if (!passwordService.verify(currentPassword, agentRow.agentPassword())) {
+            throw InvalidRequest.onField("currentPassword", "password.current_wrong");
+        }
+        loginThrottle.succeeded(ipAddress, agentRow.workEmail());
+
+        if (currentPassword.equals(newPassword)) {
+            throw InvalidRequest.onField("newPassword", "password.same_as_current");
+        }
+
+        if (agentRepository.updatePassword(agentId, passwordService.hash(newPassword)) == 0) {
+            return false;
+        }
+
+        if (keepSessionId == null) {
+            // No session to keep, so nothing tells this computer apart from the others: sign every computer out
+            agentRepository.revokeTokens(agentId);
+            sessionService.endAll(agentId);
+        } else {
+            // tokens_valid_from is left alone on purpose: moving it would refuse this computer's token too.
+            // The other computers are refused through their ended sessions (JwtAuthFilter checks the token's session).
+            sessionService.endAllExcept(agentId, keepSessionId);
+        }
+
+        auditService.recordUpdate("agent", agentId,
+                Map.of("agent_password", "[redacted]"),
+                Map.of("agent_password", "[changed]"));
+        return true;
+    }
+
     /**
      * Changes the agent's job title. Spaces at either end are dropped.
      * False (404) for an unknown or removed agent, and for the SYSTEM agent.

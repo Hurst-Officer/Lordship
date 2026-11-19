@@ -83,7 +83,8 @@ public class ChangePlacesTest {
     void aRowOfALot_findsTheLotsProperty() {
         Parents parents = new Parents(Map.of("L", "P"), Map.of(), Map.of(), Map.of(), Map.of());
 
-        assertEquals(List.of("properties/P", "properties/P/lots/L"),
+        // a tenancy tells the Tenancies places first, then the Properties places (a lot is taken or open again)
+        assertEquals(List.of("tenancies", "tenancies/P", "tenancies/P/lots/L", "properties/P", "properties/P/lots/L"),
                 ChangePlaces.placesOf(notice("tenancy", "uuid", "T", "lot_id", "L"), parents));
         // a home's secured party goes through the home's lot
         Parents viaHome = new Parents(Map.of("L", "P"), Map.of("H", "L"), Map.of(), Map.of(), Map.of());

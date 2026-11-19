@@ -90,6 +90,22 @@ public class TenantRepository {
                 .list();
     }
 
+    // A stay whether deleted or not, for the restore
+    public Optional<TenantRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM tenant WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(TenantRow.class)
+                .optional();
+    }
+
+    // Brings a deleted stay back. Empty when the stay is unknown or not deleted.
+    public Optional<TenantRow> restore(UUID uuid) {
+        return jdbc.sql("UPDATE tenant SET deleted_at = NULL WHERE uuid = :uuid AND deleted_at IS NOT NULL RETURNING *")
+                .param("uuid", uuid)
+                .query(TenantRow.class)
+                .optional();
+    }
+
     public boolean softDelete(UUID uuid) {
         return jdbc.sql("UPDATE tenant SET deleted_at = CURRENT_TIMESTAMP WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)

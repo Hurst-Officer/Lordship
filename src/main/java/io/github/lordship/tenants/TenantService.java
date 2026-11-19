@@ -2,6 +2,8 @@ package io.github.lordship.tenants;
 
 import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
+import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
 import io.github.lordship.tenants.internal.TenantRepository;
@@ -78,9 +80,7 @@ public class TenantService {
 
         tenantRepository.findActiveByTenancyAndPerson(tenancy.uuid(), personId)
                 .ifPresent(existing -> {
-                    throw new IllegalStateException(
-                            "Person " + personId + " is already an active tenant on tenancy "
-                                    + tenancy.uuid() + " (tenant " + existing.uuid() + ")");
+                    throw RuleConflict.of("tenant.already_on", personId, tenancy.uuid(), existing.uuid());
                 });
 
         LocalDate startDate = startDateOpt != null
@@ -136,10 +136,10 @@ public class TenantService {
             try {
                 wanted = LocalDate.parse(text);
             } catch (DateTimeParseException e) {
-                throw new IllegalArgumentException("Invalid date for " + key, e);
+                throw InvalidRequest.onField(apiName(key), "tenancy.date_invalid", text);
             }
         } else {
-            throw new IllegalArgumentException("Invalid date for " + key + ": expected text or null");
+            throw InvalidRequest.onField(apiName(key), "tenancy.date_invalid", raw);
         }
 
         if (Objects.equals(current, wanted)) {
@@ -149,6 +149,11 @@ public class TenantService {
         }
     }
 
+
+    // start_date as the API names the field: startDate
+    private static String apiName(String column) {
+        return column.equals("end_date") ? "endDate" : "startDate";
+    }
 
     @Transactional
     public Optional<Tenant> patchTenant(UUID uuid, Map<String, Object> changes) {
@@ -179,8 +184,7 @@ public class TenantService {
                 : before.endDate();
 
         if (startAfter != null && endAfter != null && endAfter.isBefore(startAfter)) {
-            throw new IllegalArgumentException(
-                    "endDate " + endAfter + " cannot be before startDate " + startAfter);
+            throw InvalidRequest.onField("endDate", "tenancy.end_before_start", endAfter, startAfter);
         }
 
         boolean reopening = before.endDate() != null && endAfter == null;
@@ -188,10 +192,7 @@ public class TenantService {
             tenantRepository.findActiveByTenancyAndPerson(before.tenancyId(), before.personId())
                     .filter(other -> !Objects.equals(other.uuid(), uuid))
                     .ifPresent(other -> {
-                        throw new IllegalStateException(
-                                "Cannot clear the end date on tenant " + uuid
-                                        + ": that person is already active on this tenancy as "
-                                        + other.uuid());
+                        throw RuleConflict.of("tenant.reopen_taken", uuid, other.uuid());
                     });
         }
 
