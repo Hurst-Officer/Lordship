@@ -1,6 +1,7 @@
 package io.github.lordship.lots.internal;
 
 import io.github.lordship.lots.ShapeData;
+import io.github.lordship.shared.TenancyStanding;
 import tools.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -162,16 +163,18 @@ public class LotRepository {
                 .optional();
     }
 
-    // sql: a tenancy is active while it has no end_date (see idx_tenancy_lot_active in V7)
+    // sql: a tenancy is active until the tenancy has ended: no end date, or an end date of today or later
+    // (TenancyStanding.NOT_ENDED_SQL, the same test the Tenancies screens use). A tenant with a move-out date
+    // still ahead holds the lot, so the lot cannot be deleted from under that tenant.
     public boolean hasActiveTenancy(UUID lotId) {
         return jdbc.sql("""
             SELECT EXISTS (
-                SELECT 1 FROM tenancy
-                WHERE lot_id = :lotId
-                  AND end_date IS NULL
-                  AND deleted_at IS NULL
+                SELECT 1 FROM tenancy t
+                WHERE t.lot_id = :lotId
+                  AND %s
+                  AND t.deleted_at IS NULL
             )
-            """)
+            """.formatted(TenancyStanding.NOT_ENDED_SQL))
                 .param("lotId", lotId)
                 .query(Boolean.class)
                 .single();
@@ -183,4 +186,4 @@ public class LotRepository {
                 .query(Boolean.class)
                 .single();
     }
-}
+}

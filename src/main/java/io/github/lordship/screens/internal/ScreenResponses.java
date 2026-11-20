@@ -25,7 +25,9 @@ import java.util.UUID;
 // mine (on a screen whose records can be deleted): the records on the screen that the viewer added recently and
 // may still delete and restore without the delete permission (audit OwnWork), as record ids by audit table:
 // { "lot": [...], "mobile_home": [...] }. Glade shows Delete on those records. Never null; a table with none
-// has an empty list. The server still decides at the delete: mine only says where to offer the button.
+// has an empty list, and so does a table whose delete permission the viewer holds (Glade asks the permission
+// first, so mine is not worked out for that viewer). The server still decides at the delete: mine only says
+// where to offer the button.
 public final class ScreenResponses {
 
     private ScreenResponses() { }

@@ -396,8 +396,8 @@ public class AuditRepository {
 
     // ---- own recent work (OwnWork) --------------------------------------------------------
     // The table and column names in these queries come from OwnWork.KINDS, never from a request.
-    // A table or column name cannot be bound as a parameter, so findWithRowByAnother writes the two names into the
-    // query's text. name() is the second lock: only lower-case letters, digits and underscores get through, and
+    // A table or column name cannot be bound as a parameter, so findWithRowOfAnother and findLiveUnder write the
+    // two names into the query's text. name() is the second lock: only lower-case letters, digits and underscores get through, and
     // text made of those alone cannot end a name and start another statement.
     private static final Pattern NAME = Pattern.compile("[a-z][a-z0-9_]*");
 
@@ -409,6 +409,8 @@ public class AuditRepository {
     }
 
     // Who added each record, and when: the oldest INSERT row of each. A record with no insert row is left out.
+    // user_id is the agent who added the record, and null when the row was not written by an agent (the server,
+    // or one day a tenant): only an agent can be a record's maker.
     public List<HistoryRows.MakerRow> findMakers(String table, Collection<String> recordIds) {
         if (recordIds.isEmpty()) {
             return List.of();
@@ -416,7 +418,7 @@ public class AuditRepository {
         return jdbc.sql("""
                     SELECT DISTINCT ON (a.record_id)
                            a.record_id,
-                           a.user_id,
+                           CASE WHEN a.user_type = 'AGENT' THEN a.user_id END AS user_id,
                            a.changed_at
                       FROM audit_log a
                      WHERE a.table_name = :table
@@ -448,7 +450,7 @@ public class AuditRepository {
     }
 
     // Of these records, the ones anyone but the maker has a row on: an edit, a delete or a restore.
-    // A row the server wrote (no user) counts as someone else's.
+    // A row the server wrote (no user), or any row not written by an agent, counts as someone else's.
     public Set<String> findTouchedByAnother(String table, Collection<String> recordIds, UUID maker) {
         if (recordIds.isEmpty()) {
             return Set.of();
@@ -458,7 +460,7 @@ public class AuditRepository {
                       FROM audit_log a
                      WHERE a.table_name = :table
                        AND a.record_id IN (:ids)
-                       AND a.user_id IS DISTINCT FROM :maker
+                       AND (a.user_type <> 'AGENT' OR a.user_id IS DISTINCT FROM :maker)
                     """)
                 .param("table", table)
                 .param("ids", recordIds)
@@ -467,9 +469,12 @@ public class AuditRepository {
                 .set();
     }
 
-    // Of these records, the ones a live row of underTable points at (through column) that the maker did not add.
+    // Of these records, the ones a live row of underTable points at (through column) that is someone else's work:
+    // a row the maker did not add, or a row anyone but the maker has an audit row on (an edit, a restore).
     // A row with no INSERT row in the log (a seed, an import) counts as someone else's.
-    public Set<UUID> findWithRowByAnother(String underTable, String column, Collection<UUID> recordIds, UUID maker) {
+    // softDeleted says underTable has a deleted_at column; without one, every row of underTable is live.
+    public Set<UUID> findWithRowOfAnother(String underTable, String column, boolean softDeleted,
+                                          Collection<UUID> recordIds, UUID maker) {
         if (recordIds.isEmpty()) {
             return Set.of();
         }
@@ -477,20 +482,47 @@ public class AuditRepository {
                     SELECT DISTINCT c.%2$s
                       FROM %1$s c
                      WHERE c.%2$s IN (:ids)
-                       AND c.deleted_at IS NULL
-                       AND NOT EXISTS (
-                            SELECT 1
-                              FROM audit_log a
-                             WHERE a.table_name = :underTable
-                               AND a.record_id = c.uuid::text
-                               AND a.operation = 'INSERT'
-                               AND a.user_id = :maker)
-                    """.formatted(name(underTable), name(column)))
+                       %3$s
+                       AND (NOT EXISTS (
+                                SELECT 1
+                                  FROM audit_log a
+                                 WHERE a.table_name = :underTable
+                                   AND a.record_id = c.uuid::text
+                                   AND a.operation = 'INSERT'
+                                   AND a.user_type = 'AGENT'
+                                   AND a.user_id = :maker)
+                            OR EXISTS (
+                                SELECT 1
+                                  FROM audit_log a
+                                 WHERE a.table_name = :underTable
+                                   AND a.record_id = c.uuid::text
+                                   AND (a.user_type <> 'AGENT' OR a.user_id IS DISTINCT FROM :maker)))
+                    """.formatted(name(underTable), name(column), softDeleted ? "AND c.deleted_at IS NULL" : ""))
                 .param("ids", recordIds)
                 .param("underTable", underTable)
                 .param("maker", maker)
                 .query(UUID.class)
                 .set();
+    }
+
+    // The live rows of underTable that point at these records (through column): each row's id, to the record the
+    // row hangs under. For an under table that is a kind of record as well, so underTable has a deleted_at column.
+    public Map<UUID, UUID> findLiveUnder(String underTable, String column, Collection<UUID> recordIds) {
+        if (recordIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, UUID> recordOf = new HashMap<>();
+        jdbc.sql("""
+                    SELECT c.uuid AS id, c.%2$s AS record_id
+                      FROM %1$s c
+                     WHERE c.%2$s IN (:ids)
+                       AND c.deleted_at IS NULL
+                    """.formatted(name(underTable), name(column)))
+                .param("ids", recordIds)
+                .query((rs, _) -> new UUID[] { rs.getObject("id", UUID.class), rs.getObject("record_id", UUID.class) })
+                .list()
+                .forEach(pair -> recordOf.put(pair[0], pair[1]));
+        return recordOf;
     }
 
     // Each record's property, by the kind's own query: the query takes :ids and answers the columns id and

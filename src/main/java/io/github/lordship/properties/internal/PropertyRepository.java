@@ -1,5 +1,6 @@
 package io.github.lordship.properties.internal;
 
+import io.github.lordship.shared.TenancyStanding;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import tools.jackson.databind.ObjectMapper;
@@ -209,7 +210,8 @@ public class PropertyRepository {
                 .single();
     }
 
-    // sql: a tenancy is active while it has no end_date (see idx_tenancy_lot_active in V7).
+    // sql: a tenancy is active until the tenancy has ended: no end date, or an end date of today or later
+    // (TenancyStanding.NOT_ENDED_SQL, the same test the Tenancies screens use).
     // Only tenancies on the property's live lots count.
     public int countActiveTenancies(UUID propertyId) {
         return jdbc.sql("""
@@ -218,9 +220,9 @@ public class PropertyRepository {
                 JOIN lot l ON l.uuid = t.lot_id
                 WHERE l.property_id = :propertyId
                   AND l.deleted_at IS NULL
-                  AND t.end_date IS NULL
+                  AND %s
                   AND t.deleted_at IS NULL
-                """)
+                """.formatted(TenancyStanding.NOT_ENDED_SQL))
                 .param("propertyId", propertyId)
                 .query(Integer.class)
                 .single();

@@ -28,7 +28,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -204,15 +203,7 @@ public class HomeController {
         if (!homeService.lotInScope(lotId, AgentPrincipal.scopeOf(authentication))) {
             return ResponseEntity.notFound().build();
         }
-        List<Home> found = homeService.findDeletedByLot(lotId);
-        boolean mayDelete = authentication.getAuthorities().stream()
-                .anyMatch(authority -> "homes:delete".equals(authority.getAuthority()));
-        Set<UUID> own = mayDelete
-                ? Set.of()
-                : ownWork.mine("mobile_home", found.stream().map(Home::uuid).toList(), authentication);
-        List<Home> homes = mayDelete
-                ? found
-                : found.stream().filter(home -> own.contains(home.uuid())).toList();
+        List<Home> homes = ownWork.restorable("mobile_home", homeService.findDeletedByLot(lotId), Home::uuid, authentication);
         boolean canViewAudits = authentication.getAuthorities().stream()
                 .anyMatch(authority -> "audit:view".equals(authority.getAuthority()));
         Map<UUID, History.Mark> who = canViewAudits

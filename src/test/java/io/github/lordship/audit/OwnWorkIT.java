@@ -27,7 +27,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 // Own recent work (OwnWork): whoever added a record may delete and restore that record for a few days without
-// the delete permission. Tried on lots, through the endpoints Glade uses. No worker here holds lots:delete.
+// the delete permission. Tried on lots (and once on a property), through the endpoints Glade uses.
+// No worker here holds a delete permission.
 @Transactional
 public class OwnWorkIT extends IntegrationTest {
 
@@ -65,12 +66,16 @@ public class OwnWorkIT extends IntegrationTest {
 
     // Adds a lot over HTTP, so the audit log names the agent who added the lot
     private UUID addLot(String token, String lotNumber) throws Exception {
+        return addLot(token, propertyId, lotNumber);
+    }
+
+    private UUID addLot(String token, UUID toProperty, String lotNumber) throws Exception {
         MvcResult added = mockMvc.perform(post("/api/lots")
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 { "propertyId": "%s", "lotNumber": "%s" }
-                                """.formatted(propertyId, lotNumber)))
+                                """.formatted(toProperty, lotNumber)))
                 .andExpect(status().isCreated())
                 .andReturn();
         return UUID.fromString(objectMapper.readTree(added.getResponse().getContentAsString()).get("id").asString());
@@ -252,5 +257,61 @@ public class OwnWorkIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + maker.token()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void makerWhoseLotCarriesSomeoneElsesHome_isRefusedWithACode() throws Exception {
+        // Arrange: a coworker puts a home on the lot after the maker added the lot
+        TestAgent maker = worker(CAN_ADD_LOTS);
+        UUID lotId = addLot(maker.token(), "1");
+        mockMvc.perform(post("/api/homes")
+                        .header("Authorization", "Bearer " + rootToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"lotId\": \"" + lotId + "\"}"))
+                .andExpect(status().isCreated());
+
+        // Act + Assert
+        deleteLots(maker.token(), lotId)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("own_work.built_on"));
+        assertFalse(isDeleted(lotId));
+    }
+
+    @Test
+    void makerOfAProperty_isRefusedOnceSomeoneElseWorkedOnOneOfTheLots() throws Exception {
+        // Arrange: a worker who can add properties and lots, and delete neither, adds a property with a lot
+        TestAgent maker = worker("properties:view", "properties:create", "lots:view", "lots:create",
+                "assignments:assign-all");
+        MvcResult added = mockMvc.perform(post("/api/properties/create")
+                        .header("Authorization", "Bearer " + maker.token())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "propertyName": "Own Work Park", "propertyStreet": "1 Main St",
+                                  "propertyCity": "Port Orchard", "propertyState": "WA", "propertyZip": "98366" }
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+        UUID ownPropertyId = UUID.fromString(
+                objectMapper.readTree(added.getResponse().getContentAsString()).get("id").asString());
+        UUID lotId = addLot(maker.token(), ownPropertyId, "1");
+
+        // Assert: while only the maker has worked on the property, the property is the maker's to take back
+        mockMvc.perform(get("/api/screens/property/{id}", ownPropertyId)
+                        .header("Authorization", "Bearer " + maker.token()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mine.property.length()").value(1));
+
+        // Arrange: a coworker edits the maker's lot. The property itself has no row by anyone else.
+        mockMvc.perform(patch("/api/lots/{id}", lotId)
+                        .header("Authorization", "Bearer " + rootToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"notes\": \"Corner lot\"}"))
+                .andExpect(status().isOk());
+
+        // Act + Assert: the coworker's work is under the property, so the property stays
+        mockMvc.perform(delete("/api/properties/{id}", ownPropertyId)
+                        .header("Authorization", "Bearer " + maker.token()))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("own_work.built_on"));
     }
 }
