@@ -370,7 +370,14 @@ public class AuditRepository {
                            (SELECT count(*)::int - 1
                               FROM audit_log b
                              WHERE b.correlation_id = a.correlation_id
-                               AND b.table_name = a.table_name) AS together
+                               AND b.table_name = a.table_name) AS together,
+                           (a.operation = 'DELETE' AND a.user_id IS NOT NULL AND EXISTS (
+                                SELECT 1
+                                  FROM audit_log i
+                                 WHERE i.table_name = a.table_name
+                                   AND i.record_id = a.record_id
+                                   AND i.operation = 'INSERT'
+                                   AND i.user_id = a.user_id)) AS by_maker
                       FROM audit_log a
                       LEFT JOIN agent ag ON ag.uuid = a.user_id
                       LEFT JOIN person p ON p.uuid = ag.person_id
@@ -384,5 +391,112 @@ public class AuditRepository {
                 .params(params)
                 .query(HistoryRows.EntryRow.class)
                 .list();
+    }
+
+    // ---- own recent work (OwnWork) --------------------------------------------------------
+    // The table and column names in these queries come from OwnWork.KINDS, never from a request.
+
+    // Who added each record, and when: the oldest INSERT row of each. A record with no insert row is left out.
+    public List<HistoryRows.MakerRow> findMakers(String table, Collection<String> recordIds) {
+        if (recordIds.isEmpty()) {
+            return List.of();
+        }
+        return jdbc.sql("""
+                    SELECT DISTINCT ON (a.record_id)
+                           a.record_id,
+                           a.user_id,
+                           a.changed_at
+                      FROM audit_log a
+                     WHERE a.table_name = :table
+                       AND a.record_id IN (:ids)
+                       AND a.operation = 'INSERT'
+                     ORDER BY a.record_id, a.changed_at, a.uuid
+                    """)
+                .param("table", table)
+                .param("ids", recordIds)
+                .query(HistoryRows.MakerRow.class)
+                .list();
+    }
+
+    // The newest audit row on a record. Empty for a record with no rows.
+    public Optional<HistoryRows.LastRow> findLast(String table, String recordId) {
+        return jdbc.sql("""
+                    SELECT a.operation::text AS operation,
+                           a.user_id
+                      FROM audit_log a
+                     WHERE a.table_name = :table
+                       AND a.record_id = :id
+                     ORDER BY a.changed_at DESC, a.uuid DESC
+                     LIMIT 1
+                    """)
+                .param("table", table)
+                .param("id", recordId)
+                .query(HistoryRows.LastRow.class)
+                .optional();
+    }
+
+    // Of these records, the ones anyone but the maker has a row on: an edit, a delete or a restore.
+    // A row the server wrote (no user) counts as someone else's.
+    public Set<String> findTouchedByAnother(String table, Collection<String> recordIds, UUID maker) {
+        if (recordIds.isEmpty()) {
+            return Set.of();
+        }
+        return jdbc.sql("""
+                    SELECT DISTINCT a.record_id
+                      FROM audit_log a
+                     WHERE a.table_name = :table
+                       AND a.record_id IN (:ids)
+                       AND a.user_id IS DISTINCT FROM :maker
+                    """)
+                .param("table", table)
+                .param("ids", recordIds)
+                .param("maker", maker)
+                .query(String.class)
+                .set();
+    }
+
+    // Of these records, the ones a live row of underTable points at (through column) that the maker did not add.
+    // A row with no INSERT row in the log (a seed, an import) counts as someone else's.
+    public Set<UUID> findWithRowByAnother(String underTable, String column, Collection<UUID> recordIds, UUID maker) {
+        if (recordIds.isEmpty()) {
+            return Set.of();
+        }
+        return jdbc.sql("""
+                    SELECT DISTINCT c.%2$s
+                      FROM %1$s c
+                     WHERE c.%2$s IN (:ids)
+                       AND c.deleted_at IS NULL
+                       AND NOT EXISTS (
+                            SELECT 1
+                              FROM audit_log a
+                             WHERE a.table_name = :underTable
+                               AND a.record_id = c.uuid::text
+                               AND a.operation = 'INSERT'
+                               AND a.user_id = :maker)
+                    """.formatted(underTable, column))
+                .param("ids", recordIds)
+                .param("underTable", underTable)
+                .param("maker", maker)
+                .query(UUID.class)
+                .set();
+    }
+
+    // Each record's property, by the kind's own query: the query takes :ids and answers the columns id and
+    // property_id. A record the query does not find is left out.
+    public Map<UUID, UUID> findProperties(String propertySql, Collection<UUID> recordIds) {
+        if (recordIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, UUID> properties = new HashMap<>();
+        jdbc.sql(propertySql)
+                .param("ids", recordIds)
+                .query((rs, _) -> new UUID[] { rs.getObject("id", UUID.class), rs.getObject("property_id", UUID.class) })
+                .list()
+                .forEach(pair -> {
+                    if (pair[1] != null) {
+                        properties.put(pair[0], pair[1]);
+                    }
+                });
+        return properties;
     }
 }

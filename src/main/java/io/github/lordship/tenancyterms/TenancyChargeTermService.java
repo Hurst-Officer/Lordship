@@ -457,6 +457,27 @@ public class TenancyChargeTermService {
     // These methods act on all of them at once. Each one calls the single-term
     // method, so the checks, audit entries and error messages are the same.
 
+    // One thing generate would refuse about one term of a document: the day the term starts, and the problem
+    public record TermProblem(LocalDate validAt, DomainProblem.Problem problem) { }
+
+    /**
+     * Everything submitForDocument would refuse about the document's PROPOSED terms, without changing anything:
+     * a rent of zero, a fee method with no amount, and the rest of validateForSubmission. The earliest term first.
+     * Empty when every term is ready, and for a document whose terms already left PROPOSED.
+     *
+     * <p>The lease preview carries this list, so a draft that reads "ready to generate" is not then refused at
+     * generate for a reason the preview never mentioned.
+     */
+    public List<TermProblem> problemsForDocument(UUID document) {
+        List<TermProblem> found = new ArrayList<>();
+        tenancyChargeTermRepository.findBySource(document).stream()
+                .filter(row -> row.status() == TenancyTermStatus.PROPOSED)
+                .sorted(java.util.Comparator.comparing(TenancyChargeTermRow::validAt))
+                .forEach(row -> submissionProblems(row)
+                        .forEach(problem -> found.add(new TermProblem(row.validAt(), problem))));
+        return found;
+    }
+
     /**
      * PROPOSED to PENDING for every term on the document. Called at generate.
      * Terms that are already PENDING are left as they are.
@@ -472,11 +493,39 @@ public class TenancyChargeTermService {
         return moved;
     }
 
-    /** PENDING to ACTIVE for every term on the document. Called at approve. */
+    /**
+     * PENDING to ACTIVE for every term on the document that is still PENDING. Called when the document is
+     * accepted (InstrumentService.accept). Terms that are already ACTIVE are left as they are, so a second call
+     * moves nothing.
+     *
+     * <p>One rent can be in force for a tenancy from any one day (tenancy_charge_term_in_force_uq). That is
+     * checked here before anything is written, so the refusal names the day (409 term.day_taken) instead of
+     * arriving as a database error half way through: a term of this document that starts on a day another
+     * ACTIVE term of the tenancy starts on, or two terms of this document on one day.
+     */
     @Transactional
     public List<TenancyChargeTerm> activateForDocument(UUID document) {
+        List<TenancyChargeTermRow> pending = tenancyChargeTermRepository.findBySource(document).stream()
+                .filter(row -> row.status() == TenancyTermStatus.PENDING)
+                .toList();
+        if (pending.isEmpty()) {
+            return List.of();
+        }
+
+        Set<LocalDate> taken = new HashSet<>();
+        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findByTenancy(pending.get(0).tenancy())) {
+            if (row.status() == TenancyTermStatus.ACTIVE) {
+                taken.add(row.validAt());
+            }
+        }
+        for (TenancyChargeTermRow row : pending) {
+            if (!taken.add(row.validAt())) {
+                throw RuleConflict.of("term.day_taken", row.validAt());
+            }
+        }
+
         List<TenancyChargeTerm> moved = new ArrayList<>();
-        for (TenancyChargeTermRow row : tenancyChargeTermRepository.findBySource(document)) {
+        for (TenancyChargeTermRow row : pending) {
             activate(row.uuid()).ifPresent(moved::add);
         }
         return moved;
@@ -651,6 +700,14 @@ public class TenancyChargeTermService {
      * fixes the whole form at once instead of one field per round trip.
      */
     private static void validateForSubmission(TenancyChargeTermRow row) {
+        List<DomainProblem.Problem> problems = submissionProblems(row);
+        if (!problems.isEmpty()) {
+            throw InvalidRequest.withDetails("term.not_ready_to_submit", problems);
+        }
+    }
+
+    // What validateForSubmission would refuse about one term, as a list (empty when the term is ready)
+    private static List<DomainProblem.Problem> submissionProblems(TenancyChargeTermRow row) {
         List<DomainProblem.Problem> problems = new ArrayList<>();
 
         if (row.rate().signum() <= 0) {
@@ -694,9 +751,7 @@ public class TenancyChargeTermService {
         problems.addAll(LateFeeTier.problems(row.lateFeeMethod(), row.lateFeeTiers(),
                 row.paymentDueDay(), row.gracePeriodDays()));
 
-        if (!problems.isEmpty()) {
-            throw InvalidRequest.withDetails("term.not_ready_to_submit", problems);
-        }
+        return problems;
     }
 
     /**
@@ -786,13 +841,15 @@ public class TenancyChargeTermService {
         return coerced;
     }
 
+    // The day a term starts, from a date or from text. A term always has a day: the column is NOT NULL, and an
+    // empty day is refused here with a sentence instead of reaching the database.
     private static Object toDate(String column, Object raw) {
-        if (raw == null || raw instanceof LocalDate) {
+        if (raw instanceof LocalDate) {
             return raw;
         }
-        String text = String.valueOf(raw).trim();
+        String text = (raw == null) ? "" : String.valueOf(raw).trim();
         if (text.isEmpty()) {
-            return null;
+            throw InvalidRequest.onField(column, "term.date_needed");
         }
         try {
             return LocalDate.parse(text);

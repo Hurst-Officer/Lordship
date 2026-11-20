@@ -2,6 +2,7 @@ package io.github.lordship.properties.internal;
 
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.audit.History;
+import io.github.lordship.audit.OwnWork;
 import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.properties.Property;
 import io.github.lordship.properties.PropertyService;
@@ -26,10 +27,12 @@ public class PropertyController {
 
     private final PropertyService propertyService;
     private final AuditService auditService;
+    private final OwnWork ownWork;
 
-    public PropertyController(PropertyService propertyService, AuditService auditService) {
+    public PropertyController(PropertyService propertyService, AuditService auditService, OwnWork ownWork) {
         this.propertyService = propertyService;
         this.auditService = auditService;
+        this.ownWork = ownWork;
     }
 
     // A new property. An agent who only sees their assigned properties is assigned to it,
@@ -302,8 +305,13 @@ public class PropertyController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    // Deleting and restoring a property needs properties:delete. Without properties:delete, the agent who added
+    // the property may still delete and restore the property as own recent work (audit OwnWork): 403 when the
+    // property is not the agent's to take back, 409 own_work.* when the days have passed or someone else has
+    // touched the property since (a lot someone else added counts).
+
     // A soft delete. The lots stay as they are and are hidden with the property.
-    @PreAuthorize("hasAuthority('properties:delete')")
+    @PreAuthorize("hasAuthority('properties:delete') or @ownWork.madeRecently('property', #uuid, authentication)")
     @DeleteMapping("/{uuid}")
     public ResponseEntity<Void> deleteProperty(@PathVariable UUID uuid, Authentication authentication) {
         if (!AgentPrincipal.scopeOf(authentication).allows(uuid)) {
@@ -316,7 +324,7 @@ public class PropertyController {
 
     // Brings a deleted property back, with its lots. Answers the property.
     // 404 for an unknown property. 409 when a live property took its code since.
-    @PreAuthorize("hasAuthority('properties:delete')")
+    @PreAuthorize("hasAuthority('properties:delete') or @ownWork.madeRecently('property', #uuid, authentication)")
     @PostMapping("/{uuid}/restore")
     public ResponseEntity<PropertyResponse> restoreProperty(@PathVariable UUID uuid, Authentication authentication) {
         if (!AgentPrincipal.scopeOf(authentication).allows(uuid)) {
@@ -329,10 +337,20 @@ public class PropertyController {
     }
 
     // Deleted properties, the most recently deleted first. deletedBy is null without audit:view.
-    @PreAuthorize("hasAuthority('properties:delete')")
+    // With properties:create and without properties:delete, the list holds only the properties the agent may
+    // restore as own recent work (audit OwnWork): the properties the agent added and deleted.
+    @PreAuthorize("hasAnyAuthority('properties:delete', 'properties:create')")
     @GetMapping("/deleted")
     public ResponseEntity<List<DeletedPropertyResponse>> getDeletedProperties(Authentication authentication) {
-        List<Property> properties = propertyService.findDeleted(AgentPrincipal.scopeOf(authentication));
+        List<Property> found = propertyService.findDeleted(AgentPrincipal.scopeOf(authentication));
+        boolean mayDelete = authentication.getAuthorities().stream()
+                .anyMatch(authority -> "properties:delete".equals(authority.getAuthority()));
+        Set<UUID> own = mayDelete
+                ? Set.of()
+                : ownWork.mine("property", found.stream().map(Property::uuid).toList(), authentication);
+        List<Property> properties = mayDelete
+                ? found
+                : found.stream().filter(property -> own.contains(property.uuid())).toList();
         boolean canViewAudits = authentication.getAuthorities().stream()
                 .anyMatch(authority -> "audit:view".equals(authority.getAuthority()));
         Map<UUID, History.Mark> who = canViewAudits

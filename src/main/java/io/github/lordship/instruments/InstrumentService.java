@@ -41,6 +41,7 @@ import io.github.lordship.tenancyterms.RentStep;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
 import io.github.lordship.tenancyterms.TenancyChargeTermService;
 import io.github.lordship.tenancyterms.TenancyTermSource;
+import io.github.lordship.tenancyterms.TenancyTermStatus;
 import io.github.lordship.tenants.TenantService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
@@ -243,6 +244,16 @@ public class InstrumentService {
             return Optional.empty();
         }
 
+        // Rent that went into force stays in force, so the document behind the rent cannot be recorded as paper
+        // that never went out. (An accepted lease is still GENERATED, which the status check below lets through,
+        // and deleteForDocument only removes terms that never went into force.)
+        boolean rentWentIntoForce = chargeTermService.findBySource(uuid).stream()
+                .anyMatch(term -> term.status() == TenancyTermStatus.ACTIVE
+                        || term.status() == TenancyTermStatus.CANCELLED);
+        if (rentWentIntoForce) {
+            throw RuleConflict.of("instrument.rent_in_force");
+        }
+
         Optional<InstrumentRow> afterOpt = instrumentRepository.abandon(uuid);
         if (afterOpt.isEmpty()) {
             throw RuleConflict.of("instrument.cannot_be_abandoned", beforeOpt.get().status());
@@ -255,6 +266,33 @@ public class InstrumentService {
         chargeTermService.deleteForDocument(uuid);
 
         return Optional.of(afterOpt.get().toInstrument());
+    }
+
+    // ---- accept --------------------------------------------------------------
+
+    /**
+     * The signed copy is back: puts the document's rent into force. Every charge term of the document that is
+     * still PENDING becomes ACTIVE in one transaction, so a refusal on any step leaves none of them in force.
+     * Terms that are already ACTIVE are left alone, which makes a second accept harmless.
+     *
+     * <p>The document's own status does not move (GENERATED today): sent, served and approved are not recorded
+     * yet, and APPROVED needs the signed copy on file. When they are, approve is this call plus the status.
+     *
+     * <p>Empty for an unknown document. 409 instrument.not_generated for a draft or an abandoned document.
+     * 409 term.day_taken when another rent of the tenancy is already in force from the same day.
+     */
+    @Transactional
+    public Optional<Instrument> accept(UUID uuid) {
+        Optional<InstrumentRow> rowOpt = instrumentRepository.findById(uuid);
+        if (rowOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        InstrumentRow row = rowOpt.get();
+        if (row.status() == InstrumentStatus.DRAFT || row.status() == InstrumentStatus.ABANDONED) {
+            throw RuleConflict.of("instrument.not_generated", row.status());
+        }
+        chargeTermService.activateForDocument(row.uuid());
+        return Optional.of(row.toInstrument());
     }
 
     // ---- generate ------------------------------------------------------------
@@ -479,6 +517,15 @@ public class InstrumentService {
     }
 
     /**
+     * What generate would refuse about the document's rent steps (TenancyChargeTermService.problemsForDocument):
+     * the other half of "is this draft ready", beside the preview's own lists. Empty when the rent steps are
+     * ready, and for a document that is not a draft.
+     */
+    public List<TenancyChargeTermService.TermProblem> termProblems(UUID instrumentUuid) {
+        return chargeTermService.problemsForDocument(instrumentUuid);
+    }
+
+    /**
      * The preview as a PDF, with PREVIEW printed where the serial goes.
      *
      * <p>It carries the same metadata as a generated lease, marked PREVIEW and
@@ -505,8 +552,10 @@ public class InstrumentService {
      * eventually disagree, and the once they did would be on a signed lease.
      */
     private Assembly assemble(InstrumentRow row) {
+        // A deleted tenancy keeps the tenancy's documents. The document cannot be put together without the tenancy,
+        // and the worker is told so in a sentence (409) instead of a server error.
         Tenancy tenancy = tenancyService.findTenancyById(row.tenancy())
-                .orElseThrow(() -> missing("tenancy", row.tenancy()));
+                .orElseThrow(() -> RuleConflict.of("instrument.tenancy_deleted"));
         Lot lot = lotService.findById(tenancy.lotId())
                 .orElseThrow(() -> missing("lot", tenancy.lotId()));
         Property property = propertyService.findByPropertyId(lot.propertyId())

@@ -3,10 +3,13 @@ package io.github.lordship.instruments.internal;
 import io.github.lordship.instruments.DocumentFreeze;
 import io.github.lordship.instruments.LeasePreview;
 import io.github.lordship.shared.DocumentToken;
+import io.github.lordship.shared.DomainProblem;
+import io.github.lordship.tenancyterms.TenancyChargeTermService;
 import org.springframework.context.MessageSource;
 import org.springframework.context.i18n.LocaleContextHolder;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -16,7 +19,8 @@ import java.util.UUID;
  * <p>{@code complete} is the one field the Generate button reads. The problem
  * lists are what the office worker reads: a value nothing could fill, a section
  * the statute requires that ended up with nothing in it, a reference to a
- * clause that did not print, and a pair of clauses that came apart.
+ * clause that did not print, a pair of clauses that came apart, and anything
+ * generate would refuse about a rent step.
  *
  * <p>Each missing value carries the {@code source} it would have come from,
  * because {@code landlord.name} names the hole and not the fix. A property
@@ -44,8 +48,27 @@ public record LeasePreviewResponse (
         List<String> omittedRequired,
         List<String> brokenReferences,
         List<String> separatedPairs,
+        List<TermProblem> termProblems,
         List<Section> sections
 ) {
+
+    /**
+     * Something generate would refuse about one rent step: a rent of zero, a fee method with no amount.
+     *
+     * <p>{@code validAt} is the day the rent step starts, which is how the worker tells the rent steps apart.
+     * {@code field} is the charge term's column at fault, or null. {@code message} is the sentence generate's
+     * refusal would carry for the same problem, worded the same way (the column, then the sentence).
+     */
+    public record TermProblem(LocalDate validAt, String field, String message) {
+
+        static TermProblem of(TenancyChargeTermService.TermProblem found, MessageSource messages) {
+            DomainProblem.Problem problem = found.problem();
+            String text = messages.getMessage(problem.code(), problem.args().toArray(), problem.code(),
+                    LocaleContextHolder.getLocale());
+            return new TermProblem(found.validAt(), problem.field(),
+                    problem.field() == null ? text : problem.field() + ": " + text);
+        }
+    }
 
     /**
      * A value the document asked for and nothing could supply.
@@ -88,18 +111,26 @@ public record LeasePreviewResponse (
             String origin,
             List<String> unresolved) { }
 
+    /** A preview with no rent steps to check: a document's wording printed without a tenancy behind it. */
     public static LeasePreviewResponse from(LeasePreview preview, MessageSource messages) {
+        return from(preview, List.of(), messages);
+    }
+
+    public static LeasePreviewResponse from(LeasePreview preview,
+                                            List<TenancyChargeTermService.TermProblem> termProblems,
+                                            MessageSource messages) {
         DocumentFreeze.Frozen frozen = preview.frozen();
         return new LeasePreviewResponse(
                 preview.instrument(),
                 preview.documentTemplate(),
                 preview.documentName(),
                 preview.documentVersion(),
-                preview.isComplete(),
+                preview.isComplete() && termProblems.isEmpty(),
                 frozen.unresolved().stream().map(token -> MissingValue.of(token, messages)).toList(),
                 frozen.omittedRequired(),
                 frozen.brokenReferences(),
                 frozen.separatedPairs(),
+                termProblems.stream().map(found -> TermProblem.of(found, messages)).toList(),
                 frozen.sections().stream().map(LeasePreviewResponse::section).toList());
     }
 

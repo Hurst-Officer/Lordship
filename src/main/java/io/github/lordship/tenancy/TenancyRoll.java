@@ -1,6 +1,8 @@
 package io.github.lordship.tenancy;
 
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.PropertyScope;
+import io.github.lordship.shared.TenancyStanding;
 import io.github.lordship.tenancy.internal.TenancyRollRepository;
 import io.github.lordship.tenancy.internal.TenancyRollRepository.HomeRow;
 import io.github.lordship.tenancy.internal.TenancyRollRepository.LineRow;
@@ -167,46 +169,38 @@ public class TenancyRoll {
     }
 
     /**
-     * People on file whose name holds every typed word, at most twenty, by name, each with the homes on
-     * properties that pass mayView. Fewer than two typed letters find nobody.
+     * People on file whose name holds every typed word (capitals and accents aside), at most twenty, by name,
+     * each with the homes on properties in the viewer's scope. Fewer than two typed letters find nobody.
      *
-     * <p>everyProperty says the viewer may see every property (PropertyScope.All). A viewer who may not is
-     * shown a person only when the person has a home on a property the viewer may see, or when the person is on
-     * no tenancy anywhere and is not office staff: someone just put on file, about to be put on a tenancy.
-     * A person whose every home is on a property outside the viewer's scope is not found at all, name included.
+     * <p>A viewer of every property finds among everyone. A viewer of some properties is told about a person
+     * only when something on file ties the person to one of those properties, or when nothing on file points at
+     * the person at all: someone just put on file, about to be put on a tenancy. The database decides which
+     * (TenancyRollRepository.TOLD_ABOUT), so a person tied only to other properties is not found, name included.
      */
-    public List<Found> peopleNamed(String typed, java.util.function.Predicate<UUID> mayView, boolean everyProperty) {
+    public List<Found> peopleNamed(String typed, PropertyScope scope) {
         List<String> words = typed == null ? List.of() : List.of(typed.strip().split("\\s+")).stream()
                 .filter(word -> !word.isEmpty())
                 .toList();
         if (words.stream().mapToInt(String::length).sum() < 2) {
             return List.of();
         }
-        // a viewer with some properties has people taken out below, so more are asked for than are answered
         List<TenancyRollRepository.PersonRow> people =
-                repository.findPeopleNamed(words, everyProperty ? MAX_PEOPLE : MAX_PEOPLE * 5);
+                repository.findPeopleNamed(words, scope.isAll() ? null : scope.idsOrEmpty(), MAX_PEOPLE);
         List<UUID> personIds = people.stream().map(TenancyRollRepository.PersonRow::id).toList();
         Map<UUID, List<Home>> homes = new LinkedHashMap<>();
-        // the people with a home on a property the viewer may not see
-        Set<UUID> elsewhere = new java.util.HashSet<>();
+        LocalDate today = LocalDate.now();
         for (HomeRow row : repository.findHomesOf(personIds)) {
-            if (!mayView.test(row.propertyId())) {
-                elsewhere.add(row.personId());
+            // a home on a property outside the viewer's scope is not told
+            if (!scope.allows(row.propertyId())) {
                 continue;
             }
-            LocalDate today = LocalDate.now();
-            boolean ended = (row.endDate() != null && row.endDate().isBefore(today))
-                    || (row.tenancyEndDate() != null && row.tenancyEndDate().isBefore(today));
+            boolean ended = TenancyStanding.hasEnded(row.endDate(), today)
+                    || TenancyStanding.hasEnded(row.tenancyEndDate(), today);
             homes.computeIfAbsent(row.personId(), id -> new ArrayList<>())
                     .add(new Home(row.role(), row.tenancyId(), row.lotId(), row.propertyId(), row.propertyCode(),
                             row.lotNumber(), ended));
         }
-        Set<UUID> staff = everyProperty ? Set.of() : Set.copyOf(repository.findAgentsAmong(personIds));
         return people.stream()
-                .filter(person -> everyProperty
-                        || homes.containsKey(person.id())
-                        || (!elsewhere.contains(person.id()) && !staff.contains(person.id())))
-                .limit(MAX_PEOPLE)
                 .map(person -> new Found(person.id(), person.nameFull(), person.personalPhone(), person.personalEmail(),
                         homes.getOrDefault(person.id(), List.of())))
                 .toList();

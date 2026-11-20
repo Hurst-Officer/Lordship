@@ -90,13 +90,16 @@ public class DocumentScreenController {
                                AgreementType agreementType, InstrumentType instrumentType, int changes) { }
 
     // One park and the documents it uses. A park with none is listed too.
-    public record ParkLine(UUID propertyId, String propertyCode, String propertyName, List<ParkDocument> documents) { }
+    // propertyCounty and propertyState are there because a document is chosen for a park by the county and the
+    // state the park is in: the office reads both wherever a park is picked for a document.
+    public record ParkLine(UUID propertyId, String propertyCode, String propertyName,
+                           String propertyCounty, String propertyState, List<ParkDocument> documents) { }
 
     public record DocumentsScreen(List<DocumentLine> documents, List<ParkLine> parks) { }
 
     // One park using the open document
     public record DocumentPark(UUID assignmentId, UUID propertyId, String propertyCode, String propertyName,
-                               int changes, String note) { }
+                               String propertyCounty, String propertyState, int changes, String note) { }
 
     /** The document page: the whole document, the parks using it, and its history. */
     public record DocumentScreen(DocumentTemplateResponse document, List<DocumentPark> parks,
@@ -106,7 +109,8 @@ public class DocumentScreenController {
     public record SectionScreen(DocumentTemplateResponse document, UUID sectionId, List<TokenResponse> tokens,
                                 History.PageHistory history) { }
 
-    public record ParkRef(UUID id, String propertyCode, String propertyName) { }
+    public record ParkRef(UUID id, String propertyCode, String propertyName,
+                          String propertyCounty, String propertyState) { }
 
     /**
      * The document as one park uses it. assignment is what the park uses for this kind of paper: this document,
@@ -147,6 +151,7 @@ public class DocumentScreenController {
             parks = propertyService.findAll(scope).stream()
                     .sorted(Comparator.comparing(p -> p.propertyCode() == null ? "" : p.propertyCode()))
                     .map(p -> new ParkLine(p.uuid(), p.propertyCode(), p.propertyName(),
+                            p.propertyCounty(), p.propertyState(),
                             byPark.getOrDefault(p.uuid(), List.of()).stream()
                                     .map(a -> new ParkDocument(a.uuid(), a.document() == null ? null : a.document().uuid(),
                                             a.documentName(), a.agreementType(), a.instrumentType(),
@@ -185,7 +190,7 @@ public class DocumentScreenController {
                     .map(a -> {
                         Property p = properties.get(a.propertyId());
                         return new DocumentPark(a.uuid(), p.uuid(), p.propertyCode(), p.propertyName(),
-                                a.customizations().size(), a.note());
+                                p.propertyCounty(), p.propertyState(), a.customizations().size(), a.note());
                     })
                     .sorted(Comparator.comparing(p -> p.propertyCode() == null ? "" : p.propertyCode()))
                     .toList();
@@ -279,7 +284,8 @@ public class DocumentScreenController {
 
         return ResponseEntity.ok(new ParkScreen(
                 DocumentTemplateResponse.from(doc),
-                new ParkRef(park.uuid(), park.propertyCode(), park.propertyName()),
+                new ParkRef(park.uuid(), park.propertyCode(), park.propertyName(),
+                        park.propertyCounty(), park.propertyState()),
                 assignment.map(PropertyDocumentAssignmentResponse::from).orElse(null),
                 audit,
                 tokensFor(doc.instrumentType()),

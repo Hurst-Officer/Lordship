@@ -32,7 +32,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * POST /api/instruments/{uuid}/generate and GET /api/instruments/{uuid}/file.
+ * POST /api/instruments/{uuid}/generate and GET /api/instruments/{uuid}/file, and what follows a generated lease:
+ * POST /api/instruments/{uuid}/accept, and abandon once the rent is in force.
  *
  * <p>Generated PDFs go to the temp folder (see application-test.properties).
  *
@@ -217,6 +218,77 @@ public class InstrumentGenerateIT extends IntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ---- accept and abandon: the lease after generate --------------------------
+
+    @Test
+    void accept_shouldPutTheChargeTermsInForce_andLeaveTheDocumentGenerated() throws Exception {
+        // Arrange -- the signed copy is back
+        UUID lease = readyLease();
+        generate(lease).andExpect(status().isOk());
+
+        // Act / Assert -- sent, served and approved are not recorded yet, so the status does not move
+        accept(lease)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("GENERATED"));
+
+        mockMvc.perform(get("/api/instruments/{uuid}/charge-terms", lease)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].status", everyItem(is("ACTIVE"))));
+    }
+
+    @Test
+    void accept_shouldChangeNothing_whenTheLeaseIsAlreadyAccepted() throws Exception {
+        // Arrange -- two clicks
+        UUID lease = readyLease();
+        generate(lease).andExpect(status().isOk());
+        accept(lease).andExpect(status().isOk());
+
+        // Act / Assert
+        accept(lease).andExpect(status().isOk());
+        mockMvc.perform(get("/api/instruments/{uuid}/charge-terms", lease)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$[*].status", everyItem(is("ACTIVE"))));
+    }
+
+    @Test
+    void accept_shouldReturn409_forADraft() throws Exception {
+        // Arrange -- nothing was printed, so nothing can have been signed
+        UUID lease = readyLease();
+
+        // Act / Assert
+        accept(lease)
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("instrument.not_generated"));
+        mockMvc.perform(get("/api/instruments/{uuid}/charge-terms", lease)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$[*].status", everyItem(is("PROPOSED"))));
+    }
+
+    @Test
+    void accept_shouldReturn404_forAnUnknownDocument() throws Exception {
+        // Act / Assert
+        accept(UUID.randomUUID()).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void abandon_shouldReturn409_onceTheRentIsInForce() throws Exception {
+        // Arrange -- rent that went into force stays in force; the paper behind the rent cannot be recorded
+        // as paper that never went out
+        UUID lease = readyLease();
+        generate(lease).andExpect(status().isOk());
+        accept(lease).andExpect(status().isOk());
+
+        // Act / Assert
+        mockMvc.perform(post("/api/instruments/{uuid}/abandon", lease)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("instrument.rent_in_force"));
+        mockMvc.perform(get("/api/instruments/{uuid}", lease)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(jsonPath("$.status").value("GENERATED"));
+    }
+
     // ---- fixtures ------------------------------------------------------------
 
     /** A complete lease: one clause, the park's document assigned, dates and schedule set. */
@@ -228,6 +300,11 @@ public class InstrumentGenerateIT extends IntegrationTest {
 
     private org.springframework.test.web.servlet.ResultActions generate(UUID lease) throws Exception {
         return mockMvc.perform(post("/api/instruments/{uuid}/generate", lease)
+                .header("Authorization", "Bearer " + token));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions accept(UUID lease) throws Exception {
+        return mockMvc.perform(post("/api/instruments/{uuid}/accept", lease)
                 .header("Authorization", "Bearer " + token));
     }
 

@@ -145,7 +145,9 @@ public class InstrumentPreviewIT extends IntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.complete").value(true))
                 .andExpect(jsonPath("$.unresolved").isEmpty())
-                .andExpect(jsonPath("$.omittedRequired").isEmpty());
+                .andExpect(jsonPath("$.omittedRequired").isEmpty())
+                // nothing generate would refuse about a rent step either (a rent of zero, a fee with no amount)
+                .andExpect(jsonPath("$.termProblems").isEmpty());
     }
 
     // ---- what it refuses to hide ---------------------------------------------

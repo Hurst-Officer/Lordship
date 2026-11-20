@@ -16,6 +16,7 @@ import io.github.lordship.screens.internal.ScreenResponses.RatesStandard;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.PropertyScope;
+import io.github.lordship.shared.TenancyStanding;
 import io.github.lordship.tenancy.TenancyRoll;
 import io.github.lordship.tenancy.TenancyService;
 import io.github.lordship.tenancyterms.TenancyChargeTermResponse;
@@ -224,7 +225,7 @@ public class TenanciesScreenController {
             // the list is the newest start first, so the first tenancy that has not ended is the current one
             shown = tenancies.stream()
                     .filter(line -> line.deletedAt() == null)
-                    .filter(line -> line.endDate() == null || !line.endDate().isBefore(today))
+                    .filter(line -> !TenancyStanding.hasEnded(line.endDate(), today))
                     .map(TenancyRoll.Line::id)
                     .findFirst()
                     .orElse(null);
@@ -314,9 +315,9 @@ public class TenanciesScreenController {
      * People on file by name, for the bar's search and for finding someone before adding a duplicate.
      * q is what the worker typed: every word must be in the name; fewer than two letters find nobody.
      * At most twenty people, by name, each with the homes on properties in the agent's scope.
-     * An agent who may not see every property finds only people with a home on a property in the agent's scope,
-     * and people on no tenancy anywhere who are not office staff (TenancyRoll.peopleNamed). Nobody else's name
-     * is answered.
+     * The name is matched without regard to capitals or accents. An agent who may not see every property finds
+     * only people something on file ties to a property in the agent's scope, and people nothing on file points
+     * at yet (TenancyRoll.peopleNamed). Nobody else's name is answered.
      * Needs tenancy:view and tenants:view. personalPhone and personalEmail are null without persons:view.
      */
     @PreAuthorize("hasAuthority('tenancy:view') and hasAuthority('tenants:view')")
@@ -324,7 +325,7 @@ public class TenanciesScreenController {
     public ResponseEntity<List<TenancyRoll.Found>> people(@RequestParam(defaultValue = "") String q,
                                                           Authentication authentication) {
         PropertyScope scope = AgentPrincipal.scopeOf(authentication);
-        List<TenancyRoll.Found> found = tenancyRoll.peopleNamed(q, scope::allows, scope.isAll());
+        List<TenancyRoll.Found> found = tenancyRoll.peopleNamed(q, scope);
         if (!authorities(authentication).contains("persons:view")) {
             found = found.stream()
                     .map(person -> new TenancyRoll.Found(person.id(), person.nameFull(), null, null, person.homes()))

@@ -5,6 +5,8 @@ import io.github.lordship.accounts.AccountService;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
+import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.tenancy.internal.TenancyRepository;
 import io.github.lordship.tenancy.internal.TenancyRow;
 import jakarta.persistence.EntityNotFoundException;
@@ -506,5 +508,46 @@ public class TenancyServiceTests {
         // Assert
         assertFalse(result);
         verify(tenancyRepository, never()).softDelete(any());
+    }
+
+    // ---- requireKindFits (a lease started on a tenancy that is already there) -----------------------
+
+    @Test
+    void requireKindFits_rejectsStorage_whenAnotherTenancyOnTheLotIsUnderALandLease() {
+        // Arrange
+        when(tenancyRepository.findById(uuid1)).thenReturn(Optional.of(row(uuid1, LocalDate.now().minusDays(10), null)));
+        when(tenancyRepository.holdsKind(eq(lotId), eq(uuid1), eq(List.of("LAND")), any())).thenReturn(true);
+        when(lotService.findById(lotId)).thenReturn(Optional.of(lot(true, null)));
+
+        // Act
+        RuleConflict refused = assertThrows(RuleConflict.class,
+                () -> tenancyService.requireKindFits(uuid1, AgreementType.STORAGE));
+
+        // Assert
+        assertEquals("tenancy.kind_conflict", refused.problem().code());
+    }
+
+    @Test
+    void requireKindFits_allowsLand_whenNoOtherTenancyOnTheLotIsUnderStorageOrUtilityService() {
+        // Arrange -- the tenancy's own charge terms are left out of the search (self)
+        when(tenancyRepository.findById(uuid1)).thenReturn(Optional.of(row(uuid1, LocalDate.now().minusDays(10), null)));
+        when(tenancyRepository.holdsKind(eq(lotId), eq(uuid1), eq(List.of("STORAGE", "UTILITY_SERVICE")), any()))
+                .thenReturn(false);
+
+        // Act / Assert
+        assertDoesNotThrow(() -> tenancyService.requireKindFits(uuid1, AgreementType.LAND));
+    }
+
+    @Test
+    void requireKindFits_looksAtTheDayTheTenancyStarts_whenThatDayIsStillAhead() {
+        // Arrange -- the household moves in next month; who holds the lot then is what matters
+        LocalDate start = LocalDate.now().plusDays(30);
+        when(tenancyRepository.findById(uuid1)).thenReturn(Optional.of(row(uuid1, start, null)));
+
+        // Act
+        tenancyService.requireKindFits(uuid1, AgreementType.LAND);
+
+        // Assert
+        verify(tenancyRepository).holdsKind(eq(lotId), eq(uuid1), any(), eq(start));
     }
 }

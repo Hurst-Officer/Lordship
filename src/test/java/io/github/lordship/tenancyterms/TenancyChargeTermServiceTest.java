@@ -269,6 +269,23 @@ public class TenancyChargeTermServiceTest {
     }
 
     @Test
+    void patchChargeTerm_shouldRefuseAStepWithNoDay() {
+        // Arrange
+        UUID uuid = UUID.randomUUID();
+        when(tenancyChargeTermRepository.findById(uuid))
+                .thenReturn(Optional.of(docStep(uuid, TenancyTermStatus.PROPOSED, VALID_AT)));
+
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class,
+                () -> tenancyChargeTermService.patchChargeTerm(uuid, changes("valid_at", null)));
+
+        // Assert -- every rent step starts on a day, and the refusal is a sentence rather than a database error
+        assertEquals("term.date_needed", refused.problem().code());
+        assertEquals("valid_at", refused.problem().field());
+        verify(tenancyChargeTermRepository, never()).patch(any(), any());
+    }
+
+    @Test
     void patchChargeTerm_shouldThrow_onceTheTermHasLeftProposed() {
         // Arrange -- a document is out for signature; the paper and the row must agree
         UUID uuid = UUID.randomUUID();
@@ -1490,6 +1507,87 @@ public class TenancyChargeTermServiceTest {
     }
 
     // ---- whole-document operations -------------------------------------------
+
+    @Test
+    void activateForDocument_shouldPutAPendingStepInForce_andLeaveAnActiveOneAlone() {
+        // Arrange -- the first step is already in force; the second is still out for signature
+        UUID already = UUID.randomUUID();
+        UUID waiting = UUID.randomUUID();
+        LocalDate later = VALID_AT.plusYears(1);
+        TenancyChargeTermRow activeRow = docStep(already, TenancyTermStatus.ACTIVE, VALID_AT);
+        TenancyChargeTermRow pendingRow = docStep(waiting, TenancyTermStatus.PENDING, later);
+
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(List.of(activeRow, pendingRow));
+        when(tenancyChargeTermRepository.findByTenancy(any())).thenReturn(List.of(activeRow, pendingRow));
+        when(tenancyChargeTermRepository.findById(waiting)).thenReturn(Optional.of(pendingRow));
+        when(tenancyChargeTermRepository.updateStatus(waiting, TenancyTermStatus.PENDING, TenancyTermStatus.ACTIVE))
+                .thenReturn(Optional.of(docStep(waiting, TenancyTermStatus.ACTIVE, later)));
+
+        // Act
+        List<TenancyChargeTerm> moved = tenancyChargeTermService.activateForDocument(DOCUMENT);
+
+        // Assert -- accepting a lease twice is harmless
+        assertEquals(1, moved.size());
+        verify(tenancyChargeTermRepository, never()).updateStatus(eq(already), any(), any());
+    }
+
+    @Test
+    void activateForDocument_shouldRefuseADayAnotherRentIsInForceFrom_beforeMovingAnything() {
+        // Arrange -- a migrated rent of the same tenancy is in force from the lease's first day
+        UUID first = UUID.randomUUID();
+        UUID second = UUID.randomUUID();
+        TenancyChargeTermRow firstRow = docStep(first, TenancyTermStatus.PENDING, VALID_AT);
+        TenancyChargeTermRow secondRow = docStep(second, TenancyTermStatus.PENDING, VALID_AT.plusYears(1));
+        TenancyChargeTermRow migrated = scheduledRow(UUID.randomUUID(), TenancyTermStatus.ACTIVE, VALID_AT);
+
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(List.of(firstRow, secondRow));
+        when(tenancyChargeTermRepository.findByTenancy(any())).thenReturn(List.of(migrated, firstRow, secondRow));
+
+        // Act
+        RuleConflict refused = assertThrows(RuleConflict.class,
+                () -> tenancyChargeTermService.activateForDocument(DOCUMENT));
+
+        // Assert -- all steps or none: the second step, which had no clash, stays pending too
+        assertEquals("term.day_taken", refused.problem().code());
+        verify(tenancyChargeTermRepository, never()).updateStatus(any(), any(), any());
+    }
+
+    @Test
+    void activateForDocument_shouldDoNothing_whenNoStepIsPending() {
+        // Arrange
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(
+                List.of(docStep(UUID.randomUUID(), TenancyTermStatus.ACTIVE, VALID_AT)));
+
+        // Act / Assert
+        assertTrue(tenancyChargeTermService.activateForDocument(DOCUMENT).isEmpty());
+        verify(tenancyChargeTermRepository, never()).updateStatus(any(), any(), any());
+    }
+
+    @Test
+    void problemsForDocument_shouldNameWhatGenerateWouldRefuse_withTheStepsDay() {
+        // Arrange -- the 0.00 a lot with no rate leaves on a draft
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(
+                List.of(rowWithRate(UUID.randomUUID(), BigDecimal.ZERO)));
+
+        // Act
+        List<TenancyChargeTermService.TermProblem> problems = tenancyChargeTermService.problemsForDocument(DOCUMENT);
+
+        // Assert -- the lease check can say so before generate refuses
+        assertFalse(problems.isEmpty());
+        assertTrue(problems.stream().anyMatch(found -> "term.rate_not_set".equals(found.problem().code())));
+        assertTrue(problems.stream().allMatch(found -> VALID_AT.equals(found.validAt())));
+    }
+
+    @Test
+    void problemsForDocument_shouldBeEmpty_whenEveryStepIsReady_orAlreadySubmitted() {
+        // Arrange
+        when(tenancyChargeTermRepository.findBySource(DOCUMENT)).thenReturn(List.of(
+                docStep(UUID.randomUUID(), TenancyTermStatus.PROPOSED, VALID_AT),
+                docStep(UUID.randomUUID(), TenancyTermStatus.PENDING, VALID_AT.plusYears(1))));
+
+        // Act / Assert
+        assertTrue(tenancyChargeTermService.problemsForDocument(DOCUMENT).isEmpty());
+    }
 
     @Test
     void cancelFutureForDocument_shouldLeaveAStepThatHasAlreadyTakenEffect() {

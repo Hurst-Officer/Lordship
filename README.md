@@ -37,6 +37,12 @@ Database: PostgreSQL
 AI: Qwen (lease review, compliance flagging)
 
 
+Own recent work (for developers and agents)
+Deleting needs a delete permission, with one rule on top: whoever added a record may delete and restore that record for 7 days without the delete permission, while nobody else has changed the record or added to the record. This is what lets an office worker who can add a lot undo adding the lot. The rule lives in one class, audit/OwnWork.java, and reads who added a record from audit_log. No table has a created_by column for this.
+- Covered today: property, lot, mobile_home, person. Soft delete only. Every other refusal (a lot with an active tenancy, a person on a tenancy) still applies.
+- A new kind of record: add one entry to OwnWork.KINDS, and put hasAuthority('x:delete') or @ownWork.madeRecently('table', #uuid, authentication) on the kind's delete and restore endpoints (madeAllRecently for a list of ids). The list of deleted records and the Glade screen answer use ownWork.mine. The class comment has the details.
+- The days are lordship.own-work.days in application.properties. Refusals are own_work.* in messages.properties and messages_es.properties. The tests are in audit/OwnWorkIT.java.
+
 Data model philosophy
 Lordship will make a hard distinction between canonical records and historical shards.
 Canonical records are current, relational, and the operational source of truth. Historical shards are legacy data — imported from old spreadsheets, tagged with their source, and treated as immutable. They are not force-merged with canonical records. Ambiguous linkage is flagged, not assumed.
