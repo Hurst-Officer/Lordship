@@ -52,7 +52,9 @@ import java.util.stream.Stream;
  * record is the agent's own and the agent should be told why the record can no longer be taken back.
  *
  * <p>A NEW KIND OF RECORD needs one entry in KINDS below, and the check above on the kind's delete and restore
- * endpoints. Nothing else in this class changes. The names in KINDS are written here and never come from a request.
+ * endpoints. Nothing else in this class changes. The names in KINDS are written here and never come from a request:
+ * the table names, column names and property queries in KINDS become part of a query's text, so Kind and Under are
+ * private and the table an endpoint passes is only ever the key that finds a Kind.
  * The kind's list of deleted records and the kind's screen answer use {@link #mine} (see ScreenResponses).
  */
 @Component("ownWork")
@@ -67,13 +69,13 @@ public class OwnWork {
      *                         null for a kind tied to no property
      * @param under            the tables whose rows hang under a record of this kind
      */
-    public record Kind(String table, String createPermission, String propertySql, List<Under> under) { }
+    private record Kind(String table, String createPermission, String propertySql, List<Under> under) { }
 
     /**
      * A table whose rows hang under a record, and the column that points at the record.
      * The table needs a uuid column and a deleted_at column, and the table's inserts are logged under the table's own name.
      */
-    public record Under(String table, String column) { }
+    private record Under(String table, String column) { }
 
     private static final Map<String, Kind> KINDS = Stream.of(
             new Kind("property", "properties:create",

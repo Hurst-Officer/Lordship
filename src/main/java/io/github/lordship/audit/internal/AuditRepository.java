@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 
 @Repository
@@ -395,6 +396,17 @@ public class AuditRepository {
 
     // ---- own recent work (OwnWork) --------------------------------------------------------
     // The table and column names in these queries come from OwnWork.KINDS, never from a request.
+    // A table or column name cannot be bound as a parameter, so findWithRowByAnother writes the two names into the
+    // query's text. name() is the second lock: only lower-case letters, digits and underscores get through, and
+    // text made of those alone cannot end a name and start another statement.
+    private static final Pattern NAME = Pattern.compile("[a-z][a-z0-9_]*");
+
+    private static String name(String identifier) {
+        if (identifier == null || !NAME.matcher(identifier).matches()) {
+            throw new IllegalArgumentException("Not a table or column name: " + identifier);
+        }
+        return identifier;
+    }
 
     // Who added each record, and when: the oldest INSERT row of each. A record with no insert row is left out.
     public List<HistoryRows.MakerRow> findMakers(String table, Collection<String> recordIds) {
@@ -473,7 +485,7 @@ public class AuditRepository {
                                AND a.record_id = c.uuid::text
                                AND a.operation = 'INSERT'
                                AND a.user_id = :maker)
-                    """.formatted(underTable, column))
+                    """.formatted(name(underTable), name(column)))
                 .param("ids", recordIds)
                 .param("underTable", underTable)
                 .param("maker", maker)
@@ -483,6 +495,8 @@ public class AuditRepository {
 
     // Each record's property, by the kind's own query: the query takes :ids and answers the columns id and
     // property_id. A record the query does not find is left out.
+    // propertySql is a whole query, so no check here can vouch for the text: pass only a constant written in the
+    // code (OwnWork.KINDS, which is private), never text built from a request.
     public Map<UUID, UUID> findProperties(String propertySql, Collection<UUID> recordIds) {
         if (recordIds.isEmpty()) {
             return Map.of();
