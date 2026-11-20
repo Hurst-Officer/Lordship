@@ -2,6 +2,7 @@ package io.github.lordship.homes.internal;
 
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.audit.History;
+import io.github.lordship.audit.OwnWork;
 import io.github.lordship.homes.Home;
 import io.github.lordship.homes.HomeService;
 import io.github.lordship.identity.AgentPrincipal;
@@ -27,6 +28,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -44,10 +46,12 @@ public class HomeController {
 
     private final HomeService homeService;
     private final AuditService auditService;
+    private final OwnWork ownWork;
 
-    public HomeController(HomeService homeService, AuditService auditService) {
+    public HomeController(HomeService homeService, AuditService auditService, OwnWork ownWork) {
         this.homeService = homeService;
         this.auditService = auditService;
+        this.ownWork = ownWork;
     }
 
     @PreAuthorize("hasAuthority('homes:create')")
@@ -162,7 +166,10 @@ public class HomeController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @PreAuthorize("hasAuthority('homes:delete')")
+    // Deleting and restoring a home needs homes:delete. Without homes:delete, the agent who added the home may
+    // still delete and restore the home as own recent work (audit OwnWork): 403 when the home is not the agent's
+    // to take back, 409 own_work.* when the days have passed or someone else has touched the home since.
+    @PreAuthorize("hasAuthority('homes:delete') or @ownWork.madeRecently('mobile_home', #uuid, authentication)")
     @DeleteMapping("/{uuid}")
     public ResponseEntity<Void> deleteHome(@PathVariable UUID uuid, Authentication authentication) {
         if (!homeService.inScope(uuid, AgentPrincipal.scopeOf(authentication))) {
@@ -175,7 +182,7 @@ public class HomeController {
 
     // Brings a deleted home back. Answers the home.
     // 404 for an unknown home. 409 home.lot_deleted while its lot is deleted.
-    @PreAuthorize("hasAuthority('homes:delete')")
+    @PreAuthorize("hasAuthority('homes:delete') or @ownWork.madeRecently('mobile_home', #uuid, authentication)")
     @PostMapping("/{uuid}/restore")
     public ResponseEntity<HomeResponse> restoreHome(@PathVariable UUID uuid, Authentication authentication) {
         if (!homeService.inScope(uuid, AgentPrincipal.scopeOf(authentication))) {
@@ -188,14 +195,24 @@ public class HomeController {
     }
 
     // A lot's deleted homes, the most recently deleted first. deletedBy is null without audit:view.
-    @PreAuthorize("hasAuthority('homes:delete')")
+    // With homes:create and without homes:delete, the list holds only the homes the agent may restore as own
+    // recent work (audit OwnWork): the homes the agent added and deleted.
+    @PreAuthorize("hasAnyAuthority('homes:delete', 'homes:create')")
     @GetMapping("/deleted")
     public ResponseEntity<List<DeletedHomeResponse>> deletedHomes(@RequestParam("lotId") UUID lotId,
                                                                   Authentication authentication) {
         if (!homeService.lotInScope(lotId, AgentPrincipal.scopeOf(authentication))) {
             return ResponseEntity.notFound().build();
         }
-        List<Home> homes = homeService.findDeletedByLot(lotId);
+        List<Home> found = homeService.findDeletedByLot(lotId);
+        boolean mayDelete = authentication.getAuthorities().stream()
+                .anyMatch(authority -> "homes:delete".equals(authority.getAuthority()));
+        Set<UUID> own = mayDelete
+                ? Set.of()
+                : ownWork.mine("mobile_home", found.stream().map(Home::uuid).toList(), authentication);
+        List<Home> homes = mayDelete
+                ? found
+                : found.stream().filter(home -> own.contains(home.uuid())).toList();
         boolean canViewAudits = authentication.getAuthorities().stream()
                 .anyMatch(authority -> "audit:view".equals(authority.getAuthority()));
         Map<UUID, History.Mark> who = canViewAudits

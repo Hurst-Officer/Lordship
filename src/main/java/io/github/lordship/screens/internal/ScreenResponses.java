@@ -16,19 +16,28 @@ import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.termstemplate.internal.TermsTemplateResponse;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 // What GET /api/screens/... returns: everything one Glade screen shows, except the map layers.
+//
+// mine (on a screen whose records can be deleted): the records on the screen that the viewer added recently and
+// may still delete and restore without the delete permission (audit OwnWork), as record ids by audit table:
+// { "lot": [...], "mobile_home": [...] }. Glade shows Delete on those records. Never null; a table with none
+// has an empty list. The server still decides at the delete: mine only says where to offer the button.
 public final class ScreenResponses {
 
     private ScreenResponses() { }
 
     // The property page (X2).
     // lots is null without lots:view. history is null without audit:view.
+    // mine has "property" and "lot".
     public record PropertyScreen(
             PropertyResponse property,
             List<LotResponse> lots,
-            History.PageHistory history
+            History.PageHistory history,
+            Map<String, Set<UUID>> mine
     ) { }
 
     // ---- Roles ----
@@ -127,11 +136,13 @@ public final class ScreenResponses {
     // The lot page (X3).
     // property is the lot's property, for the page's header. homes is null without homes:view.
     // history is null without audit:view.
+    // mine has "lot" and "mobile_home".
     public record LotScreen(
             LotResponse lot,
             PropertyResponse property,
             List<HomeResponse> homes,
-            History.PageHistory history
+            History.PageHistory history,
+            Map<String, Set<UUID>> mine
     ) { }
 
     // The signed-in agent's own page. agentId and personId are always there, for presence and the history bars.

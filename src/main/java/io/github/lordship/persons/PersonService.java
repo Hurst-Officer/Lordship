@@ -190,11 +190,41 @@ public class PersonService {
             if (personRepository.isLiveAgent(uuid)) {
                 throw RuleConflict.of("person.is_agent");
             }
+            // A person on a tenancy or with a claim on a home is part of that tenancy's or home's record.
+            // The person is taken off there first (the stay or the claim is deleted), then the person can go.
+            if (personRepository.isInUse(uuid)) {
+                throw RuleConflict.of("person.in_use");
+            }
             if (!personRepository.softDelete(uuid)) {
                 return false;
             }
             auditService.recordDelete("person", uuid, AuditMapper.toMap(person));
             return true;
         }).orElse(false);
+    }
+
+    // Brings a deleted person back. A person who is not deleted is returned as the person is,
+    // so sending the restore twice is safe. Empty when there is no such person.
+    @Transactional
+    public Optional<Person> restorePerson(UUID uuid) {
+        Optional<PersonRow> found = personRepository.findAnyById(uuid);
+        if (found.isEmpty()) {
+            return Optional.empty();
+        }
+        PersonRow before = found.get();
+        if (before.deletedAt() == null) {
+            return Optional.of(before.toPerson(encryptionService));
+        }
+
+        Optional<PersonRow> after = personRepository.restore(uuid);
+        after.ifPresent(row -> {
+            var diff = AuditMapper.diff(before, row);
+            auditService.recordUpdate("person", uuid, diff.before(), diff.after());
+        });
+        // a coworker restored the person a moment earlier
+        if (after.isEmpty()) {
+            return findByID(uuid);
+        }
+        return after.map(row -> row.toPerson(encryptionService));
     }
 }

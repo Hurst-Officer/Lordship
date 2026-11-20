@@ -366,7 +366,7 @@ public class AuditService {
             }
         }
         return new History.Entry(row.uuid(), row.changedAt(), row.name(), OperationType.valueOf(row.operation()),
-                changes, row.together());
+                changes, row.together(), row.byMaker());
     }
 
     @SuppressWarnings("unchecked")

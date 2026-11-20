@@ -1,5 +1,6 @@
 package io.github.lordship.tenancy.internal;
 
+import io.github.lordship.shared.TenancyStanding;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -69,8 +70,9 @@ public class TenancyRepository {
     }
 
     /**
-     * How many other live tenancies hold the lot on a day. A tenancy holds the lot until the tenancy's end date
-     * (the end date itself is the day the next tenancy may start), and while the tenancy has no end date.
+     * How many other live tenancies hold the lot on a day (TenancyStanding.HOLDS_ON_DAY_SQL). A tenancy holds
+     * the lot until the tenancy's end date (the end date itself is the day the next tenancy may start), and while
+     * the tenancy has no end date.
      * self is the tenancy being checked, left out of the count; null when creating. A null day means today.
      */
     public int countHolding(UUID lotId, UUID self, LocalDate day) {
@@ -79,8 +81,8 @@ public class TenancyRepository {
                         WHERE t.lot_id = :lotId
                           AND t.deleted_at IS NULL
                           AND (CAST(:self AS uuid) IS NULL OR t.uuid <> CAST(:self AS uuid))
-                          AND (t.end_date IS NULL OR t.end_date > COALESCE(CAST(:day AS date), CURRENT_DATE))
-                        """)
+                          AND %s
+                        """.formatted(TenancyStanding.HOLDS_ON_DAY_SQL))
                 .param("lotId", lotId)
                 .param("self", self)
                 .param("day", day)
@@ -92,21 +94,24 @@ public class TenancyRepository {
      * Whether a tenancy that holds the lot on a day (see countHolding) has a charge term of one of these kinds.
      * kinds are agreement_type names ("LAND"). Cancelled and deleted terms do not count. tenancy_charge_term is
      * the tenancyterms module's table, read here by name: that module depends on this one.
+     * self is a tenancy left out of the search (the tenancy a lease is being started for); null leaves none out.
      */
-    public boolean holdsKind(UUID lotId, List<String> kinds, LocalDate day) {
+    public boolean holdsKind(UUID lotId, UUID self, List<String> kinds, LocalDate day) {
         return jdbc.sql("""
                         SELECT EXISTS (
                             SELECT 1 FROM tenancy t
                             JOIN tenancy_charge_term c ON c.tenancy = t.uuid
                             WHERE t.lot_id = :lotId
                               AND t.deleted_at IS NULL
-                              AND (t.end_date IS NULL OR t.end_date > COALESCE(CAST(:day AS date), CURRENT_DATE))
+                              AND (CAST(:self AS uuid) IS NULL OR t.uuid <> CAST(:self AS uuid))
+                              AND %s
                               AND c.deleted_at IS NULL
                               AND c.status <> 'CANCELLED'
                               AND c.agreement_type::text IN (:kinds)
                         )
-                        """)
+                        """.formatted(TenancyStanding.HOLDS_ON_DAY_SQL))
                 .param("lotId", lotId)
+                .param("self", self)
                 .param("kinds", kinds)
                 .param("day", day)
                 .query(Boolean.class)

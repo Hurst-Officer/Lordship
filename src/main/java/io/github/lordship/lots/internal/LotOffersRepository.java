@@ -1,5 +1,6 @@
 package io.github.lordship.lots.internal;
 
+import io.github.lordship.shared.TenancyStanding;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -18,14 +19,15 @@ import java.util.UUID;
 public class LotOffersRepository {
 
     // sql: a lot is taken while a tenancy on the lot has not ended. A tenancy with an end date of today or later
-    // still holds the lot; one with no end date holds the lot until someone ends the tenancy.
+    // still holds the lot; one with no end date holds the lot until someone ends the tenancy. The test itself is
+    // TenancyStanding's, the same one the Tenancies screens use.
     private static final String TAKEN = """
             EXISTS (
                 SELECT 1 FROM tenancy t
                 WHERE t.lot_id = l.uuid
                   AND t.deleted_at IS NULL
-                  AND (t.end_date IS NULL OR t.end_date >= CURRENT_DATE)
-            )""";
+                  AND %s
+            )""".formatted(TenancyStanding.NOT_ENDED_SQL);
 
     private final JdbcClient jdbc;
 

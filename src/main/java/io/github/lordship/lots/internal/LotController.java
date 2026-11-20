@@ -2,6 +2,7 @@ package io.github.lordship.lots.internal;
 
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.audit.History;
+import io.github.lordship.audit.OwnWork;
 import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
@@ -32,6 +33,7 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 // A lot in a property outside the agent's scope (see PropertyScope) is treated as if it did not exist:
@@ -42,6 +44,7 @@ public class LotController {
 
     private final LotService lotService;
     private final AuditService auditService;
+    private final OwnWork ownWork;
 
     public record LotCreationRequest(
             @NotNull
@@ -138,9 +141,10 @@ public class LotController {
 
     public record LotCountResult(int updated) { }
 
-    public LotController(LotService lotService, AuditService auditService) {
+    public LotController(LotService lotService, AuditService auditService, OwnWork ownWork) {
         this.lotService = lotService;
         this.auditService = auditService;
+        this.ownWork = ownWork;
     }
 
     @PreAuthorize("hasAuthority('lots:create')")
@@ -313,8 +317,12 @@ public class LotController {
         return ResponseEntity.ok(new SetRentableResult(updated));
     }
 
+    // Deleting and restoring lots needs lots:delete. Without lots:delete, the agent who added a lot may still
+    // delete and restore that lot as own recent work (audit OwnWork): 403 when a lot is not the agent's to take
+    // back, 409 own_work.* when the days have passed or someone else has touched the lot since.
+
     // 409 while the lot has an active tenancy
-    @PreAuthorize("hasAuthority('lots:delete')")
+    @PreAuthorize("hasAuthority('lots:delete') or @ownWork.madeRecently('lot', #uuid, authentication)")
     @DeleteMapping("/{uuid}")
     public ResponseEntity<Void> deleteLot(@PathVariable UUID uuid, Authentication authentication) {
         if (!lotService.inScope(uuid, AgentPrincipal.scopeOf(authentication))) {
@@ -327,7 +335,8 @@ public class LotController {
 
     // All or nothing. 400 for an unknown lot, 409 for a lot with an active tenancy.
     // updated counts the lots that were deleted. One a coworker already deleted is skipped.
-    @PreAuthorize("hasAuthority('lots:delete')")
+    // As own recent work, every lot of the selection must be the agent's to take back.
+    @PreAuthorize("hasAuthority('lots:delete') or @ownWork.madeAllRecently('lot', #request.lotIds(), authentication)")
     @PostMapping("/delete")
     public ResponseEntity<LotCountResult> deleteLots(@Valid @RequestBody LotIdsRequest request,
                                                      Authentication authentication) {
@@ -337,7 +346,8 @@ public class LotController {
 
     // All or nothing. 400 for an unknown lot, 409 when the lot's property is deleted.
     // updated counts the lots that came back. One that is not deleted is skipped.
-    @PreAuthorize("hasAuthority('lots:delete')")
+    // As own recent work, every lot of the selection must be the agent's to take back.
+    @PreAuthorize("hasAuthority('lots:delete') or @ownWork.madeAllRecently('lot', #request.lotIds(), authentication)")
     @PostMapping("/restore")
     public ResponseEntity<LotCountResult> restoreLots(@Valid @RequestBody LotIdsRequest request,
                                                       Authentication authentication) {
@@ -347,7 +357,9 @@ public class LotController {
 
     // A property's deleted lots, the most recently deleted first.
     // deletedBy is null without audit:view.
-    @PreAuthorize("hasAuthority('lots:delete')")
+    // With lots:create and without lots:delete, the list holds only the lots the agent may restore as own recent
+    // work (audit OwnWork): the lots the agent added and deleted.
+    @PreAuthorize("hasAnyAuthority('lots:delete', 'lots:create')")
     @GetMapping("/deleted")
     public ResponseEntity<List<DeletedLotResponse>> deletedLots(@RequestParam("propertyId") UUID propertyId,
                                                                 Authentication authentication) {
@@ -355,6 +367,10 @@ public class LotController {
             return ResponseEntity.notFound().build();
         }
         List<Lot> lots = lotService.findDeletedByProperty(propertyId);
+        if (!can(authentication, "lots:delete")) {
+            Set<UUID> own = ownWork.mine("lot", lots.stream().map(Lot::uuid).toList(), authentication);
+            lots = lots.stream().filter(lot -> own.contains(lot.uuid())).toList();
+        }
         Map<UUID, History.Mark> who = canViewAudits(authentication)
                 ? auditService.deletions("lot", lots.stream().map(Lot::uuid).toList())
                 : Map.of();
@@ -362,8 +378,12 @@ public class LotController {
     }
 
     private static boolean canViewAudits(Authentication authentication) {
+        return can(authentication, "audit:view");
+    }
+
+    private static boolean can(Authentication authentication, String permission) {
         return authentication.getAuthorities().stream()
-                .anyMatch(authority -> "audit:view".equals(authority.getAuthority()));
+                .anyMatch(authority -> permission.equals(authority.getAuthority()));
     }
 
     // No @ExceptionHandler here. A local one would win over ApiExceptionHandler and

@@ -113,11 +113,29 @@ public class PersonController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    @PreAuthorize("hasAuthority('persons:delete')")
+    // A soft delete. 409 person.is_agent while the person signs in as an agent, 409 person.in_use while the person
+    // is on a tenancy or has a claim on a home.
+    // Without persons:delete, the agent who added the person may still delete the person as own recent work
+    // (audit OwnWork): 403 when the person is not the agent's to take back, 409 own_work.* when the days have
+    // passed or someone else has touched the person since.
+    @PreAuthorize("hasAuthority('persons:delete') or @ownWork.madeRecently('person', #uuid, authentication)")
     @DeleteMapping("/{uuid}")
     public ResponseEntity<Void> deletePerson(@PathVariable UUID uuid) {
         return personService.deletePerson(uuid) ?
                 ResponseEntity.noContent().build() :
                 ResponseEntity.notFound().build();
+    }
+
+    // Brings a deleted person back. Answers the person. A person who is not deleted is answered as the person is.
+    // 404 for an unknown person. The same permission check as the delete.
+    @PreAuthorize("hasAuthority('persons:delete') or @ownWork.madeRecently('person', #uuid, authentication)")
+    @PostMapping("/{uuid}/restore")
+    public ResponseEntity<PersonResponse> restorePerson(@PathVariable UUID uuid, Authentication authentication) {
+        boolean canViewSsn = authentication.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("persons_ssn:view"));
+
+        return personService.restorePerson(uuid)
+                .map(person -> ResponseEntity.ok(PersonResponse.from(person, canViewSsn)))
+                .orElse(ResponseEntity.notFound().build());
     }
 }

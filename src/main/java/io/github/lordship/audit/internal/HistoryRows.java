@@ -15,9 +15,16 @@ public final class HistoryRows {
     // Who did something to a record, and when
     public record MarkRow(String recordId, OffsetDateTime changedAt, String name) { }
 
-    // One audit row with its author's name, and how many other records of the same table its save changed
+    // One audit row with its author's name, and how many other records of the same table its save changed.
+    // byMaker is true for a delete made by the same agent who added the record.
     public record EntryRow(UUID uuid, OffsetDateTime changedAt, String name, String operation,
-                           String valueBefore, String valueAfter, int together) { }
+                           String valueBefore, String valueAfter, int together, boolean byMaker) { }
+
+    // Who added a record, and when: the record's INSERT row. userId is null for a row the server wrote. (OwnWork)
+    public record MakerRow(String recordId, UUID userId, OffsetDateTime changedAt) { }
+
+    // The newest audit row on a record: what was done, and by whom. userId is null for a row the server wrote. (OwnWork)
+    public record LastRow(String operation, UUID userId) { }
 
     // One save by one agent: the rows one request wrote to one table with one operation.
     // recordId is the first record it touched; records counts them. fields lists the changed fields of an

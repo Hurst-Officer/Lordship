@@ -143,8 +143,9 @@ public class InstrumentController {
     /**
      * Lease preview using a tenant's term info
      * <p>Always 200 when the instrument exists
-     * {@code complete} says whether Generate may be pressed, and the two
-     * problem lists say what to fix.
+     * {@code complete} says whether Generate may be pressed, and the problem
+     * lists say what to fix: what the document is missing, and what generate
+     * would refuse about a rent step (termProblems).
      * 409 when there is no deal attached or the park has no document
      *  for this kind of agreement
      */
@@ -152,7 +153,7 @@ public class InstrumentController {
     @GetMapping("/{uuid}/preview")
     public ResponseEntity<LeasePreviewResponse> preview(@PathVariable UUID uuid) {
         return instrumentService.preview(uuid)
-                .map(preview -> LeasePreviewResponse.from(preview, messages))
+                .map(preview -> LeasePreviewResponse.from(preview, instrumentService.termProblems(uuid), messages))
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -236,6 +237,19 @@ public class InstrumentController {
     @PostMapping("/{uuid}/generate")
     public ResponseEntity<InstrumentResponse> generate(@PathVariable UUID uuid) {
         return instrumentService.generate(uuid)
+                .map(InstrumentResponse::from)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // The signed copy is back: every pending charge term of the document goes into force, all or none.
+    // The document's status does not move. Accepting twice is harmless.
+    // 409 for a draft or an abandoned document, or when another rent of the tenancy is already in force from the
+    // same day (term.day_taken).
+    @PreAuthorize("hasAuthority('tenancy_term:activate')")
+    @PostMapping("/{uuid}/accept")
+    public ResponseEntity<InstrumentResponse> accept(@PathVariable UUID uuid) {
+        return instrumentService.accept(uuid)
                 .map(InstrumentResponse::from)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());

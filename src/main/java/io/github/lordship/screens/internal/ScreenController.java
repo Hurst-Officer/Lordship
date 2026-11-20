@@ -5,6 +5,7 @@ import io.github.lordship.access.AgentService;
 import io.github.lordship.access.internal.agents.AgentOwnResponse;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.audit.History;
+import io.github.lordship.audit.OwnWork;
 import io.github.lordship.homes.Home;
 import io.github.lordship.homes.HomeService;
 import io.github.lordship.homes.internal.HomeResponse;
@@ -31,7 +32,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -56,10 +59,12 @@ public class ScreenController {
     private final AuditService auditService;
     private final AgentService agentService;
     private final PersonService personService;
+    private final OwnWork ownWork;
 
     public ScreenController(PropertyService propertyService, LotService lotService,
                             HomeService homeService, AuditService auditService,
-                            AgentService agentService, PersonService personService) {
+                            AgentService agentService, PersonService personService, OwnWork ownWork) {
+        this.ownWork = ownWork;
         this.propertyService = propertyService;
         this.lotService = lotService;
         this.homeService = homeService;
@@ -102,10 +107,18 @@ public class ScreenController {
                     List.of(new History.Ref("property", propertyId)), counted, AuditService.zoneOf(zone));
         }
 
+        // what the viewer added recently and may still take back without the delete permission (audit OwnWork)
+        Map<String, Set<UUID>> mine = new LinkedHashMap<>();
+        mine.put("property", ownWork.mine("property", List.of(propertyId), authentication));
+        mine.put("lot", lots == null
+                ? Set.of()
+                : ownWork.mine("lot", lots.stream().map(Lot::uuid).toList(), authentication));
+
         return ResponseEntity.ok(new PropertyScreen(
                 PropertyResponse.from(property),
                 lots == null ? null : lots.stream().map(LotResponse::from).toList(),
-                history));
+                history,
+                mine));
     }
 
     // The lot page: the lot, its property (for the header), the homes on it, and its history.
@@ -138,11 +151,19 @@ public class ScreenController {
             history = auditService.pageHistory(shown, List.of(), AuditService.zoneOf(zone));
         }
 
+        // what the viewer added recently and may still take back without the delete permission (audit OwnWork)
+        Map<String, Set<UUID>> mine = new LinkedHashMap<>();
+        mine.put("lot", ownWork.mine("lot", List.of(lotId), authentication));
+        mine.put("mobile_home", homes == null
+                ? Set.of()
+                : ownWork.mine("mobile_home", homes.stream().map(Home::uuid).toList(), authentication));
+
         return ResponseEntity.ok(new LotScreen(
                 LotResponse.from(lot),
                 property == null ? null : PropertyResponse.from(property),
                 homes == null ? null : homes.stream().map(HomeResponse::from).toList(),
-                history));
+                history,
+                mine));
     }
 
     // The signed-in agent's own page: their work details, their personal details, and the history of both.

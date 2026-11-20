@@ -51,6 +51,38 @@ public class PersonRepository {
                 .single();
     }
 
+    // True while the person is on a tenancy (a tenant, an occupant or an interested party) or has a claim on a home
+    // (a secured party), ended stays included. Stays and claims that were deleted do not count.
+    // The four tables belong to the tenants and homes modules and are read here by name, like agent above:
+    // those modules already depend on persons, so persons cannot call those modules.
+    public boolean isInUse(UUID personId) {
+        return jdbc.sql("""
+                SELECT EXISTS (SELECT 1 FROM tenant WHERE person_id = :personId AND deleted_at IS NULL)
+                    OR EXISTS (SELECT 1 FROM occupant WHERE person_id = :personId AND deleted_at IS NULL)
+                    OR EXISTS (SELECT 1 FROM tenancy_interested_party WHERE person_id = :personId AND deleted_at IS NULL)
+                    OR EXISTS (SELECT 1 FROM mobile_home_secured_party WHERE person_id = :personId AND deleted_at IS NULL)
+                """)
+                .param("personId", personId)
+                .query(Boolean.class)
+                .single();
+    }
+
+    // A person whether the person is deleted or not
+    public Optional<PersonRow> findAnyById(UUID uuid) {
+        return jdbc.sql("SELECT * FROM person WHERE uuid = :uuid")
+                .param("uuid", uuid)
+                .query(PersonRow.class)
+                .optional();
+    }
+
+    // Brings a deleted person back. Empty when the person was not deleted.
+    public Optional<PersonRow> restore(UUID uuid) {
+        return jdbc.sql("UPDATE person SET deleted_at = NULL WHERE uuid = :uuid AND deleted_at IS NOT NULL RETURNING *")
+                .param("uuid", uuid)
+                .query(PersonRow.class)
+                .optional();
+    }
+
     public Optional<PersonRow> findById(UUID uuid){
         return jdbc.sql("SELECT * FROM person WHERE uuid = :uuid AND deleted_at IS NULL")
                 .param("uuid", uuid)

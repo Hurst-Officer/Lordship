@@ -41,8 +41,10 @@ public final class History {
 
     // One saved change to a record, with the asked-for fields that it touched.
     // together counts the other records the same save changed, like the other lots of a bulk edit.
+    // byMaker is true for a delete made by the same agent who added the record (see OwnWork):
+    // the history bar then reads "Removed by the person who added it".
     public record Entry(UUID id, OffsetDateTime at, String name, OperationType operation,
-                        List<Change> changes, int together) { }
+                        List<Change> changes, int together, boolean byMaker) { }
 
     // A page of entries, newest first. more is true when older ones remain.
     public record EntryPage(List<Entry> entries, boolean more) { }

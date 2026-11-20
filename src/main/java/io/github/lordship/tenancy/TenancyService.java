@@ -9,6 +9,7 @@ import io.github.lordship.lots.LotService;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.RuleConflict;
+import io.github.lordship.shared.TenancyStanding;
 import io.github.lordship.tenancy.internal.TenancyRepository;
 import io.github.lordship.tenancy.internal.TenancyRow;
 import jakarta.persistence.EntityNotFoundException;
@@ -140,10 +141,38 @@ public class TenancyService {
             throw RuleConflict.of("tenancy.lot_full", lot.lotNumber());
         }
         List<String> never = kindsNeverBeside(agreementType);
-        if (!never.isEmpty() && tenancyRepository.holdsKind(lotId, never, start)) {
+        if (!never.isEmpty() && tenancyRepository.holdsKind(lotId, null, never, start)) {
             throw RuleConflict.of("tenancy.kind_conflict", lot.lotNumber(), agreementType);
         }
         return create(lotId, start);
+    }
+
+    /**
+     * Refuses a kind of agreement for a tenancy when another tenancy holding the same lot is under a kind that
+     * never shares a lot with the kind asked for (see kindsNeverBeside): 409 tenancy.kind_conflict.
+     * Called before a lease is started for a tenancy that is already there, because a tenancy's kind is only
+     * known from the tenancy's charge terms: two tenancies opened with no lease would otherwise each take a lease
+     * of a kind the other rules out.
+     *
+     * <p>The other tenancies are the ones holding the lot on the later of today and the tenancy's start date.
+     * An unknown tenancy, or one whose lot is gone, passes: the caller refuses those in the caller's own way.
+     */
+    public void requireKindFits(UUID tenancyId, AgreementType agreementType) {
+        Optional<TenancyRow> found = tenancyRepository.findById(tenancyId);
+        if (found.isEmpty() || agreementType == null) {
+            return;
+        }
+        List<String> never = kindsNeverBeside(agreementType);
+        if (never.isEmpty()) {
+            return;
+        }
+        TenancyRow tenancy = found.get();
+        LocalDate today = LocalDate.now();
+        LocalDate day = (tenancy.startDate() != null && tenancy.startDate().isAfter(today)) ? tenancy.startDate() : today;
+        if (tenancyRepository.holdsKind(tenancy.lotId(), tenancyId, never, day)) {
+            String lotNumber = lotService.findById(tenancy.lotId()).map(Lot::lotNumber).orElse("-");
+            throw RuleConflict.of("tenancy.kind_conflict", lotNumber, agreementType);
+        }
     }
 
     // The kinds of agreement that never share a lot with this kind: storage and utility service on one side,
@@ -393,7 +422,7 @@ public class TenancyService {
 
         Lot lot = lotService.findById(before.lotId())
                 .orElseThrow(() -> RuleConflict.of("tenancy.lot_deleted"));
-        boolean ended = before.endDate() != null && before.endDate().isBefore(LocalDate.now());
+        boolean ended = TenancyStanding.hasEnded(before.endDate(), LocalDate.now());
         if (!ended && tenancyRepository.countHolding(before.lotId(), uuid, before.startDate()) >= 2) {
             throw RuleConflict.of("tenancy.lot_full", lot.lotNumber());
         }

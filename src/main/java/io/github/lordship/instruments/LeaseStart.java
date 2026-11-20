@@ -5,7 +5,10 @@ import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.tenancy.Tenancy;
+import io.github.lordship.tenancy.TenancyService;
 import io.github.lordship.tenancyterms.RentStep;
+import io.github.lordship.tenancyterms.TenancyChargeTermService;
+import io.github.lordship.tenancyterms.TenancyTermStatus;
 import io.github.lordship.tenants.Household;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,10 +38,15 @@ public class LeaseStart {
 
     private final Household household;
     private final InstrumentService instrumentService;
+    private final TenancyService tenancyService;
+    private final TenancyChargeTermService chargeTermService;
 
-    public LeaseStart(Household household, InstrumentService instrumentService) {
+    public LeaseStart(Household household, InstrumentService instrumentService, TenancyService tenancyService,
+                      TenancyChargeTermService chargeTermService) {
         this.household = household;
         this.instrumentService = instrumentService;
+        this.tenancyService = tenancyService;
+        this.chargeTermService = chargeTermService;
     }
 
     /**
@@ -68,15 +76,28 @@ public class LeaseStart {
      * 400 instrument.term_months_needed (termMonths missing or under 1), instrument.term_start_needed (the
      * tenancy has no start date and none was given).
      * 409 instrument.draft_open (the tenancy already has a lease draft: finish or abandon that draft first),
-     * lot.does_not_permit, property.no_template (the property has no deal for the kind).
+     * instrument.lease_waiting (a generated lease of the tenancy is out for signature, the lease's rent still
+     * PENDING: accept or abandon that lease first, so two leases never wait to put rent in force on the same days),
+     * tenancy.kind_conflict (another tenancy holding the lot is under a kind that never shares a lot with this
+     * kind: storage or utility service beside a land lease), lot.does_not_permit, property.no_template (the
+     * property has no deal for the kind).
      */
     @Transactional
     public Optional<Instrument> start(UUID tenancyId, AgreementType agreementType, LocalDate termStart,
                                       Integer termMonths, OnExpiry onExpiry) {
         requireMonths(termMonths);
+        tenancyService.requireKindFits(tenancyId, agreementType);
         for (Instrument paper : instrumentService.findByTenancy(tenancyId)) {
-            if (paper.type() == InstrumentType.LEASE && paper.status() == InstrumentStatus.DRAFT) {
+            if (paper.type() != InstrumentType.LEASE || paper.status() == InstrumentStatus.ABANDONED) {
+                continue;
+            }
+            if (paper.status() == InstrumentStatus.DRAFT) {
                 throw RuleConflict.of("instrument.draft_open");
+            }
+            boolean outForSignature = chargeTermService.findBySource(paper.uuid()).stream()
+                    .anyMatch(term -> term.status() == TenancyTermStatus.PENDING);
+            if (outForSignature) {
+                throw RuleConflict.of("instrument.lease_waiting");
             }
         }
 

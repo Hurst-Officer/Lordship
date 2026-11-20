@@ -1,12 +1,15 @@
 package io.github.lordship.tenancy.internal;
 
+import io.github.lordship.shared.TenancyStanding;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -15,7 +18,8 @@ import java.util.UUID;
  * tenants module's services.
  *
  * <p>These read the lot, property, person, tenant, occupant, tenancy_interested_party, tenancy_charge_term,
- * instrument, lot_permissible_agreement_type and "transaction" tables by name on purpose: who is on a tenancy and
+ * instrument and lot_permissible_agreement_type tables by name on purpose (and, for the people search alone,
+ * agent, mobile_home, mobile_home_secured_party and property_contact): who is on a tenancy and
  * which rent the tenancy is under are facts a tenancy's row on a screen cannot be shown without, and the modules
  * that own those tables already depend on this one.
  *
@@ -86,8 +90,8 @@ public class TenancyRollRepository {
     public record PersonRow(UUID id, String nameFull, String personalPhone, String personalEmail) { }
 
     /**
-     * One row for each live property. A lot is occupied while a tenancy on the lot has not ended (the same test
-     * LotOffersRepository calls taken). A lot is open when the lot is rentable, not occupied, and offers at least
+     * One row for each live property. A lot is occupied while a tenancy on the lot has not ended
+     * (TenancyStanding.NOT_ENDED_SQL, the same test LotOffersRepository calls taken). A lot is open when the lot is rentable, not occupied, and offers at least
      * one kind of agreement. current counts the tenancies that have not ended; ending counts those among them with
      * an end date; noLease counts those among them with no ACTIVE charge term in force today.
      */
@@ -97,7 +101,7 @@ public class TenancyRollRepository {
                     SELECT t.uuid, t.lot_id, t.end_date
                     FROM tenancy t
                     WHERE t.deleted_at IS NULL
-                      AND (t.end_date IS NULL OR t.end_date >= CURRENT_DATE)
+                      AND %s
                 ),
                 lots AS (
                     SELECT l.property_id,
@@ -137,7 +141,7 @@ public class TenancyRollRepository {
                 LEFT JOIN tenancies ON tenancies.property_id = p.uuid
                 WHERE p.deleted_at IS NULL
                 ORDER BY p.uuid
-                """)
+                """.formatted(TenancyStanding.NOT_ENDED_SQL))
                 .query(ParkRow.class)
                 .list();
     }
@@ -265,11 +269,61 @@ public class TenancyRollRepository {
                 .optional();
     }
 
+    // The accented letters a name is matched without, and the plain letter each stands for, position by position.
+    // The same two strings fold the name in the sql (TRANSLATE) and the typed words in Java (fold), so the two
+    // sides always agree. Written as escapes so the file reads the same in any encoding.
+    private static final String ACCENTED =
+            "\u00e1\u00e0\u00e4\u00e2\u00e3\u00e5\u00e9\u00e8\u00eb\u00ea\u00ed\u00ec\u00ef\u00ee\u00f3\u00f2\u00f6\u00f4\u00f5\u00fa\u00f9\u00fc\u00fb\u00f1\u00e7"
+            + "\u00c1\u00c0\u00c4\u00c2\u00c3\u00c5\u00c9\u00c8\u00cb\u00ca\u00cd\u00cc\u00cf\u00ce\u00d3\u00d2\u00d6\u00d4\u00d5\u00da\u00d9\u00dc\u00db\u00d1\u00c7";
+    private static final String PLAIN =
+            "aaaaaaeeeeiiiiooooouuuunc"
+            + "aaaaaaeeeeiiiiooooouuuunc";
+
+    // A property id no property has, so an empty list of allowed properties is still a list the sql can read
+    private static final UUID NO_PROPERTY = new UUID(0L, 0L);
+
+    // sql: the people a viewer of some properties (:allowed) may be told about. Either something on file ties the
+    // person to one of those properties (a stay of any kind on a tenancy of one of the lots, deleted or not; a
+    // claim on a home there; being a contact of the property), or nothing on file points at the person at all:
+    // someone just put on file, about to be put on a tenancy. Anyone tied only to other properties, and anyone
+    // who is or was office staff, is left out, name included.
+    private static final String TOLD_ABOUT = """
+              AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM (
+                            SELECT person_id, tenancy_id FROM tenant
+                            UNION ALL SELECT person_id, tenancy_id FROM occupant
+                            UNION ALL SELECT person_id, tenancy_id FROM tenancy_interested_party
+                        ) m
+                        JOIN tenancy t ON t.uuid = m.tenancy_id
+                        JOIN lot l ON l.uuid = t.lot_id
+                        WHERE m.person_id = p.uuid AND l.property_id IN (:allowed))
+                 OR EXISTS (
+                        SELECT 1 FROM mobile_home_secured_party s
+                        JOIN mobile_home h ON h.uuid = s.mobile_home_id
+                        JOIN lot l ON l.uuid = h.lot_id
+                        WHERE s.person_id = p.uuid AND l.property_id IN (:allowed))
+                 OR EXISTS (SELECT 1 FROM property_contact c
+                            WHERE c.person_uuid = p.uuid AND c.property_id IN (:allowed))
+                 OR (    NOT EXISTS (SELECT 1 FROM tenant x WHERE x.person_id = p.uuid)
+                     AND NOT EXISTS (SELECT 1 FROM occupant x WHERE x.person_id = p.uuid)
+                     AND NOT EXISTS (SELECT 1 FROM tenancy_interested_party x WHERE x.person_id = p.uuid)
+                     AND NOT EXISTS (SELECT 1 FROM agent x WHERE x.person_id = p.uuid)
+                     AND NOT EXISTS (SELECT 1 FROM mobile_home_secured_party x WHERE x.person_id = p.uuid)
+                     AND NOT EXISTS (SELECT 1 FROM property_contact x WHERE x.person_uuid = p.uuid)
+                     AND NOT EXISTS (SELECT 1 FROM person x WHERE x.emergency_contact = p.uuid))
+              )
+            """;
+
     /**
      * Live people whose name holds every one of the words, at most limit, by name.
-     * Each word is matched anywhere in the name, without regard to capitals.
+     * Each word is matched anywhere in the name, without regard to capitals or accents: "lopez" finds "L\u00f3pez".
+     * allowed null finds among everyone (a viewer of every property). Otherwise only the people a viewer of
+     * those properties may be told about (TOLD_ABOUT) are looked at, so the limit counts people the viewer may
+     * see and a common name cannot crowd them out.
      */
-    public List<PersonRow> findPeopleNamed(List<String> words, int limit) {
+    public List<PersonRow> findPeopleNamed(List<String> words, Collection<UUID> allowed, int limit) {
         StringBuilder sql = new StringBuilder("""
                 SELECT p.uuid AS id, p.name_full, p.personal_phone, p.personal_email
                 FROM person p
@@ -277,15 +331,36 @@ public class TenancyRollRepository {
                   AND p.name_full IS NOT NULL
                 """);
         for (int i = 0; i < words.size(); i++) {
-            sql.append("  AND LOWER(p.name_full) LIKE :word").append(i).append(" ESCAPE '\\'\n");
+            sql.append("  AND LOWER(TRANSLATE(p.name_full, :accented, :plain)) LIKE :word").append(i)
+                    .append(" ESCAPE '\\'\n");
+        }
+        if (allowed != null) {
+            sql.append(TOLD_ABOUT);
         }
         sql.append("ORDER BY LOWER(p.name_full), p.uuid\nLIMIT :limit");
 
-        JdbcClient.StatementSpec query = jdbc.sql(sql.toString()).param("limit", limit);
+        JdbcClient.StatementSpec query = jdbc.sql(sql.toString())
+                .param("limit", limit)
+                .param("accented", ACCENTED)
+                .param("plain", PLAIN);
+        if (allowed != null) {
+            query = query.param("allowed", allowed.isEmpty() ? List.of(NO_PROPERTY) : List.copyOf(allowed));
+        }
         for (int i = 0; i < words.size(); i++) {
-            query = query.param("word" + i, "%" + escapeLike(words.get(i).toLowerCase()) + "%");
+            query = query.param("word" + i, "%" + escapeLike(fold(words.get(i))) + "%");
         }
         return query.query(PersonRow.class).list();
+    }
+
+    // A typed word the way the sql folds a name: accented letters to plain ones, then lower case
+    static String fold(String word) {
+        StringBuilder out = new StringBuilder(word.length());
+        for (int i = 0; i < word.length(); i++) {
+            char letter = word.charAt(i);
+            int at = ACCENTED.indexOf(letter);
+            out.append(at < 0 ? letter : PLAIN.charAt(at));
+        }
+        return out.toString().toLowerCase(Locale.ROOT);
     }
 
     // Where these people live or lived: every live stay on a live tenancy of a live lot of a live property
@@ -310,16 +385,6 @@ public class TenancyRollRepository {
                 """)
                 .param("personIds", personIds)
                 .query(HomeRow.class)
-                .list();
-    }
-
-    // The people among these who sign in as a live agent (office staff). agent is the access module's table,
-    // read here by name: access depends on persons and tenancy does not depend on access.
-    public List<UUID> findAgentsAmong(List<UUID> personIds) {
-        if (personIds.isEmpty()) return List.of();
-        return jdbc.sql("SELECT person_id FROM agent WHERE person_id IN (:personIds) AND deleted_at IS NULL")
-                .param("personIds", personIds)
-                .query(UUID.class)
                 .list();
     }
 
