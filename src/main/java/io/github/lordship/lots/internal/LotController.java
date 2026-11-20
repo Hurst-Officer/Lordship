@@ -33,7 +33,6 @@ import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 
 // A lot in a property outside the agent's scope (see PropertyScope) is treated as if it did not exist:
@@ -366,11 +365,7 @@ public class LotController {
         if (!AgentPrincipal.scopeOf(authentication).allows(propertyId)) {
             return ResponseEntity.notFound().build();
         }
-        List<Lot> lots = lotService.findDeletedByProperty(propertyId);
-        if (!can(authentication, "lots:delete")) {
-            Set<UUID> own = ownWork.mine("lot", lots.stream().map(Lot::uuid).toList(), authentication);
-            lots = lots.stream().filter(lot -> own.contains(lot.uuid())).toList();
-        }
+        List<Lot> lots = ownWork.restorable("lot", lotService.findDeletedByProperty(propertyId), Lot::uuid, authentication);
         Map<UUID, History.Mark> who = canViewAudits(authentication)
                 ? auditService.deletions("lot", lots.stream().map(Lot::uuid).toList())
                 : Map.of();

@@ -342,15 +342,8 @@ public class PropertyController {
     @PreAuthorize("hasAnyAuthority('properties:delete', 'properties:create')")
     @GetMapping("/deleted")
     public ResponseEntity<List<DeletedPropertyResponse>> getDeletedProperties(Authentication authentication) {
-        List<Property> found = propertyService.findDeleted(AgentPrincipal.scopeOf(authentication));
-        boolean mayDelete = authentication.getAuthorities().stream()
-                .anyMatch(authority -> "properties:delete".equals(authority.getAuthority()));
-        Set<UUID> own = mayDelete
-                ? Set.of()
-                : ownWork.mine("property", found.stream().map(Property::uuid).toList(), authentication);
-        List<Property> properties = mayDelete
-                ? found
-                : found.stream().filter(property -> own.contains(property.uuid())).toList();
+        List<Property> properties = ownWork.restorable("property",
+                propertyService.findDeleted(AgentPrincipal.scopeOf(authentication)), Property::uuid, authentication);
         boolean canViewAudits = authentication.getAuthorities().stream()
                 .anyMatch(authority -> "audit:view".equals(authority.getAuthority()));
         Map<UUID, History.Mark> who = canViewAudits

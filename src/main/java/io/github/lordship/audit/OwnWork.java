@@ -39,8 +39,11 @@ import java.util.stream.Stream;
  *   <li>the record's property is still in the agent's scope (a person belongs to no property)</li>
  *   <li>the record was added no more than lordship.own-work.days ago (7 unless set)</li>
  *   <li>nobody else has touched the record since: no audit row on the record by anyone else (an edit, a delete,
- *       a restore), and no live record under the record that someone else added (a lot under the property,
- *       a home on the lot). A record someone else deleted stays deleted: the maker restores only what the maker deleted.</li>
+ *       a restore), and nothing of anyone else's under the record. Under the record means every live row of the
+ *       kind's under tables: a row someone else added, or a row someone else changed, ends the right. Where an under
+ *       table is a kind of record as well, the rows under those rows count in the same way, however deep: a home
+ *       a coworker put on one of the lots ends the right to take back the lots' property.
+ *       A record someone else deleted stays deleted: the maker restores only what the maker deleted.</li>
  * </ol>
  *
  * <p>Used from an endpoint's permission check, on delete and on restore:
@@ -55,7 +58,13 @@ import java.util.stream.Stream;
  * endpoints. Nothing else in this class changes. The names in KINDS are written here and never come from a request:
  * the table names, column names and property queries in KINDS become part of a query's text, so Kind and Under are
  * private and the table an endpoint passes is only ever the key that finds a Kind.
- * The kind's list of deleted records and the kind's screen answer use {@link #mine} (see ScreenResponses).
+ * The kind's list of deleted records uses {@link #restorable}, and the kind's screen answer uses {@link #mine}
+ * (see ScreenResponses). OwnWorkAnnotationsTest fails when an endpoint names a table KINDS does not hold.
+ *
+ * <p>A NEW TABLE THAT POINTS AT A COVERED RECORD (a new thing a coworker can hang on a lot) needs one Under in
+ * that kind's entry, or the maker could take the record back from under the coworker's work.
+ *
+ * <p>lordship.own-work.days of 0 (or less) switches the rule off: every delete then needs the delete permission.
  */
 @Component("ownWork")
 public class OwnWork {
@@ -65,33 +74,53 @@ public class OwnWork {
      *
      * @param table            the record's table, which is also the record's table_name in audit_log
      * @param createPermission the permission that lets an agent add a record of this kind
+     * @param deletePermission the permission that lets an agent delete any record of this kind
      * @param propertySql      finds the properties of the records in :ids, as the columns id and property_id;
      *                         null for a kind tied to no property
      * @param under            the tables whose rows hang under a record of this kind
      */
-    private record Kind(String table, String createPermission, String propertySql, List<Under> under) { }
+    private record Kind(String table, String createPermission, String deletePermission, String propertySql,
+                        List<Under> under) { }
 
     /**
      * A table whose rows hang under a record, and the column that points at the record.
-     * The table needs a uuid column and a deleted_at column, and the table's inserts are logged under the table's own name.
+     * The table needs a uuid column, and the table's inserts, edits and deletes are logged under the table's own
+     * name with the row's uuid. softDeleted says the table has a deleted_at column, so that deleted rows are
+     * left out; false is for a table whose rows are removed outright (every row there is live).
      */
-    private record Under(String table, String column) { }
+    private record Under(String table, String column, boolean softDeleted) {
+        Under(String table, String column) {
+            this(table, column, true);
+        }
+    }
 
     private static final Map<String, Kind> KINDS = Stream.of(
-            new Kind("property", "properties:create",
+            // Not under a property here: site_map and map_feature. The map builder writes features with no audit
+            // row, so those rows cannot be told apart by who added them; map work on a property shows on the
+            // property's lots instead (a placed shape is an edit of the lot).
+            new Kind("property", "properties:create", "properties:delete",
                     "SELECT uuid AS id, uuid AS property_id FROM property WHERE uuid IN (:ids)",
                     List.of(new Under("lot", "property_id"),
-                            new Under("terms_template", "property"))),
-            new Kind("lot", "lots:create",
+                            new Under("terms_template", "property"),
+                            new Under("property_document_assignment", "property"),
+                            new Under("meter_main", "property_id"),
+                            new Under("submeter", "property_id"),
+                            new Under("utility_rate_group", "property_id"),
+                            new Under("utility_bill", "property_id"),
+                            new Under("utility_cycle", "property_id"))),
+            new Kind("lot", "lots:create", "lots:delete",
                     "SELECT uuid AS id, property_id FROM lot WHERE uuid IN (:ids)",
                     List.of(new Under("mobile_home", "lot_id"),
                             new Under("stick_built", "lot_id"),
-                            new Under("tenancy", "lot_id"))),
-            new Kind("mobile_home", "homes:create",
+                            new Under("tenancy", "lot_id"),
+                            new Under("submeter_lot", "lot_id"),
+                            // what the lot offers and at what rates; a removed offer is removed outright
+                            new Under("lot_permissible_agreement_type", "lot_id", false))),
+            new Kind("mobile_home", "homes:create", "homes:delete",
                     "SELECT h.uuid AS id, l.property_id FROM mobile_home h JOIN lot l ON l.uuid = h.lot_id WHERE h.uuid IN (:ids)",
                     List.of(new Under("mobile_home_secured_party", "mobile_home_id"))),
             // a person belongs to no property, so there is no scope to check
-            new Kind("person", "persons:create",
+            new Kind("person", "persons:create", "persons:delete",
                     null,
                     List.of(new Under("tenant", "person_id"),
                             new Under("occupant", "person_id"),
@@ -99,16 +128,23 @@ public class OwnWork {
                             new Under("mobile_home_secured_party", "person_id"),
                             new Under("agent", "person_id"))),
             // Glade's Tenancies: a tenancy, and each person's stay on a tenancy. Entered on 2026-11-20 from the
-            // migrations (V7, V10); the tenancy and tenants endpoints do not ask this class yet.
-            new Kind("tenancy", "tenancy:create",
+            // migrations (V7, V8, V10, V11); the tenancy and tenants endpoints do not ask this class yet.
+            new Kind("tenancy", "tenancy:create", "tenancy:delete",
                     "SELECT t.uuid AS id, l.property_id FROM tenancy t JOIN lot l ON l.uuid = t.lot_id WHERE t.uuid IN (:ids)",
                     List.of(new Under("tenant", "tenancy_id"),
                             new Under("occupant", "tenancy_id"),
                             new Under("tenancy_interested_party", "tenancy_id"),
-                            new Under("tenancy_charge_term", "tenancy"))),
-            new Kind("tenant", "tenants:create", stayPropertySql("tenant"), List.of()),
-            new Kind("occupant", "tenants:create", stayPropertySql("occupant"), List.of()),
-            new Kind("tenancy_interested_party", "tenants:create", stayPropertySql("tenancy_interested_party"), List.of())
+                            new Under("tenancy_charge_term", "tenancy"),
+                            // the tenancy's account is added with the tenancy, by the same agent
+                            new Under("account", "tenancy_id"),
+                            new Under("vehicle", "tenancy_id"),
+                            new Under("security_deposit", "tenancy"),
+                            // an instrument is never deleted, only abandoned
+                            new Under("instrument", "tenancy", false))),
+            new Kind("tenant", "tenants:create", "tenants:delete", stayPropertySql("tenant"), List.of()),
+            new Kind("occupant", "tenants:create", "tenants:delete", stayPropertySql("occupant"), List.of()),
+            new Kind("tenancy_interested_party", "tenants:create", "tenants:delete",
+                    stayPropertySql("tenancy_interested_party"), List.of())
     ).collect(Collectors.toUnmodifiableMap(Kind::table, Function.identity()));
 
     // The property of a person's stay on a tenancy: the property of the lot of the stay's tenancy
@@ -125,9 +161,7 @@ public class OwnWork {
         NOT_THEIRS,
         // the agent added the record too long ago
         WINDOW_PASSED,
-        // someone else deleted the record
-        DELETED_BY_ANOTHER,
-        // someone else changed the record, or added a record under the record
+        // someone else changed or deleted the record, or added or changed something under the record
         BUILT_ON
     }
 
@@ -154,40 +188,74 @@ public class OwnWork {
      * with the selection; otherwise one record that can no longer be taken back throws for the whole selection.
      */
     public boolean madeAllRecently(String table, Collection<UUID> ids, Authentication authentication) {
-        Collection<Verdict> found = verdicts(table, ids, authentication).values();
+        Map<UUID, Verdict> verdicts = verdicts(table, ids, authentication);
+        Collection<Verdict> found = verdicts.values();
         if (found.isEmpty() || found.contains(Verdict.NOT_THEIRS)) {
             return false;
         }
         if (found.contains(Verdict.WINDOW_PASSED)) {
             throw RuleConflict.of("own_work.window_passed", days);
         }
-        if (found.contains(Verdict.DELETED_BY_ANOTHER)) {
-            throw RuleConflict.of("own_work.not_deleted_by_you");
-        }
         if (found.contains(Verdict.BUILT_ON)) {
+            // The agent hears "someone else deleted this" where that is what happened, and "changed" otherwise.
+            // Only a refusal asks, so the screens' mine never pays for the extra reads.
+            UUID makerId = agentOf(authentication).agentUuid();
+            for (Map.Entry<UUID, Verdict> entry : verdicts.entrySet()) {
+                if (entry.getValue() == Verdict.BUILT_ON && deletedByAnother(table, entry.getKey(), makerId)) {
+                    throw RuleConflict.of("own_work.not_deleted_by_you");
+                }
+            }
             throw RuleConflict.of("own_work.built_on");
         }
         return true;
     }
 
     /**
-     * Of these records, the ones the signed-in agent may take back right now. Never throws.
+     * Of these records, the ones the signed-in agent may take back right now as own recent work. Never throws.
      * The screens send this as "mine", so Glade shows Delete on those records to an agent without the delete
-     * permission; the lists of deleted records use this to show such an agent the agent's own deletions only.
+     * permission. Empty for an agent who holds the kind's delete permission: that agent may delete every record
+     * of the kind and needs no mark, so the log is not read for that agent.
      */
     public Set<UUID> mine(String table, Collection<UUID> ids, Authentication authentication) {
+        Kind kind = KINDS.get(table);
+        if (kind != null && holds(authentication, kind.deletePermission())) {
+            return Set.of();
+        }
         return verdicts(table, ids, authentication).entrySet().stream()
                 .filter(entry -> entry.getValue() == Verdict.OPEN)
                 .map(Map.Entry::getKey)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
+    /**
+     * What a list of deleted records shows the signed-in agent: every deleted record for an agent who holds the
+     * kind's delete permission, and otherwise only the records the agent may restore as own recent work (the
+     * records the agent added and deleted). idOf gives a record's id. An unknown kind answers an empty list.
+     */
+    public <T> List<T> restorable(String table, List<T> deleted, Function<T, UUID> idOf, Authentication authentication) {
+        Kind kind = KINDS.get(table);
+        if (kind == null) {
+            return List.of();
+        }
+        if (holds(authentication, kind.deletePermission())) {
+            return deleted;
+        }
+        Set<UUID> own = mine(table, deleted.stream().map(idOf).toList(), authentication);
+        return deleted.stream().filter(row -> own.contains(idOf.apply(row))).toList();
+    }
+
+    /** Whether the rule knows this table as a kind of record. For OwnWorkAnnotationsTest. */
+    public static boolean covers(String table) {
+        return KINDS.containsKey(table);
+    }
+
     // The rule for each record. Empty for an unknown kind, no records, or a caller who is not an agent.
-    // The log is read for all the records at once, so a page of 150 lots costs a handful of queries.
+    // The log is read for all the records at once: a page of 150 lots costs one query when none of the lots is
+    // the agent's own recent work, and a few queries for each under table when some are.
     private Map<UUID, Verdict> verdicts(String table, Collection<UUID> ids, Authentication authentication) {
         Kind kind = KINDS.get(table);
-        if (kind == null || ids == null || ids.isEmpty()
-                || !(authentication != null && authentication.getPrincipal() instanceof AgentPrincipal agent)) {
+        AgentPrincipal agent = agentOf(authentication);
+        if (kind == null || ids == null || ids.isEmpty() || agent == null) {
             return Map.of();
         }
         Map<UUID, Verdict> verdicts = new LinkedHashMap<>();
@@ -196,15 +264,13 @@ public class OwnWork {
                 verdicts.put(id, Verdict.NOT_THEIRS);
             }
         }
-        if (verdicts.isEmpty()) {
+        // days of 0 or less switches the rule off
+        if (verdicts.isEmpty() || days <= 0) {
             return verdicts;
         }
 
         // conditions 1 to 3: the agent added the record, may still add that kind, and still sees the property
-        boolean mayAdd = authentication.getAuthorities().stream()
-                .map(GrantedAuthority::getAuthority)
-                .anyMatch(kind.createPermission()::equals);
-        if (!mayAdd) {
+        if (!holds(authentication, kind.createPermission())) {
             return verdicts;
         }
         UUID makerId = agent.agentUuid();
@@ -227,28 +293,47 @@ public class OwnWork {
             }
         }
 
-        // condition 5: nobody else has touched the record, or added a record under the record
-        Set<String> touched = auditRepository.findTouchedByAnother(kind.table(), strings(recent), makerId);
+        // condition 5: nobody else has touched the record, or anything under the record
         Set<UUID> builtOn = new HashSet<>();
-        for (Under under : kind.under()) {
-            builtOn.addAll(auditRepository.findWithRowByAnother(under.table(), under.column(), recent, makerId));
+        for (String id : auditRepository.findTouchedByAnother(kind.table(), strings(recent), makerId)) {
+            builtOn.add(UUID.fromString(id));
         }
+        builtOn.addAll(withWorkOfAnotherUnder(kind, recent, makerId));
         for (UUID id : recent) {
-            if (touched.contains(id.toString())) {
-                verdicts.put(id, deletedByAnother(kind, id, makerId) ? Verdict.DELETED_BY_ANOTHER : Verdict.BUILT_ON);
-            } else if (builtOn.contains(id)) {
-                verdicts.put(id, Verdict.BUILT_ON);
-            } else {
-                verdicts.put(id, Verdict.OPEN);
-            }
+            verdicts.put(id, builtOn.contains(id) ? Verdict.BUILT_ON : Verdict.OPEN);
         }
         return verdicts;
     }
 
+    // Of these records of one kind, the ones with someone else's work under the record: a live row of one of the
+    // kind's under tables that someone else added or changed. Where the under table is a kind of record as well,
+    // the rows under those rows are looked at in the same way, so the answer covers every level below the record
+    // (a property's lots, the homes and tenancies on those lots, the people on those tenancies).
+    private Set<UUID> withWorkOfAnotherUnder(Kind kind, Collection<UUID> ids, UUID makerId) {
+        Set<UUID> found = new HashSet<>();
+        if (ids.isEmpty()) {
+            return found;
+        }
+        for (Under under : kind.under()) {
+            found.addAll(auditRepository.findWithRowOfAnother(
+                    under.table(), under.column(), under.softDeleted(), ids, makerId));
+
+            Kind inner = KINDS.get(under.table());
+            if (inner != null && !inner.under().isEmpty()) {
+                // row under the record -> the record
+                Map<UUID, UUID> recordOf = auditRepository.findLiveUnder(under.table(), under.column(), ids);
+                for (UUID row : withWorkOfAnotherUnder(inner, recordOf.keySet(), makerId)) {
+                    found.add(recordOf.get(row));
+                }
+            }
+        }
+        return found;
+    }
+
     // Whether the newest row on the record is a delete by someone else. This tells a record someone else deleted
     // from a record someone else changed, so the agent hears "someone else deleted this" and not only "changed".
-    private boolean deletedByAnother(Kind kind, UUID id, UUID makerId) {
-        Optional<HistoryRows.LastRow> last = auditRepository.findLast(kind.table(), id.toString());
+    private boolean deletedByAnother(String table, UUID id, UUID makerId) {
+        Optional<HistoryRows.LastRow> last = auditRepository.findLast(table, id.toString());
         return last.isPresent() && "DELETE".equals(last.get().operation()) && !makerId.equals(last.get().userId());
     }
 
@@ -263,6 +348,18 @@ public class OwnWork {
         return ids.stream()
                 .filter(id -> properties.containsKey(id) && scope.allows(properties.get(id)))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    // The signed-in agent, or null for a caller who is not an agent
+    private static AgentPrincipal agentOf(Authentication authentication) {
+        return authentication != null && authentication.getPrincipal() instanceof AgentPrincipal agent ? agent : null;
+    }
+
+    // Whether the caller holds this permission
+    private static boolean holds(Authentication authentication, String permission) {
+        return authentication != null && authentication.getAuthorities().stream()
+                .map(GrantedAuthority::getAuthority)
+                .anyMatch(permission::equals);
     }
 
     private static List<String> strings(Collection<UUID> ids) {

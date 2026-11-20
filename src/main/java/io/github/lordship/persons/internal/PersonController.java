@@ -126,16 +126,22 @@ public class PersonController {
                 ResponseEntity.notFound().build();
     }
 
-    // Brings a deleted person back. Answers the person. A person who is not deleted is answered as the person is.
-    // 404 for an unknown person. The same permission check as the delete.
+    // Brings a deleted person back. A person who is not deleted is left as the person is, so sending the restore
+    // twice is safe. 404 for an unknown person. The same permission check as the delete.
+    // Answers the person to a caller who holds persons:view, and 204 with no body to a caller who does not:
+    // the restore answers a live person too, so without this a caller could read any person through the restore.
     @PreAuthorize("hasAuthority('persons:delete') or @ownWork.madeRecently('person', #uuid, authentication)")
     @PostMapping("/{uuid}/restore")
     public ResponseEntity<PersonResponse> restorePerson(@PathVariable UUID uuid, Authentication authentication) {
+        boolean canView = authentication.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("persons:view"));
         boolean canViewSsn = authentication.getAuthorities().stream()
                 .anyMatch(a -> a.getAuthority().equals("persons_ssn:view"));
 
         return personService.restorePerson(uuid)
-                .map(person -> ResponseEntity.ok(PersonResponse.from(person, canViewSsn)))
+                .map(person -> canView
+                        ? ResponseEntity.ok(PersonResponse.from(person, canViewSsn))
+                        : ResponseEntity.noContent().<PersonResponse>build())
                 .orElse(ResponseEntity.notFound().build());
     }
 }

@@ -38,10 +38,11 @@ AI: Qwen (lease review, compliance flagging)
 
 
 Own recent work (for developers and agents)
-Deleting needs a delete permission, with one rule on top: whoever added a record may delete and restore that record for 7 days without the delete permission, while nobody else has changed the record or added to the record. This is what lets an office worker who can add a lot undo adding the lot. The rule lives in one class, audit/OwnWork.java, and reads who added a record from audit_log. No table has a created_by column for this.
+Deleting needs a delete permission, with one rule on top: whoever added a record may delete and restore that record for 7 days without the delete permission, while nobody else has changed the record, or added or changed anything under the record (a home on the lot, a meter on the property, a lot of the property and whatever is on that lot). This is what lets an office worker who can add a lot undo adding the lot. The rule lives in one class, audit/OwnWork.java, and reads who added a record from audit_log. No table has a created_by column for this.
 - Covered today: property, lot, mobile_home, person. Soft delete only. Every other refusal (a lot with an active tenancy, a person on a tenancy) still applies.
-- A new kind of record: add one entry to OwnWork.KINDS, and put hasAuthority('x:delete') or @ownWork.madeRecently('table', #uuid, authentication) on the kind's delete and restore endpoints (madeAllRecently for a list of ids). The list of deleted records and the Glade screen answer use ownWork.mine. The class comment has the details.
-- The days are lordship.own-work.days in application.properties. Refusals are own_work.* in messages.properties and messages_es.properties. The tests are in audit/OwnWorkIT.java.
+- A new kind of record: add one entry to OwnWork.KINDS, and put hasAuthority('x:delete') or @ownWork.madeRecently('table', #uuid, authentication) on the kind's delete and restore endpoints (madeAllRecently for a list of ids). The list of deleted records uses ownWork.restorable and the Glade screen answer uses ownWork.mine. The class comment has the details.
+- A new table that points at a covered record (something new a coworker can hang on a lot or a property): add one Under to that kind's entry in OwnWork.KINDS. Without the Under, the maker could take the record back from under the coworker's work.
+- The days are lordship.own-work.days in application.properties (0 switches the rule off). Refusals are own_work.* in messages.properties and messages_es.properties. The tests are in audit/OwnWorkIT.java; audit/OwnWorkAnnotationsTest.java fails when an endpoint's check names a table OwnWork.KINDS does not hold.
 
 Data model philosophy
 Lordship will make a hard distinction between canonical records and historical shards.

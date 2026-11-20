@@ -135,6 +135,33 @@ public class SoftDeleteIT extends IntegrationTest {
                 .andExpect(jsonPath("$.code").value("lot.has_tenancy"));
     }
 
+    // A tenancy with an end date still holds the lot until the end date has passed (TenancyStanding)
+    @Test
+    void deleteLot_refusesALotUntilTheTenancysEndDateHasPassed() throws Exception {
+        // Arrange: the tenant has a move-out date, and the date is still ahead
+        LotRow rented = testData.insertChainToLot();
+        UUID tenancyId = testData.insertTenancy(rented.uuid()).uuid();
+        jdbc.sql("UPDATE tenancy SET end_date = CURRENT_DATE + 30 WHERE uuid = :id")
+                .param("id", tenancyId)
+                .update();
+
+        // Act + Assert
+        mockMvc.perform(delete("/api/lots/" + rented.uuid())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("lot.has_tenancy"));
+
+        // Arrange: the end date has passed
+        jdbc.sql("UPDATE tenancy SET end_date = CURRENT_DATE - 1 WHERE uuid = :id")
+                .param("id", tenancyId)
+                .update();
+
+        // Act + Assert
+        mockMvc.perform(delete("/api/lots/" + rented.uuid())
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isNoContent());
+    }
+
     @Test
     void restoreLots_bringsTheLotsBack() throws Exception {
         PropertyRow property = testData.insertProperty("SD");
