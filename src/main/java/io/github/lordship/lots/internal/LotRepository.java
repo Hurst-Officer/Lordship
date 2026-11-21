@@ -18,7 +18,7 @@ public class LotRepository {
 
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
             "lot_number", "title_link", "lot_address", "lot_parcel", "description", "notes",
-            "is_rentable", "not_rentable_reason"
+            "is_rentable", "not_rentable_reason", "reserved_for_rv"
     );
 
     private final JdbcClient jdbc;

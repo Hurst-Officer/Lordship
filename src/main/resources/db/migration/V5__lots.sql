@@ -7,6 +7,7 @@ CREATE TABLE lot ( --TODO: add square footage, also, add a MFH (manufactured hom
                      property_id   UUID NOT NULL,
                      is_rentable   BOOLEAN NOT NULL DEFAULT TRUE,
                      not_rentable_reason TEXT,
+                     reserved_for_rv BOOLEAN NOT NULL DEFAULT FALSE, -- set aside for RVs. An RV signs the same land lease as a home, so only this mark tells an RV lot from a home lot. Changes nothing about renting, agreements or rates
                      lot_number    TEXT NOT NULL,        -- human-facing id; numeric OR lettered (e.g. "DF"); mutable
                      title_link    TEXT CONSTRAINT lot_title_link_must_be_a_web_address CHECK (title_link ~* '^https?://'), -- "Lot 12" opens this where it is shown as a page title
                      lot_address   TEXT,

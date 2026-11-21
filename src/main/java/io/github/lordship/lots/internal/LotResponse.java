@@ -22,6 +22,7 @@ public record LotResponse(
         String lotParcel,
         Boolean isRentable,
         String notRentableReason,
+        boolean reservedForRv, // the lot is set aside for RVs (see Lot)
         String description,
         String notes,
         Integer sortOrder,
@@ -51,6 +52,7 @@ public record LotResponse(
                 lot.lotParcel(),
                 lot.isRentable(),
                 lot.notRentableReason(),
+                lot.reservedForRv(),
                 lot.description(),
                 lot.notes(),
                 lot.sortOrder(),

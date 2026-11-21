@@ -129,4 +129,31 @@ public record TermsTemplateRow(
                 note, null, null, copiedBy, null
         );
     }
+
+    // Starts a new global template from this template's terms, or from a property's deal: the terms are kept,
+    // identity is dropped, and the new template belongs to no property. The new template takes the name and
+    // the agreement type given. The copying agent is the author of the copy.
+    // copiedFrom stays null, as on every global template: copiedFrom names the global template a property's
+    // deal was copied from, and nothing else.
+    // The two rates are kept only when this row is a global template. A property's rates belong to that
+    // property's market, and a template hands its rates to every property that copies the template.
+    public TermsTemplateRow copyAsGlobal(String newName, AgreementType newAgreementType, UUID copiedBy) {
+        boolean fromGlobal = property == null;
+        return new TermsTemplateRow(
+                null, null, null, newName, newAgreementType,
+                fromGlobal ? targetRate : null, fromGlobal ? askingRate : null,
+                escalationPercent, escalationMonths,
+                carFee, allowedCars, carsMax, petFee, allowedPets,
+                paymentDueDay, gracePeriodDays,
+                ruleViolationFeeMethod, ruleViolationFeeAmount,
+                nsfFeeMethod, nsfFeeAmount,
+                lateFeeMethod, lateFeeAmount, lateFeeTiers,
+                waterMethod, waterFlatAmount,
+                powerMethod, powerFlatAmount,
+                sewerMethod, sewerFlatAmount,
+                trashMethod, trashFlatAmount,
+                securityDepositMethod, securityDepositAmount,
+                note, null, null, copiedBy, null
+        );
+    }
 }

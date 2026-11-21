@@ -41,9 +41,10 @@ public class LotOffersRepository {
                           BigDecimal openAskingLow, BigDecimal openAskingHigh) { }
 
     // One live lot. titleLink: the link the office set for the lot's name, or null.
-    // taken: a tenancy on the lot has not ended.
+    // reservedForRv: the lot is set aside for RVs. taken: a tenancy on the lot has not ended.
     public record LotLineRow(UUID id, UUID propertyId, String lotNumber, String lotAddress, String lotParcel,
-                             String titleLink, boolean isRentable, String notRentableReason, boolean taken) { }
+                             String titleLink, boolean isRentable, String notRentableReason, boolean reservedForRv,
+                             boolean taken) { }
 
     // One kind of agreement a lot offers, with the lot's own rates (null when the lot has none of the lot's own)
     public record OfferRow(UUID id, UUID lotId, String agreementType, BigDecimal targetRate, BigDecimal askingRate) { }
@@ -108,7 +109,7 @@ public class LotOffersRepository {
     public List<LotLineRow> findLotsByProperty(UUID propertyId) {
         return jdbc.sql("""
                 SELECT l.uuid AS id, l.property_id, l.lot_number, l.lot_address, l.lot_parcel,
-                       l.title_link, l.is_rentable, l.not_rentable_reason,
+                       l.title_link, l.is_rentable, l.not_rentable_reason, l.reserved_for_rv,
                        %s AS taken
                 FROM lot l
                 WHERE l.property_id = :propertyId
@@ -123,7 +124,7 @@ public class LotOffersRepository {
     public Optional<LotLineRow> findLot(UUID lotId) {
         return jdbc.sql("""
                 SELECT l.uuid AS id, l.property_id, l.lot_number, l.lot_address, l.lot_parcel,
-                       l.title_link, l.is_rentable, l.not_rentable_reason,
+                       l.title_link, l.is_rentable, l.not_rentable_reason, l.reserved_for_rv,
                        %s AS taken
                 FROM lot l
                 WHERE l.uuid = :lotId

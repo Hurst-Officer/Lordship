@@ -48,9 +48,10 @@ public class LotOffers {
     // One lot, with what the lot offers.
     // titleLink is the link the office set for the lot's name (in Properties), or null.
     // isRentable is a Boolean, like LotResponse's: JSON would name a primitive boolean's "is" accessor "rentable".
+    // reservedForRv: the lot is set aside for RVs (see Lot), so the Rates and deals screens can show the "RV" tag.
     public record LotLine(UUID id, UUID propertyId, String lotNumber, String lotAddress, String lotParcel,
-                          String titleLink, Boolean isRentable, String notRentableReason, boolean taken,
-                          List<Offer> offers) { }
+                          String titleLink, Boolean isRentable, String notRentableReason, boolean reservedForRv,
+                          boolean taken, List<Offer> offers) { }
 
     private final LotOffersRepository repository;
 
@@ -89,7 +90,7 @@ public class LotOffers {
 
     private static LotLine line(LotLineRow row, List<OfferRow> offers) {
         return new LotLine(row.id(), row.propertyId(), row.lotNumber(), row.lotAddress(), row.lotParcel(),
-                row.titleLink(), row.isRentable(), row.notRentableReason(), row.taken(),
+                row.titleLink(), row.isRentable(), row.notRentableReason(), row.reservedForRv(), row.taken(),
                 offers.stream()
                         .map(offer -> new Offer(offer.id(), AgreementType.valueOf(offer.agreementType()),
                                 text(offer.targetRate()), text(offer.askingRate())))

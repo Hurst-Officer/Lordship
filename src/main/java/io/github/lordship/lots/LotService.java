@@ -72,6 +72,15 @@ public class LotService {
             changes.put("title_link", checkedLink(changes.get("title_link")));
         }
 
+        if (changes.containsKey("reserved_for_rv")) {
+            // yes or no, never empty: the column has no "not known"
+            Boolean reservedForRv = Patches.bool(changes.get("reserved_for_rv"), "reserved_for_rv");
+            if (reservedForRv == null) {
+                throw InvalidRequest.onField("reserved_for_rv", "value.required");
+            }
+            changes.put("reserved_for_rv", reservedForRv);
+        }
+
         boolean rentableAfter = changes.containsKey("is_rentable")
                 ? Boolean.TRUE.equals(changes.get("is_rentable"))
                 : Boolean.TRUE.equals(before.isRentable());
@@ -130,6 +139,41 @@ public class LotService {
             Map<String, Object> changes = new HashMap<>();
             changes.put("is_rentable", isRentable);
             changes.put("not_rentable_reason", isRentable ? null : cleanReason);
+
+            LotRow after = lotRepository.patch(lotId, changes)
+                    .orElseThrow(() -> InvalidRequest.of("lot.unknown", lotId));
+
+            var diff = AuditMapper.diff(before, after);
+            if (!diff.before().isEmpty()) {
+                auditService.recordUpdate("lot", lotId, diff.before(), diff.after());
+                changed++;
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Marks a selection of lots reserved for RVs, or takes the mark off them.
+     * The office picks the lots on the map or in the list, then sets them all at once.
+     *
+     * <p>A plain fact about the land. An RV on such a lot signs the same land lease a home would, so the mark
+     * is the only thing that tells an RV lot from a home lot. The mark does not change whether a lot is
+     * rentable, which agreements a lot offers, or any rate.
+     *
+     * <p>All or nothing: an unknown lot saves none of them.
+     * Each lot that actually changed gets its own audit entry. Returns how many changed.
+     */
+    @Transactional
+    public int setReservedForRv(Collection<UUID> lotIds, boolean reservedForRv) {
+        int changed = 0;
+        // a lot picked twice is saved once
+        for (UUID lotId : new LinkedHashSet<>(lotIds)) {
+            // locked, so a coworker's save to the same lot waits for this one and both are logged right
+            LotRow before = lotRepository.findByIdForUpdate(lotId)
+                    .orElseThrow(() -> InvalidRequest.of("lot.unknown", lotId));
+
+            Map<String, Object> changes = new HashMap<>();
+            changes.put("reserved_for_rv", reservedForRv);
 
             LotRow after = lotRepository.patch(lotId, changes)
                     .orElseThrow(() -> InvalidRequest.of("lot.unknown", lotId));

@@ -110,6 +110,14 @@ public class PropertyScopeIT extends IntegrationTest {
                                 """.formatted(assignedLotId, otherLotId)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("lot.unknown"));
+        mockMvc.perform(put("/api/lots/reserved-for-rv")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "lotIds": ["%s", "%s"], "reservedForRv": true }
+                                """.formatted(assignedLotId, otherLotId)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("lot.unknown"));
     }
 
     @Test

@@ -25,6 +25,7 @@ public class LotRowMapper implements RowMapper<LotRow> {
                 (UUID) rs.getObject("property_id"),
                 (Boolean) rs.getObject("is_rentable"),
                 rs.getString("not_rentable_reason"),
+                rs.getBoolean("reserved_for_rv"),
                 rs.getString("lot_number"),
                 rs.getString("title_link"),
                 rs.getString("lot_address"),

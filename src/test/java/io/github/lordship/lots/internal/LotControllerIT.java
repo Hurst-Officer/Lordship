@@ -80,6 +80,7 @@ public class LotControllerIT extends IntegrationTest {
                 .andExpect(jsonPath("$.lotNumber").value("12"))
                 .andExpect(jsonPath("$.isRentable").value(true))
                 .andExpect(jsonPath("$.notRentableReason").doesNotExist())
+                .andExpect(jsonPath("$.reservedForRv").value(false))
                 .andExpect(jsonPath("$.lotAddress").doesNotExist())
                 .andExpect(jsonPath("$.description").doesNotExist())
                 .andExpect(jsonPath("$.lotParcel").doesNotExist())
@@ -225,6 +226,39 @@ public class LotControllerIT extends IntegrationTest {
                 .andExpect(jsonPath("$.code").value("lot.not_rentable_needs_reason"))
                 .andExpect(jsonPath("$.message").value(
                         "not_rentable_reason: Un lote que no se puede rentar necesita una razón"));
+    }
+
+    @Test
+    void setReservedForRv_shouldMarkTheLots_andShowTheMarkOnRead() throws Exception {
+        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+        UUID propertyId = testData.insertProperty("L010").uuid();
+        UUID lotId = testData.insertLot(propertyId, "11").uuid();
+
+        mockMvc.perform(put("/api/lots/reserved-for-rv")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "lotIds": ["%s"], "reservedForRv": true }
+                                """.formatted(lotId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.updated").value(1));
+
+        // the mark is there when the lot is read back, and the lot is still rentable
+        mockMvc.perform(get("/api/lots/" + lotId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservedForRv").value(true))
+                .andExpect(jsonPath("$.isRentable").value(true));
+
+        // the lot's own call takes the mark off again
+        mockMvc.perform(patch("/api/lots/" + lotId)
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "reservedForRv": false }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reservedForRv").value(false));
     }
 
     @Test

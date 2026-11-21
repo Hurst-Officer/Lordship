@@ -10,6 +10,7 @@ import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.Patches;
+import io.github.lordship.shared.PropertyScope;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.termstemplate.internal.TermsTemplateRepository;
@@ -18,8 +19,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -135,6 +138,32 @@ public class TermsTemplateService {
                 .toList();
     }
 
+    // Whether this scope covers the template, so the agent may read, change, delete or restore the template.
+    // A global template is tied to no property, and every scope covers a global template.
+    // A property's template (the property's deal) is covered when the scope covers the property.
+    // A deleted template is judged the same way, so a restore is checked like every other call.
+    // An unknown template counts as covered: the call that asked then answers "not found" the usual way.
+    // The endpoints ask before they act, and answer a template outside the scope as if the template did not exist.
+    public boolean inScope(UUID uuid, PropertyScope scope) {
+        return termsTemplateRepository.findAnyById(uuid)
+                .map(row -> row.property() == null || scope.allows(row.property()))
+                .orElse(true);
+    }
+
+    // The deals every live property offers, of every agreement type. The caller keeps the agent's properties.
+    public List<TermsTemplate> findPropertyDeals() {
+        return termsTemplateRepository.findPropertyTemplates().stream()
+                .map(TermsTemplateRow::toTermsTemplate)
+                .toList();
+    }
+
+    // Deleted global templates, the most recently deleted first.
+    public List<TermsTemplate> findDeletedGlobalTemplates() {
+        return termsTemplateRepository.findDeletedGlobalTemplates().stream()
+                .map(TermsTemplateRow::toTermsTemplate)
+                .toList();
+    }
+
     // Used when a tenancy is created: the terms it starts from.
     public Optional<TermsTemplate> findForProperty(UUID property, AgreementType agreementType) {
         return termsTemplateRepository.findByPropertyAndAgreementType(property, agreementType)
@@ -150,6 +179,25 @@ public class TermsTemplateService {
 
         auditService.recordInsert("terms_template", saved.uuid(), AuditMapper.toMap(saved));
         return saved.toTermsTemplate();
+    }
+
+    // A new global template that starts from another template's terms, or from a property's deal, instead of
+    // the database defaults. The new template takes the name and the agreement type given.
+    // From a property's deal, the two rates are left empty (TermsTemplateRow.copyAsGlobal says why).
+    // Empty means the source does not exist.
+    @Transactional
+    public Optional<TermsTemplate> createGlobalTemplateFrom(String name, AgreementType agreementType, UUID sourceUuid) {
+        Optional<TermsTemplateRow> sourceOpt = termsTemplateRepository.findById(sourceUuid);
+        if (sourceOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        requireGlobalNameIsFree(name);
+
+        TermsTemplateRow saved = termsTemplateRepository.saveCopy(
+                sourceOpt.get().copyAsGlobal(name, agreementType, ActingAgent.resolve(auditContext)));
+
+        auditService.recordInsert("terms_template", saved.uuid(), AuditMapper.toMap(saved));
+        return Optional.of(saved.toTermsTemplate());
     }
 
     // A property gains an agreement type only by an admin copying a global template in.
@@ -180,6 +228,7 @@ public class TermsTemplateService {
         }
         TermsTemplateRow before = beforeOpt.get();
 
+        requireRenameIsFree(before, changes);
         changes = withTextNumbersRead(changes);
 
         if (changes.containsKey("late_fee_tiers")) {
@@ -208,6 +257,27 @@ public class TermsTemplateService {
         }
 
         return Optional.of(after.toTermsTemplate());
+    }
+
+    /**
+     * The same changes to several terms templates at once: every one of the templates, or none.
+     * Each template is patched as {@link #patchTermsTemplate} patches one, with the same rules and one audit
+     * row for each template that changed. A refusal for any one template (an amount a method needs, a late fee
+     * chart inside the grace period) undoes the templates before that one, because the whole call is one
+     * transaction. A template that does not exist, or was deleted since, refuses the call (409).
+     *
+     * <p>For Glade's Rates and deals, where the deals of several properties are picked and changed together.
+     */
+    @Transactional
+    public List<TermsTemplate> patchTermsTemplates(List<UUID> uuids, Map<String, Object> changes) {
+        List<TermsTemplate> patched = new ArrayList<>();
+        for (UUID uuid : new LinkedHashSet<>(uuids)) {
+            // Each template gets a copy of the changes: patchTermsTemplate writes the template's own reading
+            // of the values (an amount set to zero, the late fee chart) into the map the method is handed.
+            patched.add(patchTermsTemplate(uuid, new HashMap<>(changes))
+                    .orElseThrow(() -> RuleConflict.of("terms_template.gone")));
+        }
+        return patched;
     }
 
     /**
@@ -320,6 +390,21 @@ public class TermsTemplateService {
         if (termsTemplateRepository.findByPropertyAndAgreementType(property, agreementType).isPresent()) {
             throw new IllegalStateException(
                     "This property already has a terms template set for " + agreementType);
+        }
+    }
+
+    // A global template is found by name, so a rename may not take the name another live global template has.
+    // A property's deal is found by property and agreement type, so a deal's name is free.
+    private void requireRenameIsFree(TermsTemplateRow before, Map<String, Object> changes) {
+        if (before.property() != null || !(changes.get("name") instanceof String name)
+                || name.equalsIgnoreCase(before.name())) {
+            return;
+        }
+        boolean taken = termsTemplateRepository.findGlobalByName(name)
+                .filter(other -> !other.uuid().equals(before.uuid()))
+                .isPresent();
+        if (taken) {
+            throw RuleConflict.of("terms_template.name_taken", name);
         }
     }
 

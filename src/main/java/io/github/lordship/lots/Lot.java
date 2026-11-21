@@ -13,6 +13,10 @@ public record Lot(
         UUID propertyId,
         Boolean isRentable,
         String notRentableReason,
+        // The lot is set aside for RVs. An RV on such a lot signs the same land lease a home would, so
+        // reservedForRv is the only thing that tells an RV lot from a home lot. A plain fact about the land:
+        // reservedForRv does not change whether the lot is rentable, which agreements the lot offers, or any rate.
+        boolean reservedForRv,
         String lotNumber,
         String titleLink,
         String lotAddress,

@@ -157,6 +157,30 @@ public class TermsTemplateRepository {
                 .list();
     }
 
+    // Every live property's templates (the deals the properties offer), of every agreement type.
+    // For the screen that lists the deals of all properties and changes several at once.
+    public List<TermsTemplateRow> findPropertyTemplates() {
+        return jdbc.sql("""
+                SELECT t.* FROM terms_template t
+                JOIN property p ON p.uuid = t.property
+                WHERE t.deleted_at IS NULL AND p.deleted_at IS NULL
+                ORDER BY t.agreement_type, t.uuid
+                """)
+                .query(rowMapper)
+                .list();
+    }
+
+    // Deleted global templates, the most recently deleted first
+    public List<TermsTemplateRow> findDeletedGlobalTemplates() {
+        return jdbc.sql("""
+                SELECT * FROM terms_template
+                WHERE property IS NULL AND deleted_at IS NOT NULL
+                ORDER BY deleted_at DESC, uuid
+                """)
+                .query(rowMapper)
+                .list();
+    }
+
     // Property-scoped only. Global templates may have several per agreement type,
     // so they are looked up by name instead.
     public Optional<TermsTemplateRow> findByPropertyAndAgreementType(UUID property, AgreementType agreementType) {
