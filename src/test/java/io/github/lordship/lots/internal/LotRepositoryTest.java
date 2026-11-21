@@ -31,7 +31,7 @@ public class LotRepositoryTest extends IntegrationTest {
 
     private LotRow richRow(UUID propertyId, String lotNumber) {
         return new LotRow(
-                null, propertyId, true, null,
+                null, propertyId, true, null, false,
                 lotNumber, null, "123 Main St", null, "Rental lot", "Front row", 1,
                 null, null, null
         );
@@ -51,6 +51,7 @@ public class LotRepositoryTest extends IntegrationTest {
         assertEquals("12", saved.lotNumber());
         assertTrue(saved.isRentable());
         assertNull(saved.notRentableReason());
+        assertFalse(saved.reservedForRv());
         assertNull(saved.lotAddress());
         assertNull(saved.description());
         assertNull(saved.notes());

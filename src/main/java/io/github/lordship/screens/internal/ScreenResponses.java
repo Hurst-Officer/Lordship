@@ -15,6 +15,7 @@ import io.github.lordship.shared.AgreementType;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.termstemplate.internal.TermsTemplateResponse;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -122,6 +123,40 @@ public final class ScreenResponses {
             List<LotOffers.LotLine> lots,
             List<RatesStandard> standards,
             List<TermsTemplateResponse> deals,
+            History.PageHistory history
+    ) { }
+
+    // One property's deal on the templates screen: the deal in the same shape as GET /api/terms-templates/{id},
+    // and the template the deal was copied from (null when the deal was not copied from one).
+    // copiedFrom may name a template that was deleted since.
+    public record RatesAdoptedDeal(TermsTemplateResponse deal, UUID copiedFrom) {
+        static RatesAdoptedDeal from(TermsTemplate deal) {
+            return new RatesAdoptedDeal(TermsTemplateResponse.from(deal), deal.copiedFrom());
+        }
+    }
+
+    // One deleted template. deletedBy is the agent's full name from the audit log, or null without audit:view.
+    public record RatesDeletedTemplate(UUID id, String name, AgreementType agreementType,
+                                       OffsetDateTime deletedAt, String deletedBy) {
+        static RatesDeletedTemplate from(TermsTemplate template, History.Mark deletion) {
+            return new RatesDeletedTemplate(template.uuid(), template.name(), template.agreementType(),
+                    template.deletedAt(), deletion == null ? null : deletion.name());
+        }
+    }
+
+    // The Templates and deals section of X1.
+    // templates: the global terms templates every property copies a deal from, in the same shape as
+    // GET /api/terms-templates/{id}, so the section can save through that endpoint; null without
+    // terms_template:manage_global.
+    // deals: the deal of every property in the agent's scope, of every kind of agreement; null without
+    // terms_template:view.
+    // deleted: the deleted templates, the most recently deleted first; null without terms_template:manage_global
+    // and terms_template:delete.
+    // history is null without audit:view; its bars are the templates' and the deals'.
+    public record RatesTemplatesScreen(
+            List<TermsTemplateResponse> templates,
+            List<RatesAdoptedDeal> deals,
+            List<RatesDeletedTemplate> deleted,
             History.PageHistory history
     ) { }
 

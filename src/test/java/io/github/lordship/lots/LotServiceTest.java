@@ -397,6 +397,60 @@ public class LotServiceTest {
         verifyNoInteractions(auditService);
     }
 
+    // ---- reserved for RVs ------------------------------------------------------
+
+    @Test
+    void setReservedForRv_shouldMarkEveryLot_andOnlyLogTheLotsThatChanged() {
+        // Arrange -- lot A is not reserved, lot B already is
+        UUID propertyId = UUID.randomUUID();
+        LotRow lotA = stubRow(propertyId);
+        LotRow lotB = withReservedForRv(stubRow(propertyId), true);
+        when(lotRepository.findByIdForUpdate(lotA.uuid())).thenReturn(Optional.of(lotA));
+        when(lotRepository.findByIdForUpdate(lotB.uuid())).thenReturn(Optional.of(lotB));
+        when(lotRepository.patch(eq(lotA.uuid()), any())).thenReturn(Optional.of(withReservedForRv(lotA, true)));
+        when(lotRepository.patch(eq(lotB.uuid()), any())).thenReturn(Optional.of(lotB));
+
+        // Act
+        int updated = lotService.setReservedForRv(List.of(lotA.uuid(), lotB.uuid()), true);
+
+        // Assert -- both lots were sent the mark, and nothing about renting
+        Map<String, Object> expected = new HashMap<>();
+        expected.put("reserved_for_rv", true);
+        verify(lotRepository).patch(lotA.uuid(), expected);
+        verify(lotRepository).patch(lotB.uuid(), expected);
+
+        // Only lot A changed
+        assertEquals(1, updated);
+        AuditMapper.Diff logged = capturedUpdate(lotA.uuid());
+        assertEquals(Set.of("reservedForRv"), logged.before().keySet());
+        assertEquals(Boolean.FALSE, logged.before().get("reservedForRv"));
+        assertEquals(Boolean.TRUE, logged.after().get("reservedForRv"));
+    }
+
+    @Test
+    void setReservedForRv_shouldThrow_whenALotIsUnknown() {
+        UUID unknown = UUID.randomUUID();
+        when(lotRepository.findByIdForUpdate(unknown)).thenReturn(Optional.empty());
+
+        assertThrows(IllegalArgumentException.class, () -> lotService.setReservedForRv(List.of(unknown), true));
+        verify(lotRepository, never()).patch(any(), any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void patchLot_shouldRefuseAReservedForRvThatIsNotYesOrNo_andSaveNothing() {
+        LotRow before = stubRow(UUID.randomUUID());
+        when(lotRepository.findByIdForUpdate(before.uuid())).thenReturn(Optional.of(before));
+
+        for (Object notYesOrNo : Arrays.asList(null, "maybe")) {
+            Map<String, Object> changes = new HashMap<>();
+            changes.put("reserved_for_rv", notYesOrNo);
+            assertThrows(IllegalArgumentException.class, () -> lotService.patchLot(before.uuid(), changes));
+        }
+        verify(lotRepository, never()).patch(any(), any());
+        verifyNoInteractions(auditService);
+    }
+
     // ---- delete --------------------------------------------------------------
 
     @Test
@@ -450,7 +504,7 @@ public class LotServiceTest {
         UUID propertyId = UUID.randomUUID();
         LotRow before = stubRow(propertyId);
         LotRow after = new LotRow(
-                before.uuid(), propertyId, true, null,
+                before.uuid(), propertyId, true, null, false,
                 "14", before.titleLink(), before.lotAddress(), "3005051", before.description(), before.notes(), before.sortOrder(),
                 before.shapeData(), before.createdAt(), null
         );
@@ -492,7 +546,7 @@ public class LotServiceTest {
         // A separate instance carrying the same values: the diff has to come out empty on
         // value equality, not because the stub handed back the very same object.
         LotRow after = new LotRow(
-                before.uuid(), before.propertyId(), before.isRentable(), before.notRentableReason(),
+                before.uuid(), before.propertyId(), before.isRentable(), before.notRentableReason(), before.reservedForRv(),
                 before.lotNumber(), before.titleLink(), before.lotAddress(), before.lotParcel(), before.description(), before.notes(),
                 before.sortOrder(), before.shapeData(), before.createdAt(), before.deletedAt()
         );
@@ -704,7 +758,16 @@ public class LotServiceTest {
     // The same lot with a different rentable state
     private LotRow withRentable(LotRow row, boolean isRentable, String reason) {
         return new LotRow(
-                row.uuid(), row.propertyId(), isRentable, reason,
+                row.uuid(), row.propertyId(), isRentable, reason, row.reservedForRv(),
+                row.lotNumber(), row.titleLink(), row.lotAddress(), row.lotParcel(), row.description(), row.notes(),
+                row.sortOrder(), row.shapeData(), row.createdAt(), row.deletedAt()
+        );
+    }
+
+    // The same lot, reserved for RVs or not
+    private LotRow withReservedForRv(LotRow row, boolean reservedForRv) {
+        return new LotRow(
+                row.uuid(), row.propertyId(), row.isRentable(), row.notRentableReason(), reservedForRv,
                 row.lotNumber(), row.titleLink(), row.lotAddress(), row.lotParcel(), row.description(), row.notes(),
                 row.sortOrder(), row.shapeData(), row.createdAt(), row.deletedAt()
         );
@@ -712,7 +775,7 @@ public class LotServiceTest {
 
     private LotRow stubRow(UUID uuid, UUID propertyId) {
         return new LotRow(
-                uuid, propertyId, true, null,
+                uuid, propertyId, true, null, false,
                 "12", null, "123 Main St", null, "Rental lot", "Front row", 1,
                 null, OffsetDateTime.now(ZoneOffset.UTC), null
         );

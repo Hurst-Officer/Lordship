@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -831,5 +832,277 @@ public class TermsTemplateServiceTest {
         verify(termsTemplateRepository).saveCopy(argThat(row ->
                 row.securityDepositMethod() == SecurityDepositMethod.MULTIPLE_OF_RENT
                         && new BigDecimal("1.00").compareTo(row.securityDepositAmount()) == 0));
+    }
+
+    // ── Property scope ───────────────────────────────────────────────────────
+
+    @Test
+    void inScope_shouldCoverAGlobalTemplate_whateverTheScope() {
+        // Arrange -- a global template is tied to no property
+        TermsTemplateRow global = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findAnyById(global.uuid())).thenReturn(Optional.of(global));
+
+        // Act / Assert
+        assertTrue(termsTemplateService.inScope(global.uuid(), new PropertyScope.Restricted(Set.of())));
+        assertTrue(termsTemplateService.inScope(global.uuid(), new PropertyScope.All()));
+    }
+
+    @Test
+    void inScope_shouldFollowTheProperty_whenTheTemplateIsAPropertysDeal() {
+        // Arrange
+        UUID property = UUID.randomUUID();
+        TermsTemplateRow deal = atProperty(
+                template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND), property);
+        when(termsTemplateRepository.findAnyById(deal.uuid())).thenReturn(Optional.of(deal));
+
+        // Act / Assert
+        assertTrue(termsTemplateService.inScope(deal.uuid(), new PropertyScope.Restricted(Set.of(property))));
+        assertTrue(termsTemplateService.inScope(deal.uuid(), new PropertyScope.All()));
+        assertFalse(termsTemplateService.inScope(deal.uuid(),
+                new PropertyScope.Restricted(Set.of(UUID.randomUUID()))), "another property's agent");
+        assertFalse(termsTemplateService.inScope(deal.uuid(), new PropertyScope.Restricted(Set.of())),
+                "an agent with no property");
+    }
+
+    @Test
+    void inScope_shouldCoverAnUnknownTemplate_soTheCallAnswersNotFoundTheUsualWay() {
+        // Arrange
+        UUID unknownUUID = UUID.randomUUID();
+        when(termsTemplateRepository.findAnyById(unknownUUID)).thenReturn(Optional.empty());
+
+        // Act / Assert
+        assertTrue(termsTemplateService.inScope(unknownUUID, new PropertyScope.Restricted(Set.of())));
+    }
+
+    // ── Renaming a global template ───────────────────────────────────────────
+
+    @Test
+    void patchTermsTemplate_shouldThrow_whenAGlobalTemplateTakesAnotherTemplatesName() {
+        // Arrange -- a global template is found by name, so two may not share one
+        TermsTemplateRow before = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        TermsTemplateRow other = template(UUID.randomUUID(), "OR Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(termsTemplateRepository.findGlobalByName("or land lease 2026")).thenReturn(Optional.of(other));
+
+        // Act / Assert
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("name", "or land lease 2026");
+        RuleConflict refused = assertThrows(RuleConflict.class,
+                () -> termsTemplateService.patchTermsTemplate(before.uuid(), changes));
+        assertEquals("terms_template.name_taken", refused.problem().code());
+        verify(termsTemplateRepository, never()).patch(any(), any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void patchTermsTemplate_shouldAllowAGlobalTemplatesOwnName_inAnotherLetterCase() {
+        // Arrange -- the name lookup would find the template itself
+        TermsTemplateRow before = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(termsTemplateRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+
+        // Act
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("name", "wa land lease 2026");
+        termsTemplateService.patchTermsTemplate(before.uuid(), changes);
+
+        // Assert
+        verify(termsTemplateRepository, never()).findGlobalByName(any());
+        verify(termsTemplateRepository).patch(eq(before.uuid()), any());
+    }
+
+    @Test
+    void patchTermsTemplate_shouldLetAPropertysDealTakeAnyName() {
+        // Arrange -- a deal is found by property and agreement type, never by name
+        TermsTemplateRow deal = atProperty(
+                template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND), UUID.randomUUID());
+        when(termsTemplateRepository.findById(deal.uuid())).thenReturn(Optional.of(deal));
+        when(termsTemplateRepository.patch(eq(deal.uuid()), any())).thenReturn(Optional.of(deal));
+
+        // Act
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("name", "OR Land Lease 2026");
+        termsTemplateService.patchTermsTemplate(deal.uuid(), changes);
+
+        // Assert
+        verify(termsTemplateRepository, never()).findGlobalByName(any());
+        verify(termsTemplateRepository).patch(eq(deal.uuid()), any());
+    }
+
+    // ── A new global template that starts from another ───────────────────────
+
+    @Test
+    void createGlobalTemplateFrom_shouldKeepTheTermsAndTheRates_whenTheSourceIsAGlobalTemplate() {
+        // Arrange
+        TermsTemplateRow source = withTargetRate(
+                withSecurityDeposit(
+                        template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND),
+                        SecurityDepositMethod.FLAT, new BigDecimal("500.00")),
+                new BigDecimal("640.00"));
+        when(termsTemplateRepository.findById(source.uuid())).thenReturn(Optional.of(source));
+        when(termsTemplateRepository.findGlobalByName("ID Land Lease 2026")).thenReturn(Optional.empty());
+        when(termsTemplateRepository.saveCopy(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Act
+        Optional<TermsTemplate> made = termsTemplateService.createGlobalTemplateFrom(
+                "ID Land Lease 2026", AgreementType.LAND, source.uuid());
+
+        // Assert -- a template of the template: no property, and copiedFrom stays empty as on every global
+        assertTrue(made.isPresent());
+        verify(termsTemplateRepository).saveCopy(argThat(row ->
+                row.uuid() == null
+                        && row.property() == null
+                        && row.copiedFrom() == null
+                        && "ID Land Lease 2026".equals(row.name())
+                        && new BigDecimal("640.00").compareTo(row.targetRate()) == 0
+                        && row.securityDepositMethod() == SecurityDepositMethod.FLAT
+                        && new BigDecimal("500.00").compareTo(row.securityDepositAmount()) == 0));
+        verify(auditService).recordInsert(eq("terms_template"), any(), any());
+    }
+
+    @Test
+    void createGlobalTemplateFrom_shouldLeaveTheRatesEmpty_whenTheSourceIsAPropertysDeal() {
+        // Arrange -- a property's rates belong to that property's market
+        TermsTemplateRow deal = atProperty(
+                withTargetRate(
+                        withSecurityDeposit(
+                                template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND),
+                                SecurityDepositMethod.FLAT, new BigDecimal("500.00")),
+                        new BigDecimal("640.00")),
+                UUID.randomUUID());
+        when(termsTemplateRepository.findById(deal.uuid())).thenReturn(Optional.of(deal));
+        when(termsTemplateRepository.findGlobalByName("ID Land Lease 2026")).thenReturn(Optional.empty());
+        when(termsTemplateRepository.saveCopy(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        // Act
+        termsTemplateService.createGlobalTemplateFrom("ID Land Lease 2026", AgreementType.STORAGE, deal.uuid());
+
+        // Assert -- every term but the two rates, under the kind asked for
+        verify(termsTemplateRepository).saveCopy(argThat(row ->
+                row.property() == null
+                        && row.copiedFrom() == null
+                        && row.targetRate() == null
+                        && row.askingRate() == null
+                        && row.agreementType() == AgreementType.STORAGE
+                        && row.securityDepositMethod() == SecurityDepositMethod.FLAT
+                        && new BigDecimal("500.00").compareTo(row.securityDepositAmount()) == 0));
+    }
+
+    @Test
+    void createGlobalTemplateFrom_shouldReturnEmpty_whenTheSourceDoesNotExist() {
+        // Arrange
+        UUID unknownUUID = UUID.randomUUID();
+        when(termsTemplateRepository.findById(unknownUUID)).thenReturn(Optional.empty());
+
+        // Act
+        Optional<TermsTemplate> made = termsTemplateService.createGlobalTemplateFrom(
+                "ID Land Lease 2026", AgreementType.LAND, unknownUUID);
+
+        // Assert
+        assertTrue(made.isEmpty());
+        verify(termsTemplateRepository, never()).saveCopy(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void createGlobalTemplateFrom_shouldThrow_whenTheNameIsAlreadyTaken() {
+        // Arrange
+        TermsTemplateRow source = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        TermsTemplateRow existing = template(UUID.randomUUID(), "OR Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(source.uuid())).thenReturn(Optional.of(source));
+        when(termsTemplateRepository.findGlobalByName("OR Land Lease 2026")).thenReturn(Optional.of(existing));
+
+        // Act / Assert
+        assertThrows(IllegalStateException.class, () -> termsTemplateService.createGlobalTemplateFrom(
+                "OR Land Lease 2026", AgreementType.LAND, source.uuid()));
+        verify(termsTemplateRepository, never()).saveCopy(any());
+        verifyNoInteractions(auditService);
+    }
+
+    // ── The same changes to several templates ────────────────────────────────
+
+    @Test
+    void patchTermsTemplates_shouldPatchEachTemplateOnce_andLeaveTheCallersChangesAlone() {
+        // Arrange -- a global template and a property's deal, with the first named twice
+        TermsTemplateRow first = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        TermsTemplateRow second = atProperty(
+                template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND), UUID.randomUUID());
+        when(termsTemplateRepository.findById(first.uuid())).thenReturn(Optional.of(first));
+        when(termsTemplateRepository.findById(second.uuid())).thenReturn(Optional.of(second));
+        when(termsTemplateRepository.patch(eq(first.uuid()), any())).thenReturn(Optional.of(first));
+        when(termsTemplateRepository.patch(eq(second.uuid()), any())).thenReturn(Optional.of(second));
+
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("late_fee_method", "PERCENT_OF_RENT");
+        changes.put("late_fee_amount", new BigDecimal("1.50"));
+        Map<String, Object> asSent = new HashMap<>(changes);
+
+        // Act
+        List<TermsTemplate> patched = termsTemplateService.patchTermsTemplates(
+                List.of(first.uuid(), second.uuid(), first.uuid()), changes);
+
+        // Assert
+        assertEquals(2, patched.size());
+        verify(termsTemplateRepository, times(1)).patch(eq(first.uuid()), any());
+        verify(termsTemplateRepository, times(1)).patch(eq(second.uuid()), any());
+        // Patching one template writes that template's own reading into the map (here: an empty late fee
+        // chart). Each template must get a copy, or the first template's reading would reach the second.
+        assertEquals(asSent, changes, "the caller's changes must not be written into");
+    }
+
+    @Test
+    void patchTermsTemplates_shouldThrow_whenATemplateIsGone() {
+        // Arrange
+        TermsTemplateRow first = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        UUID goneUUID = UUID.randomUUID();
+        when(termsTemplateRepository.findById(first.uuid())).thenReturn(Optional.of(first));
+        when(termsTemplateRepository.patch(eq(first.uuid()), any())).thenReturn(Optional.of(first));
+        when(termsTemplateRepository.findById(goneUUID)).thenReturn(Optional.empty());
+
+        // Act / Assert -- the transaction then undoes the first template (TermsTemplateManyIT)
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("grace_period_days", 5);
+        RuleConflict refused = assertThrows(RuleConflict.class,
+                () -> termsTemplateService.patchTermsTemplates(List.of(first.uuid(), goneUUID), changes));
+        assertEquals("terms_template.gone", refused.problem().code());
+    }
+
+    @Test
+    void patchTermsTemplates_shouldStopAtTheTemplateTheChangesAreRefusedFor() {
+        // Arrange -- the first template has a flat late fee to keep; the second has no late fee,
+        // so "flat" with no amount is refused for the second
+        TermsTemplateRow first = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        TermsTemplateRow second = withLateFee(
+                template(UUID.randomUUID(), "OR Land Lease 2026", AgreementType.LAND),
+                FeeMethod.NONE, BigDecimal.ZERO, List.of());
+        when(termsTemplateRepository.findById(first.uuid())).thenReturn(Optional.of(first));
+        when(termsTemplateRepository.findById(second.uuid())).thenReturn(Optional.of(second));
+        when(termsTemplateRepository.patch(eq(first.uuid()), any())).thenReturn(Optional.of(first));
+
+        // Act / Assert -- the transaction then undoes the first template (TermsTemplateManyIT)
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("late_fee_method", "FLAT");
+        assertThrows(IllegalArgumentException.class,
+                () -> termsTemplateService.patchTermsTemplates(List.of(first.uuid(), second.uuid()), changes));
+        verify(termsTemplateRepository, never()).patch(eq(second.uuid()), any());
+    }
+
+    /** The same row as a property's deal: every value kept, the row tied to the property. */
+    private static TermsTemplateRow atProperty(TermsTemplateRow row, UUID property) {
+        return new TermsTemplateRow(
+                row.uuid(), property, row.copiedFrom(), row.name(), row.agreementType(),
+                row.targetRate(), row.askingRate(),
+                row.escalationPercent(), row.escalationMonths(),
+                row.carFee(), row.allowedCars(), row.carsMax(), row.petFee(), row.allowedPets(),
+                row.paymentDueDay(), row.gracePeriodDays(),
+                row.ruleViolationFeeMethod(), row.ruleViolationFeeAmount(),
+                row.nsfFeeMethod(), row.nsfFeeAmount(),
+                row.lateFeeMethod(), row.lateFeeAmount(), row.lateFeeTiers(),
+                row.waterMethod(), row.waterFlatAmount(),
+                row.powerMethod(), row.powerFlatAmount(),
+                row.sewerMethod(), row.sewerFlatAmount(),
+                row.trashMethod(), row.trashFlatAmount(),
+                row.securityDepositMethod(), row.securityDepositAmount(),
+                row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
     }
 }

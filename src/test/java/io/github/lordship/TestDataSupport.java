@@ -164,11 +164,14 @@ public final class TestDataSupport {
 
     // The one place a test writes out the Lot constructor. A new lot column
     // only changes this method. Title link, description, notes and shape are
-    // left empty. The sort order is 1. Agreement types are optional, at the end.
+    // left empty. The lot is not reserved for RVs. The sort order is 1.
+    // Agreement types are optional, at the end.
     public static Lot lot(UUID uuid, UUID propertyId, boolean isRentable, String notRentableReason,
                           String lotNumber, String lotAddress, String lotParcel,
                           PermissibleAgreementType... permissible) {
-        return new Lot(uuid, propertyId, isRentable, notRentableReason, lotNumber,
+        return new Lot(uuid, propertyId, isRentable, notRentableReason,
+                false,          // reserved for RVs
+                lotNumber,
                 null,           // title link
                 lotAddress, lotParcel,
                 null, null,     // description, notes

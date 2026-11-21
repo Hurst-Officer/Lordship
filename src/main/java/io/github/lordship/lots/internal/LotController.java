@@ -131,6 +131,16 @@ public class LotController {
 
     public record SetRentableResult(int updated) { }
 
+    // Reserved for RVs or not across a selection, from the map or the lots list.
+    public record SetReservedForRvRequest(
+            @NotEmpty
+            @Size(max = 2000)
+            List<UUID> lotIds,
+
+            @NotNull
+            Boolean reservedForRv
+    ) { }
+
     // A selection of lots to delete or restore
     public record LotIdsRequest(
             @NotEmpty
@@ -211,6 +221,7 @@ public class LotController {
         if (request.containsKey("notes"))             changes.put("notes", request.get("notes"));
         if (request.containsKey("isRentable"))        changes.put("is_rentable", request.get("isRentable"));
         if (request.containsKey("notRentableReason")) changes.put("not_rentable_reason", request.get("notRentableReason"));
+        if (request.containsKey("reservedForRv"))     changes.put("reserved_for_rv", request.get("reservedForRv"));
 
         return lotService.patchLot(uuid, changes)
                 .map(LotResponse::from)
@@ -314,6 +325,17 @@ public class LotController {
         lotService.requireInScope(request.lotIds(), AgentPrincipal.scopeOf(authentication));
         int updated = lotService.setRentable(request.lotIds(), request.isRentable(), request.notRentableReason());
         return ResponseEntity.ok(new SetRentableResult(updated));
+    }
+
+    // Marks the lots of a selection reserved for RVs, or takes the mark off them. All or nothing.
+    // 400 when a lot is unknown, and then nothing is saved. updated counts the lots that actually changed.
+    @PreAuthorize("hasAuthority('lots:edit')")
+    @PutMapping("/reserved-for-rv")
+    public ResponseEntity<LotCountResult> setReservedForRv(@Valid @RequestBody SetReservedForRvRequest request,
+                                                           Authentication authentication) {
+        lotService.requireInScope(request.lotIds(), AgentPrincipal.scopeOf(authentication));
+        int updated = lotService.setReservedForRv(request.lotIds(), request.reservedForRv());
+        return ResponseEntity.ok(new LotCountResult(updated));
     }
 
     // Deleting and restoring lots needs lots:delete. Without lots:delete, the agent who added a lot may still

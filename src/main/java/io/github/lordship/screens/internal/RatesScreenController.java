@@ -11,6 +11,9 @@ import io.github.lordship.screens.internal.ScreenResponses.RatesPark;
 import io.github.lordship.screens.internal.ScreenResponses.RatesPropertyScreen;
 import io.github.lordship.screens.internal.ScreenResponses.RatesScreen;
 import io.github.lordship.screens.internal.ScreenResponses.RatesStandard;
+import io.github.lordship.screens.internal.ScreenResponses.RatesAdoptedDeal;
+import io.github.lordship.screens.internal.ScreenResponses.RatesDeletedTemplate;
+import io.github.lordship.screens.internal.ScreenResponses.RatesTemplatesScreen;
 import io.github.lordship.shared.PropertyScope;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.termstemplate.TermsTemplateService;
@@ -27,13 +30,15 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * One call per screen of Glade's Rates and deals concern: every property, one property, one lot.
+ * One call per screen of Glade's Rates and deals concern: every property, one property, one lot,
+ * and the templates a property copies a deal from.
  * The screens answer "what do we offer, where, at what rate, and is any of it open?".
  *
  * <p>Every screen needs lots:view. A property's deals (its terms templates) also need terms_template:view;
@@ -41,6 +46,7 @@ import java.util.stream.Collectors;
  * because a lot with no rate of the lot's own shows the standard rate.
  * history is null without audit:view. zone is the viewer's time zone, like America/Los_Angeles.
  * A property outside the agent's scope (see PropertyScope) is treated as if the property did not exist: 404.
+ * The templates screen needs terms_template:manage_global or terms_template:view instead of lots:view.
  */
 @RestController
 @RequestMapping("/api/screens/rates")
@@ -72,6 +78,55 @@ public class RatesScreenController {
         return ResponseEntity.ok(new RatesScreen(
                 properties.stream().map(RatesPark::from).toList(),
                 lotOffers.parkLines().stream().filter(line -> shown.contains(line.propertyId())).toList()));
+    }
+
+    // The Templates and deals section of the all-properties screen: where templates are added, edited and
+    // deleted, and where the deals of several properties are changed together.
+    // templates (the global terms templates a property copies a deal from) need terms_template:manage_global,
+    // the same permission as GET /api/terms-templates/global. deals (the deal of every property in the agent's
+    // scope, each with the template the deal was copied from) need terms_template:view. deleted (the deleted
+    // templates) needs terms_template:manage_global and terms_template:delete. A part the agent may not see is null.
+    // The history's bars are the templates' and the deals' (audit:view).
+    @PreAuthorize("hasAnyAuthority('terms_template:manage_global', 'terms_template:view')")
+    @GetMapping("/templates")
+    public ResponseEntity<RatesTemplatesScreen> templates(@RequestParam(required = false) String zone,
+                                                          Authentication authentication) {
+        Set<String> can = authorities(authentication);
+        PropertyScope scope = AgentPrincipal.scopeOf(authentication);
+        boolean mayManage = can.contains("terms_template:manage_global");
+        boolean mayViewDeals = can.contains("terms_template:view");
+        boolean mayRestore = mayManage && can.contains("terms_template:delete");
+        boolean mayViewAudits = can.contains("audit:view");
+
+        List<TermsTemplate> templates = mayManage ? termsTemplateService.findGlobalTemplates() : List.of();
+        List<TermsTemplate> deals = mayViewDeals
+                ? termsTemplateService.findPropertyDeals().stream()
+                        .filter(deal -> scope.allows(deal.property()))
+                        .toList()
+                : List.of();
+        List<TermsTemplate> deleted = mayRestore ? termsTemplateService.findDeletedGlobalTemplates() : List.of();
+
+        History.PageHistory history = null;
+        if (mayViewAudits) {
+            List<History.Ref> shown = new ArrayList<>();
+            templates.forEach(template -> shown.add(new History.Ref("terms_template", template.uuid())));
+            deals.forEach(deal -> shown.add(new History.Ref("terms_template", deal.uuid())));
+            history = auditService.pageHistory(shown, List.of(), AuditService.zoneOf(zone));
+        }
+        // who deleted each template, by the template's id. Empty without audit:view, or with nothing deleted.
+        Map<UUID, History.Mark> deletions = mayViewAudits && !deleted.isEmpty()
+                ? auditService.deletions("terms_template", deleted.stream().map(TermsTemplate::uuid).toList())
+                : Map.of();
+
+        return ResponseEntity.ok(new RatesTemplatesScreen(
+                mayManage ? templates.stream().map(TermsTemplateResponse::from).toList() : null,
+                mayViewDeals ? deals.stream().map(RatesAdoptedDeal::from).toList() : null,
+                mayRestore
+                        ? deleted.stream()
+                                .map(template -> RatesDeletedTemplate.from(template, deletions.get(template.uuid())))
+                                .toList()
+                        : null,
+                history));
     }
 
     // One property: its lots with what each offers and whether each is taken, its deals, and its history.
