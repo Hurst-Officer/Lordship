@@ -140,8 +140,8 @@ public final class TestDataSupport {
     // ---- records built in memory, for unit tests with no database ----
 
     // The one place a test writes out the Property constructor. A new property column
-    // only changes this method. Title link, county, location, acres, business numbers, custom fields,
-    // links, notes, manager and timestamps are left empty.
+    // only changes this method. Title link, county, location, acres, business numbers, deposit bank,
+    // custom fields, links, notes, manager and timestamps are left empty.
     public static Property property(UUID uuid, String code, String name, String street,
                                     String city, String state, String zip,
                                     LocalDate purchaseDate, String zoning, List<String> parcels,
@@ -155,7 +155,9 @@ public final class TestDataSupport {
                 null,           // acres
                 payableTo,
                 List.of(),      // business numbers
-                remittanceAddress, yearBuilt,
+                remittanceAddress,
+                null, null,     // deposit bank, deposit bank address
+                yearBuilt,
                 Map.of(),       // custom fields
                 Map.of(),       // field links
                 Map.of(),       // field notes

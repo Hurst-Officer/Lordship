@@ -95,6 +95,8 @@ public class PropertyController {
         if (request.containsKey("propertyZoning"))  changes.put("property_zoning", request.get("propertyZoning"));
         if (request.containsKey("payableTo"))       changes.put("payable_to", request.get("payableTo"));
         if (request.containsKey("remittanceAddress"))  changes.put("remittance_address", request.get("remittanceAddress"));
+        if (request.containsKey("depositBank"))     changes.put("deposit_bank", request.get("depositBank"));
+        if (request.containsKey("depositBankAddress")) changes.put("deposit_bank_address", request.get("depositBankAddress"));
         if (request.containsKey("yearBuilt"))       changes.put("year_built", request.get("yearBuilt"));
 
         // Custom fields are sent as one object of labels and values. Null clears them.
