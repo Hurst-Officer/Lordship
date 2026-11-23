@@ -55,6 +55,8 @@ CREATE TABLE property (
                           payable_to       TEXT, -- who to pay
                           business_numbers JSONB NOT NULL DEFAULT '[]'::jsonb, -- the owner's registration numbers, e.g. [{"state": "WA", "type": "UBI", "number": "604 959 374", "link": "https://..."}]
                           remittance_address TEXT, -- where checks are mailed;
+                          deposit_bank     TEXT, -- the bank where this property's security deposits are held
+                          deposit_bank_address TEXT, -- the deposit bank's address, as a tenant would be given it
                           year_built       INT CONSTRAINT property_year_built_must_be_1800_to_2100 CHECK (year_built BETWEEN 1800 AND 2100),
                           custom_fields    JSONB NOT NULL DEFAULT '{}'::jsonb CONSTRAINT property_custom_fields_must_be_an_object CHECK (jsonb_typeof(custom_fields) = 'object'), -- labels the office adds later; people are linked in property_contact
                           field_links      JSONB NOT NULL DEFAULT '{}'::jsonb, -- one link per field, keyed by column name or custom field label, e.g. {"property_zoning": "https://..."}

@@ -79,7 +79,7 @@ public class PropertyService {
     private static final Set<String> FIELD_COLUMNS = Set.of(
             "property_name", "property_street", "property_city", "property_state",
             "property_zip", "property_county", "purchase_date", "property_zoning", "property_parcels",
-            "acres", "payable_to", "remittance_address", "year_built"
+            "acres", "payable_to", "remittance_address", "deposit_bank", "deposit_bank_address", "year_built"
     );
 
     @Transactional

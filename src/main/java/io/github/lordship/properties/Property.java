@@ -26,6 +26,8 @@ public record Property(
         String payableTo,
         List<BusinessNumber> businessNumbers,
         String remittanceAddress,
+        String depositBank,
+        String depositBankAddress,
         Integer yearBuilt,
         Map<String, Object> customFields,
         Map<String, String> fieldLinks,

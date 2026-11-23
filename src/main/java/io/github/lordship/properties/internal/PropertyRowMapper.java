@@ -47,6 +47,8 @@ public class PropertyRowMapper implements RowMapper<PropertyRow> {
                 rs.getString("payable_to"),
                 readJson(rs.getString("business_numbers"), BUSINESS_NUMBERS, List.of(), "business_numbers"),
                 rs.getString("remittance_address"),
+                rs.getString("deposit_bank"),
+                rs.getString("deposit_bank_address"),
                 (Integer) rs.getObject("year_built"),
                 readCustomFields(rs.getString("custom_fields")),
                 readJson(rs.getString("field_links"), FIELD_TEXT, Map.of(), "field_links"),
