@@ -1,8 +1,10 @@
 package io.github.lordship.termstemplate.internal;
 
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.shared.UtilityMethod;
@@ -61,6 +63,10 @@ public record TermsTemplateRow(
         SecurityDepositMethod securityDepositMethod,
         BigDecimal securityDepositAmount,
 
+        PaymentOrder paymentOrder,  // which charges a payment covers first
+        List<ChargeKind> rentKinds, // "Counts as rent"; always holds RENT
+        String state,               // whose law the row answers to; set when the row is made, never changed
+
         String note,
         OffsetDateTime createdAt,
         OffsetDateTime updatedAt,
@@ -81,14 +87,17 @@ public record TermsTemplateRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
+                paymentOrder, rentKinds, state,
                 note, createdAt, updatedAt, createdBy, deletedAt
         );
     }
 
-    // Minimal insert -- every other column has a DB default.
+    // Minimal insert -- every other term column has a DB default.
+    // The payment order and Counts as rent are the column defaults (rent alone, applied first); the service sets
+    // what the state's law starts a template with (withRentRules).
     // Nulls are grouped and labelled so a miscount is visible; positional
     // mistakes here compile silently because every component is a reference type.
-    public TermsTemplateRow(UUID property, String name, AgreementType agreementType, UUID createdBy) {
+    public TermsTemplateRow(UUID property, String name, AgreementType agreementType, String state, UUID createdBy) {
         this(null, property, null, name, agreementType,
                 null, null,                    // targetRate, askingRate
                 null, null,                    // escalationPercent, escalationMonths
@@ -103,6 +112,7 @@ public record TermsTemplateRow(
                 null, null,                    // sewer method, amount
                 null, null,                    // trash method, amount
                 null, null,         // security deposit method, amount
+                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), state, // payment order, rent kinds, state
                 null,                          // note
                 null, null,                    // createdAt, updatedAt
                 createdBy,
@@ -112,6 +122,8 @@ public record TermsTemplateRow(
     // Copies a global template into a property, keeping the terms and dropping
     // identity. copiedFrom records the source; the copying agent is the author
     // of the copy, not whoever authored the template.
+    // The copy keeps the template's state, payment order and Counts as rent: a template goes only to a
+    // property in the template's state (the service checks).
     public TermsTemplateRow copyTo(UUID targetProperty, UUID copiedBy) {
         return new TermsTemplateRow(
                 null, targetProperty, uuid, name, agreementType, targetRate, askingRate,
@@ -126,6 +138,7 @@ public record TermsTemplateRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
+                paymentOrder, rentKinds, state,
                 note, null, null, copiedBy, null
         );
     }
@@ -137,6 +150,8 @@ public record TermsTemplateRow(
     // deal was copied from, and nothing else.
     // The two rates are kept only when this row is a global template. A property's rates belong to that
     // property's market, and a template hands its rates to every property that copies the template.
+    // The payment order and Counts as rent are kept, with no state: the service decides the new template's state
+    // and whether the two still apply under that state's law (withRentRules).
     public TermsTemplateRow copyAsGlobal(String newName, AgreementType newAgreementType, UUID copiedBy) {
         boolean fromGlobal = property == null;
         return new TermsTemplateRow(
@@ -153,7 +168,28 @@ public record TermsTemplateRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
+                paymentOrder, rentKinds, null,
                 note, null, null, copiedBy, null
+        );
+    }
+
+    // The same row with another state, Counts as rent and payment order, before the row is saved.
+    public TermsTemplateRow withRentRules(String newState, List<ChargeKind> newRentKinds, PaymentOrder newPaymentOrder) {
+        return new TermsTemplateRow(
+                uuid, property, copiedFrom, name, agreementType, targetRate, askingRate,
+                escalationPercent, escalationMonths,
+                carFee, allowedCars, carsMax, petFee, allowedPets,
+                paymentDueDay, gracePeriodDays,
+                ruleViolationFeeMethod, ruleViolationFeeAmount,
+                nsfFeeMethod, nsfFeeAmount,
+                lateFeeMethod, lateFeeAmount, lateFeeTiers,
+                waterMethod, waterFlatAmount,
+                powerMethod, powerFlatAmount,
+                sewerMethod, sewerFlatAmount,
+                trashMethod, trashFlatAmount,
+                securityDepositMethod, securityDepositAmount,
+                newPaymentOrder, newRentKinds, newState,
+                note, createdAt, updatedAt, createdBy, deletedAt
         );
     }
 }

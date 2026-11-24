@@ -1,8 +1,10 @@
 package io.github.lordship.termstemplate;
 
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 
@@ -58,6 +60,10 @@ public record TermsTemplate(
 
         SecurityDepositMethod securityDepositMethod,
         BigDecimal securityDepositAmount,
+
+        PaymentOrder paymentOrder,  // which charges a payment covers first
+        List<ChargeKind> rentKinds, // "Counts as rent"; always holds RENT
+        String state,               // the state whose law the template or deal answers to; set when made, never changed
 
         String note,
         OffsetDateTime createdAt,

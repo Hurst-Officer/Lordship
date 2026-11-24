@@ -55,7 +55,7 @@ public class TenancyChargeTermRentHistoryTest extends IntegrationTest {
         tenancy = testData.insertTenancy(lot).uuid();
         template = termsTemplateRepository.save(new TermsTemplateRow(
                 property.uuid(), "RH Land Lease", AgreementType.LAND,
-                SystemPrincipal.AGENT_UUID)).toTermsTemplate();
+                "WA", SystemPrincipal.AGENT_UUID)).toTermsTemplate();
     }
 
     // ---- the span, not the start date ---------------------------------------

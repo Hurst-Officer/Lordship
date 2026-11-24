@@ -4,8 +4,10 @@ import io.github.lordship.IntegrationTest;
 import io.github.lordship.TestDataSupport;
 import io.github.lordship.properties.internal.PropertyRow;
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.SystemPrincipal;
 import io.github.lordship.shared.UtilityMethod;
 import org.junit.jupiter.api.Test;
@@ -35,10 +37,10 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
 
     @Test
     void save_shouldApplyEveryDatabaseDefault_whenOnlyTheRequiredColumnsAreGiven() {
-        // Arrange -- the insert names four columns; the other twenty-six are the
+        // Arrange -- the insert names seven columns; the other term columns are the
         // database's job. This is the only test that proves those defaults exist.
         TermsTemplateRow row = new TermsTemplateRow(
-                null, "RT Defaults", AgreementType.LAND, SystemPrincipal.AGENT_UUID);
+                null, "RT Defaults", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID);
 
         // Act
         TermsTemplateRow saved = termsTemplateRepository.save(row);
@@ -61,6 +63,9 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         assertThat(saved.nsfFeeMethod()).isEqualTo(FeeMethod.FLAT);
         assertThat(saved.waterMethod()).isEqualTo(UtilityMethod.NONE);
         assertThat(saved.trashMethod()).isEqualTo(UtilityMethod.NONE);
+        assertThat(saved.paymentOrder()).isEqualTo(PaymentOrder.RENT_FIRST);
+        assertThat(saved.rentKinds()).containsExactly(ChargeKind.RENT);
+        assertThat(saved.state()).isEqualTo("WA");
         assertThat(saved.createdAt()).isNotNull();
         assertThat(saved.updatedAt()).isNotNull();
         assertThat(saved.createdBy()).isEqualTo(SystemPrincipal.AGENT_UUID);
@@ -71,9 +76,10 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     // silently returns someone else's value. Only a round trip catches that.
     @Test
     void rowMapper_shouldPopulateEveryColumn_onARoundTrip() {
-        // Arrange -- give every column a value distinct from its default
+        // Arrange -- give every column a value distinct from its default (the state is set by the insert, as it
+        // is never patched)
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Round Trip", AgreementType.STORAGE, SystemPrincipal.AGENT_UUID));
+                null, "RT Round Trip", AgreementType.STORAGE, "MT", SystemPrincipal.AGENT_UUID));
         termsTemplateRepository.patch(saved.uuid(), distinctValues());
 
         // Act
@@ -98,6 +104,9 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         assertThat(read.sewerFlatAmount()).isEqualByComparingTo(new BigDecimal("16.00"));
         assertThat(read.trashMethod()).isEqualTo(UtilityMethod.RUBS);
         assertThat(read.note()).isEqualTo("RT note");
+        assertThat(read.paymentOrder()).isEqualTo(PaymentOrder.FEES_FIRST);
+        assertThat(read.rentKinds()).containsExactly(ChargeKind.RENT, ChargeKind.WATER);
+        assertThat(read.state()).isEqualTo("MT");
         assertThat(read.agreementType()).isEqualTo(AgreementType.STORAGE);
     }
 
@@ -109,7 +118,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         // so a column missing from the INSERT shows up as a default, not a match.
         PropertyRow property = testData.insertProperty("RC");
         TermsTemplateRow template = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Copy Source", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Copy Source", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
         termsTemplateRepository.patch(template.uuid(), distinctValues());
         TermsTemplateRow edited = termsTemplateRepository.findById(template.uuid()).orElseThrow();
 
@@ -146,6 +155,9 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         assertThat(copy.sewerFlatAmount()).isEqualByComparingTo(edited.sewerFlatAmount());
         assertThat(copy.trashMethod()).isEqualTo(edited.trashMethod());
         assertThat(copy.trashFlatAmount()).isEqualByComparingTo(edited.trashFlatAmount());
+        assertThat(copy.paymentOrder()).isEqualTo(edited.paymentOrder());
+        assertThat(copy.rentKinds()).isEqualTo(edited.rentKinds());
+        assertThat(copy.state()).as("a deal keeps its template's state").isEqualTo(edited.state());
         assertThat(copy.note()).isEqualTo(edited.note());
     }
 
@@ -154,7 +166,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         // Arrange
         PropertyRow property = testData.insertProperty("RF");
         TermsTemplateRow template = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Frozen", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Frozen", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act
         TermsTemplateRow copy = termsTemplateRepository.saveCopy(
@@ -174,7 +186,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         // Arrange
         PropertyRow property = testData.insertProperty("RG");
         TermsTemplateRow template = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Global Only", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Global Only", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
         termsTemplateRepository.saveCopy(template.copyTo(property.uuid(), SystemPrincipal.AGENT_UUID));
 
         // Act
@@ -192,9 +204,9 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         PropertyRow mine = testData.insertProperty("RM");
         PropertyRow theirs = testData.insertProperty("RN");
         TermsTemplateRow a = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Mine", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Mine", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
         TermsTemplateRow b = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Theirs", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Theirs", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
         termsTemplateRepository.saveCopy(a.copyTo(mine.uuid(), SystemPrincipal.AGENT_UUID));
         termsTemplateRepository.saveCopy(b.copyTo(theirs.uuid(), SystemPrincipal.AGENT_UUID));
 
@@ -211,9 +223,9 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         // Arrange
         PropertyRow property = testData.insertProperty("RA");
         TermsTemplateRow land = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Land Set", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Land Set", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
         TermsTemplateRow storage = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Storage Set", AgreementType.STORAGE, SystemPrincipal.AGENT_UUID));
+                null, "RT Storage Set", AgreementType.STORAGE, "WA", SystemPrincipal.AGENT_UUID));
         termsTemplateRepository.saveCopy(land.copyTo(property.uuid(), SystemPrincipal.AGENT_UUID));
         termsTemplateRepository.saveCopy(storage.copyTo(property.uuid(), SystemPrincipal.AGENT_UUID));
 
@@ -241,7 +253,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void findGlobalByName_shouldIgnoreCase() {
         // Arrange
         termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Case Test", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Case Test", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act / Assert -- the name is a global template's identity, so near-misses matter
         assertThat(termsTemplateRepository.findGlobalByName("rt case test")).isPresent();
@@ -255,7 +267,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldBumpUpdatedAt() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Touch", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Touch", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act
         TermsTemplateRow patched = termsTemplateRepository
@@ -270,7 +282,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldReturnTheExistingRow_whenThereIsNothingToChange() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Empty Patch", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Empty Patch", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act / Assert
         assertThat(termsTemplateRepository.patch(saved.uuid(), Map.of()))
@@ -284,7 +296,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldReturnEmpty_whenTheRowIsSoftDeleted() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Gone", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Gone", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
         termsTemplateRepository.softDelete(saved.uuid());
 
         // Act / Assert
@@ -297,7 +309,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldRejectColumnsThatAreNotPatchable() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Guarded", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Guarded", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act / Assert
         for (String column : List.of("uuid", "property", "copied_from", "agreement_type",
@@ -314,7 +326,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldAcceptAPercentOfRentLateFee() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Percent", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Percent", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act -- straight at the CHECK constraint, with no service reconciliation
         TermsTemplateRow patched = termsTemplateRepository.patch(saved.uuid(), Map.of(
@@ -330,7 +342,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldBeRejected_whenAFeeMethodIsNoneButTheAmountIsNot() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Bad Pair", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Bad Pair", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act / Assert -- the service normally reconciles this pair; the constraint
         // is the backstop for anything that does not go through the service.
@@ -344,7 +356,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldStoreATieredChart_andCopyItToAProperty() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Tiered", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Tiered", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
         List<LateFeeTier> chart = List.of(
                 new LateFeeTier(9, new BigDecimal("20.00")),
                 new LateFeeTier(13, new BigDecimal("28.00")),
@@ -369,7 +381,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldBeRejected_whenTieredHasNoChart() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Empty Chart", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Empty Chart", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act / Assert -- terms_template_late_fee_tiers_must_match_method
         assertThatThrownBy(() -> termsTemplateRepository.patch(saved.uuid(), Map.of(
@@ -382,7 +394,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldBeRejected_whenATierStartsOnDayOne() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Day One", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Day One", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act / Assert -- terms_template_late_fee_tiers_must_be_well_formed
         assertThatThrownBy(() -> termsTemplateRepository.patch(saved.uuid(), Map.of(
@@ -396,7 +408,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void patch_shouldBeRejected_whenAUtilityIsSubmeteredWithAFlatAmount() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Bad Utility", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Bad Utility", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act / Assert -- a submetered utility is computed, so a flat amount is nonsense
         assertThatThrownBy(() -> termsTemplateRepository.patch(saved.uuid(), Map.of(
@@ -411,7 +423,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
     void softDelete_shouldHideTheRow_andReturnFalseTheSecondTime() {
         // Arrange
         TermsTemplateRow saved = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Doomed", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Doomed", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
 
         // Act / Assert
         assertThat(termsTemplateRepository.softDelete(saved.uuid())).isTrue();
@@ -425,7 +437,7 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
         // Arrange -- a deleted set must not block a replacement
         PropertyRow property = testData.insertProperty("RS");
         TermsTemplateRow template = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "RT Reusable", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "RT Reusable", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
         TermsTemplateRow copy = termsTemplateRepository.saveCopy(
                 template.copyTo(property.uuid(), SystemPrincipal.AGENT_UUID));
 
@@ -469,6 +481,8 @@ public class TermsTemplateRepositoryTest extends IntegrationTest {
                 Map.entry("sewer_flat_amount", new BigDecimal("16.00")),
                 Map.entry("trash_method", "RUBS"),
                 Map.entry("trash_flat_amount", BigDecimal.ZERO),
+                Map.entry("payment_order", "FEES_FIRST"),
+                Map.entry("rent_kinds", List.of(ChargeKind.RENT, ChargeKind.WATER)),
                 Map.entry("note", "RT note"));
     }
 }

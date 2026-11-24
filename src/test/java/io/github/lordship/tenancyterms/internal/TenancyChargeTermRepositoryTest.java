@@ -116,12 +116,28 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
         assertEquals(UtilityMethod.RUBS, read.trashMethod());
         assertEquals(0, read.trashFlatAmount().compareTo(new BigDecimal("304.00")));
 
+        assertEquals(PaymentOrder.FEES_FIRST, read.paymentOrder());
+        assertEquals(List.of(ChargeKind.RENT, ChargeKind.WATER), read.rentKinds());
+
         assertEquals(TenancyTermStatus.PROPOSED, read.status());
         assertEquals(TenancyTermSource.CORRECTION, read.source());
         assertEquals(template.uuid(), read.termsTemplate());
         assertEquals("CT found the 2019 lease", read.correctionReason());
         assertEquals("CT round trip", read.note());
         assertEquals(SystemPrincipal.AGENT_UUID, read.createdBy());
+    }
+
+    @Test
+    void findLawState_shouldAnswerTheDealsState_orThePropertysWhenTheTermsHaveNoDeal() {
+        // Arrange -- a deal written for Montana on the fixture's property, which is in Washington
+        // (TestDataSupport): a deal keeps its own state, whatever the property's
+        UUID montanaDeal = termsTemplateRepository.save(new TermsTemplateRow(
+                property, "CT Montana Storage", AgreementType.STORAGE, "MT", SystemPrincipal.AGENT_UUID)).uuid();
+
+        // Act / Assert -- terms seeded from no deal (a migration) follow the property's state
+        assertEquals(Optional.of("MT"), tenancyChargeTermRepository.findLawState(tenancy, montanaDeal));
+        assertEquals(Optional.of("WA"), tenancyChargeTermRepository.findLawState(tenancy, null));
+        assertTrue(tenancyChargeTermRepository.findLawState(UUID.randomUUID(), null).isEmpty());
     }
 
     @Test
@@ -489,6 +505,7 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
         assertEquals("FLAT", configuration.lateFeeMethod());
         assertEquals("NONE", configuration.waterMethod());
         assertEquals("NONE", configuration.securityDepositMethod());
+        assertEquals("RENT_FIRST", configuration.paymentOrder());
         assertEquals(1, configuration.tenancyCount());
     }
 
@@ -537,7 +554,7 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
      */
     private TermsTemplate templateFor(UUID property, String name) {
         return termsTemplateRepository.save(new TermsTemplateRow(
-                property, name, AgreementType.LAND, SystemPrincipal.AGENT_UUID)).toTermsTemplate();
+                property, name, AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID)).toTermsTemplate();
     }
 
     /** A consistent LEASE draft copied from the template, not linked to a document. */
@@ -611,6 +628,7 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
                 UtilityMethod.SUBMETERED, new BigDecimal("303.00"),
                 UtilityMethod.RUBS, new BigDecimal("304.00"),
                 SecurityDepositMethod.FLAT, new BigDecimal("101.00"),
+                PaymentOrder.FEES_FIRST, List.of(ChargeKind.RENT, ChargeKind.WATER),
                 TenancyTermStatus.PROPOSED,
                 TenancyTermSource.CORRECTION,
                 null,

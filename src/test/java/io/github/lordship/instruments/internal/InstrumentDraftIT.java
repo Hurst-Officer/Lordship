@@ -348,7 +348,7 @@ public class InstrumentDraftIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "name": "DR Land Terms", "agreementType": "LAND" }
+                                { "name": "DR Land Terms", "agreementType": "LAND", "state": "WA" }
                                 """))
                 .andExpect(status().isCreated())
                 .andReturn();

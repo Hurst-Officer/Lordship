@@ -5,9 +5,11 @@ import io.github.lordship.globalsettings.GlobalSettings;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.properties.Property;
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.LateFeeTier;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancy.Tenancy;
@@ -208,6 +210,18 @@ public class TokenResolverTest {
         assertEquals("water and sewer", values.scalar("term.charged_utilities"));
     }
 
+    @Test
+    void resolve_shouldNameOnlyTheRentKindsTheDealCharges() {
+        // Arrange -- water is billed FLAT, power not at all, and the rule violation fee is NONE
+        TokenValues values = TokenResolver.resolve(facts(List.of(rentRulesTerm(PaymentOrder.FEES_FIRST, List.of(
+                ChargeKind.RENT, ChargeKind.WATER, ChargeKind.POWER,
+                ChargeKind.LATE_FEE, ChargeKind.RULE_VIOLATION_FEE)))));
+
+        // Assert -- a lease never names a charge as rent that the deal does not charge
+        assertEquals("rent, water and late fees", values.scalar("term.rent_kinds"));
+        assertEquals("FEES_FIRST", values.scalar("term.payment_order"));
+    }
+
     // ---- the schedule --------------------------------------------------------
 
     @Test
@@ -339,7 +353,13 @@ public class TokenResolverTest {
         return chargeTerm(START, "4200.00", FeeMethod.TIERED, "0", tiers, SecurityDepositMethod.NONE, "0");
     }
 
-    /** The one place the 41-component constructor is written out. */
+    /** This payment order and Counts as rent, with a FLAT late fee. */
+    private static TenancyChargeTerm rentRulesTerm(PaymentOrder paymentOrder, List<ChargeKind> rentKinds) {
+        return chargeTerm(START, "4200.00", FeeMethod.FLAT, "65.00", List.of(), SecurityDepositMethod.NONE, "0",
+                paymentOrder, rentKinds);
+    }
+
+    /** Rent alone counts as rent, applied first. */
     private static TenancyChargeTerm chargeTerm(LocalDate validAt,
                                                 String rate,
                                                 FeeMethod lateFeeMethod,
@@ -347,6 +367,20 @@ public class TokenResolverTest {
                                                 List<LateFeeTier> lateFeeTiers,
                                                 SecurityDepositMethod depositMethod,
                                                 String depositAmount) {
+        return chargeTerm(validAt, rate, lateFeeMethod, lateFeeAmount, lateFeeTiers, depositMethod, depositAmount,
+                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT));
+    }
+
+    /** The one place the 43-component constructor is written out. */
+    private static TenancyChargeTerm chargeTerm(LocalDate validAt,
+                                                String rate,
+                                                FeeMethod lateFeeMethod,
+                                                String lateFeeAmount,
+                                                List<LateFeeTier> lateFeeTiers,
+                                                SecurityDepositMethod depositMethod,
+                                                String depositAmount,
+                                                PaymentOrder paymentOrder,
+                                                List<ChargeKind> rentKinds) {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         return new TenancyChargeTerm(
                 UUID.randomUUID(), TENANCY, validAt, AgreementType.COMMERCIAL,
@@ -362,6 +396,7 @@ public class TokenResolverTest {
                 UtilityMethod.RUBS, BigDecimal.ZERO,                   // sewer
                 UtilityMethod.NONE, BigDecimal.ZERO,                   // trash
                 depositMethod, new BigDecimal(depositAmount),
+                paymentOrder, rentKinds,
                 TenancyTermStatus.PROPOSED, TenancyTermSource.LEASE,
                 null, UUID.randomUUID(), null,                         // sourceUuid, termsTemplate, correctionReason
                 null, null, null,                                      // cancel columns

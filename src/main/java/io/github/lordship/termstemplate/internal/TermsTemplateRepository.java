@@ -1,6 +1,7 @@
 package io.github.lordship.termstemplate.internal;
 
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.LateFeeTier;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -15,7 +16,7 @@ import java.util.UUID;
 @Repository
 public class TermsTemplateRepository {
 
-    // property, agreement_type, copied_from and created_by not included - they should not be changed
+    // property, agreement_type, state, copied_from and created_by not included - they should not be changed
     private static final Set<String> PATCHABLE_COLUMNS = Set.of(
             "name", "target_rate", "asking_rate",
             "escalation_percent", "escalation_months",
@@ -30,6 +31,7 @@ public class TermsTemplateRepository {
             "sewer_method", "sewer_flat_amount",
             "trash_method", "trash_flat_amount",
             "security_deposit_method", "security_deposit_amount",
+            "payment_order", "rent_kinds",
             "note"
     );
 
@@ -41,17 +43,23 @@ public class TermsTemplateRepository {
         this.rowMapper = termsTemplateRowMapper;
     }
 
-    // Creates a blank set -- every term column takes its DB default.
+    // Creates a blank set -- every term column takes its DB default, apart from the state and the two rules a
+    // state's law starts a template with (payment order, Counts as rent).
     public TermsTemplateRow save(TermsTemplateRow row) {
         return jdbc.sql("""
-                INSERT INTO terms_template (property, name, agreement_type, created_by)
-                VALUES (:property, :name, :agreementType::agreement_type, :createdBy)
+                INSERT INTO terms_template (property, name, agreement_type, created_by,
+                                            payment_order, rent_kinds, state)
+                VALUES (:property, :name, :agreementType::agreement_type, :createdBy,
+                        :paymentOrder, CAST(:rentKinds AS charge_kind[]), :state)
                 RETURNING *
                 """)
                 .param("property", row.property())
                 .param("name", row.name())
                 .param("agreementType", nameOf(row.agreementType()))
                 .param("createdBy", row.createdBy())
+                .param("paymentOrder", nameOf(row.paymentOrder()))
+                .param("rentKinds", ChargeKind.toDatabase(row.rentKinds()))
+                .param("state", row.state())
                 .query(rowMapper)
                 .single();
     }
@@ -72,6 +80,7 @@ public class TermsTemplateRepository {
                     sewer_method, sewer_flat_amount,
                     trash_method, trash_flat_amount,
                     security_deposit_method, security_deposit_amount,
+                    payment_order, rent_kinds, state,
                     note, created_by
                 ) VALUES (
                     :property, :copiedFrom, :name, :agreementType::agreement_type, :targetRate, :askingRate,
@@ -86,6 +95,7 @@ public class TermsTemplateRepository {
                     :sewerMethod, :sewerFlatAmount,
                     :trashMethod, :trashFlatAmount,
                     :securityDepositMethod, :securityDepositAmount,
+                    :paymentOrder, CAST(:rentKinds AS charge_kind[]), :state,
                     :note, :createdBy
                 ) RETURNING *
                 """)
@@ -121,10 +131,22 @@ public class TermsTemplateRepository {
                 .param("trashFlatAmount", row.trashFlatAmount())
                 .param("securityDepositMethod", nameOf(row.securityDepositMethod()))
                 .param("securityDepositAmount", row.securityDepositAmount())
+                .param("paymentOrder", nameOf(row.paymentOrder()))
+                .param("rentKinds", ChargeKind.toDatabase(row.rentKinds()))
+                .param("state", row.state())
                 .param("note", row.note())
                 .param("createdBy", row.createdBy())
                 .query(rowMapper)
                 .single();
+    }
+
+    // The state a property is in (property.property_state), whose law the property's deals follow.
+    // Empty for an unknown property.
+    public Optional<String> findPropertyState(UUID property) {
+        return jdbc.sql("SELECT property_state FROM property WHERE uuid = :property")
+                .param("property", property)
+                .query(String.class)
+                .optional();
     }
 
     public Optional<TermsTemplateRow> findById(UUID uuid) {
@@ -222,6 +244,9 @@ public class TermsTemplateRepository {
             if (col.equals("late_fee_tiers")) {
                 // The service hands over a List<LateFeeTier>. It is stored as JSONB.
                 sql.append(col).append(" = CAST(:").append(col).append(" AS jsonb), ");
+            } else if (col.equals("rent_kinds")) {
+                // The service hands over a List<ChargeKind>. It is stored as a charge_kind[].
+                sql.append(col).append(" = CAST(:").append(col).append(" AS charge_kind[]), ");
             } else {
                 sql.append(col).append(" = :").append(col).append(", ");
             }
@@ -234,6 +259,9 @@ public class TermsTemplateRepository {
         if (params.get("late_fee_tiers") instanceof List<?> tiers) {
             params.put("late_fee_tiers", LateFeeTier.toJson(
                     tiers.stream().map(LateFeeTier.class::cast).toList()));
+        }
+        if (params.get("rent_kinds") instanceof List<?> kinds) {
+            params.put("rent_kinds", ChargeKind.toDatabase(kinds));
         }
 
         return jdbc.sql(sql.toString())

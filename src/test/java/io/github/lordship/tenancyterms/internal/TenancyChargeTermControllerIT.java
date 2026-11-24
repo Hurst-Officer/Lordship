@@ -455,7 +455,8 @@ public class TenancyChargeTermControllerIT extends IntegrationTest {
                         .content("""
                         {
                             "name" : "%s",
-                            "agreementType" : "%s"
+                            "agreementType" : "%s",
+                            "state" : "WA"
                         }
                         """.formatted(name, agreementType)))
                 .andExpect(status().isCreated())

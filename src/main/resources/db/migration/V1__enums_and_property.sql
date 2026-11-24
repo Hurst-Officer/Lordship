@@ -18,6 +18,13 @@ CREATE TYPE instrument_type AS ENUM (
     'LEASE','INCREASE_NOTICE','ASSUMPTION','ADDENDUM','WAIVER', 'PAY_OR_VACATE'
     );
 
+-- The kinds of charge a deal bills. A deal's "Counts as rent" (rent_kinds) is a list of these.
+-- The Java enum ChargeKind lists the same values in the same order.
+CREATE TYPE charge_kind AS ENUM (
+    'RENT','WATER','SEWER','POWER','TRASH','CAR_FEE','PET_FEE', -- monthly
+    'LATE_FEE','NSF_FEE','RULE_VIOLATION_FEE','NOTICE_FEE','MISC_CHARGE' -- one time
+    );
+
 -- ── Global settings ──────────────────────────────────────────────────────────
 
 CREATE TABLE global_settings ( -- singleton
@@ -141,6 +148,19 @@ CREATE TABLE terms_template ( -- note when the property is NULL this is a global
                                     CONSTRAINT terms_template_security_deposit_method_must_be_known CHECK(security_deposit_method IN ('NONE', 'FLAT', 'MULTIPLE_OF_RENT')),
                                 security_deposit_amount   NUMERIC(12,2) NOT NULL DEFAULT 0 CONSTRAINT terms_template_security_deposit_amount_must_not_be_negative CHECK (security_deposit_amount >= 0),
     -- note: security_deposit_amount can hold a percentage or a flat amount
+
+                                payment_order TEXT NOT NULL DEFAULT 'RENT_FIRST'
+                                    CONSTRAINT terms_template_payment_order_must_be_known CHECK (payment_order IN ('RENT_FIRST','FEES_FIRST')),
+                                rent_kinds charge_kind[] NOT NULL DEFAULT '{RENT}'
+                                    CONSTRAINT terms_template_rent_kinds_must_hold_rent CHECK ('RENT' = ANY (rent_kinds)),
+    -- note: rent_kinds is "Counts as rent": the charges billing treats as rent -- which charges a payment covers first
+    -- under RENT_FIRST, and whether rent is late (a late fee comes only from these). State law limits what may be in
+    -- the list (Java RentLaw), so the limit is checked in Java, not here.
+                                state VARCHAR(2) NOT NULL CONSTRAINT terms_template_state_must_be_two_capital_letters CHECK (state ~ '^[A-Z]{2}$'),
+    -- note: state is the state whose law the template or deal answers to (Java RentLaw). The state is set when the row
+    -- is made and is never changed: a global template is given one, and a property's deal takes its template's,
+    -- which must be the property's (property.property_state). A deal keeps its state if the property's ever changes.
+
                                 note       TEXT,
                                 created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
                                 updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), -- note: most other tables do not get this row

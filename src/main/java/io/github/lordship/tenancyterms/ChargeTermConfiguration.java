@@ -25,6 +25,7 @@ public record ChargeTermConfiguration(
         String sewerMethod,
         String trashMethod,
         String securityDepositMethod,
+        String paymentOrder,
         int tenancyCount
 ) {
 
@@ -40,6 +41,7 @@ public record ChargeTermConfiguration(
         put(values, DocumentToken.SEWER_METHOD, sewerMethod);
         put(values, DocumentToken.TRASH_METHOD, trashMethod);
         put(values, DocumentToken.SECURITY_DEPOSIT_METHOD, securityDepositMethod);
+        put(values, DocumentToken.PAYMENT_ORDER, paymentOrder);
         return values;
     }
 

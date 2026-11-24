@@ -2,7 +2,10 @@ package io.github.lordship.termstemplate.internal;
 
 import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.PropertyScope;
+import io.github.lordship.shared.RentLaw;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.termstemplate.TermsTemplateService;
@@ -35,6 +38,7 @@ import java.util.UUID;
 public class TermsTemplateController {
 
     // JSON field -> column. A number may arrive as text ("650.00"): the service reads text digit for digit.
+    // The state is left out: a template's or deal's state is set when the template or deal is made, never after.
     private static final Map<String, String> PATCHABLE_COLUMNS = Map.ofEntries(
             Map.entry("name", "name"),
             Map.entry("targetRate", "target_rate"),
@@ -65,6 +69,8 @@ public class TermsTemplateController {
             Map.entry("securityDepositMethod", "security_deposit_method"),
             Map.entry("securityDepositAmount", "security_deposit_amount"),
             Map.entry("trashFlatAmount", "trash_flat_amount"),
+            Map.entry("paymentOrder", "payment_order"),
+            Map.entry("rentKinds", "rent_kinds"),
             Map.entry("note", "note")
     );
 
@@ -77,10 +83,44 @@ public class TermsTemplateController {
     // copyFromId: a template or a property's deal whose terms the new template starts from
     // (a property's deal gives every term but the two rates).
     // Left out, the new template starts from the database defaults.
+    // state: the state whose law the template is written for, like "WA"; required (400 value.required), and never
+    // changed afterwards. The payment order and Counts as rent start from that law (GET /rent-laws), unless the
+    // source has the same state and agreement type.
     public record CreateGlobalTemplateRequest(
             @NotBlank String name,
             @NotNull AgreementType agreementType,
-            UUID copyFromId) { }
+            UUID copyFromId,
+            String state) { }
+
+    // One law Lordship knows (RentLaw): on one kind of agreement in one state, the kinds of charge that may count
+    // as rent, the payment orders a deal may use, and what a new deal starts with. source is the statutes Counts as
+    // rent rests on; paymentOrderSource is the statutes the payment orders rest on, or are read with when
+    // paymentOrderByPolicy is true (the law is silent and the payment orders are company policy).
+    public record RentLawResponse(
+            String state,
+            AgreementType agreementType,
+            String source,
+            List<ChargeKind> mayCountAsRent,
+            List<ChargeKind> startingRentKinds,
+            String paymentOrderSource,
+            boolean paymentOrderByPolicy,
+            List<PaymentOrder> paymentOrders,
+            PaymentOrder startingPaymentOrder) {
+        static RentLawResponse from(RentLaw law) {
+            return new RentLawResponse(law.state(), law.agreementType(), law.source(),
+                    law.mayCountAsRent(), law.startingRentKinds(),
+                    law.paymentOrderSource(), law.paymentOrderByPolicy(),
+                    law.paymentOrders(), law.startingPaymentOrder());
+        }
+    }
+
+    // chargeKinds: every kind of charge, in order; monthlyKinds: the ones that come due every month.
+    // laws: every law Lordship knows. A state and agreement type with no law here limits nothing: every kind may
+    // count as rent, either payment order is allowed, and a new deal starts with RENT alone, RENT_FIRST.
+    public record RentLawsResponse(
+            List<ChargeKind> chargeKinds,
+            List<ChargeKind> monthlyKinds,
+            List<RentLawResponse> laws) { }
 
     // The same changes for several templates: ids names the templates, changes has the fields of a single PATCH.
     public record PatchManyRequest(
@@ -107,6 +147,17 @@ public class TermsTemplateController {
                 : termsTemplateService.findForProperty(propertyId, agreementType).stream().toList();
 
         return ResponseEntity.ok(found.stream().map(TermsTemplateResponse::from).toList());
+    }
+
+    // What each state's law lets a deal count as rent, and the payment orders the law allows, for the deal editor.
+    // The same for every caller; the rules are code (RentLaw), so the answer changes only with a new Lordship.
+    @PreAuthorize("hasAnyAuthority('terms_template:manage_global', 'terms_template:view')")
+    @GetMapping("/rent-laws")
+    public ResponseEntity<RentLawsResponse> rentLaws() {
+        return ResponseEntity.ok(new RentLawsResponse(
+                List.of(ChargeKind.values()),
+                ChargeKind.monthly(),
+                RentLaw.known().stream().map(RentLawResponse::from).toList()));
     }
 
     // Admin-only: the pool properties copy from.
@@ -144,14 +195,15 @@ public class TermsTemplateController {
                 return ResponseEntity.notFound().build();
             }
             return termsTemplateService
-                    .createGlobalTemplateFrom(request.name(), request.agreementType(), request.copyFromId())
+                    .createGlobalTemplateFrom(request.name(), request.agreementType(), request.copyFromId(),
+                            request.state())
                     .map(TermsTemplateResponse::from)
                     .map(created -> ResponseEntity.status(HttpStatus.CREATED).body(created))
                     .orElse(ResponseEntity.notFound().build());
         }
 
         TermsTemplate created =
-                termsTemplateService.createGlobalTemplate(request.name(), request.agreementType());
+                termsTemplateService.createGlobalTemplate(request.name(), request.agreementType(), request.state());
         return ResponseEntity.status(HttpStatus.CREATED).body(TermsTemplateResponse.from(created));
     }
 
