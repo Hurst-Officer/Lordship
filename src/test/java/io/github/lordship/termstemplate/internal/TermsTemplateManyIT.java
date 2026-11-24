@@ -53,9 +53,9 @@ public class TermsTemplateManyIT extends IntegrationTest {
         // and no history is written for them
         String suffix = UUID.randomUUID().toString().substring(0, 8);
         UUID first = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "IT Many First " + suffix, AgreementType.LAND, SystemPrincipal.AGENT_UUID)).uuid();
+                null, "IT Many First " + suffix, AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID)).uuid();
         UUID second = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "IT Many Second " + suffix, AgreementType.LAND, SystemPrincipal.AGENT_UUID)).uuid();
+                null, "IT Many Second " + suffix, AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID)).uuid();
         try {
             // the second template charges no late fee, so "flat" with no amount can only be refused for the second
             termsTemplateRepository.patch(second, Map.of(

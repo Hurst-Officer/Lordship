@@ -420,7 +420,7 @@ public class InstrumentPreviewIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "name": "%s", "agreementType": "%s" }
+                                { "name": "%s", "agreementType": "%s", "state": "WA" }
                                 """.formatted(name, agreementType)))
                 .andExpect(status().isCreated())
                 .andReturn();

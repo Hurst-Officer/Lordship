@@ -451,6 +451,12 @@ CREATE TABLE tenancy_charge_term (
                                      security_deposit_amount   NUMERIC(12,2) NOT NULL CONSTRAINT charge_term_security_deposit_amount_must_not_be_negative CHECK (security_deposit_amount >= 0),
     -- note: security_deposit_amount can be a flat amount OR a multiple
 
+                                     payment_order     TEXT NOT NULL DEFAULT 'RENT_FIRST'
+                                         CONSTRAINT charge_term_payment_order_must_be_known CHECK (payment_order IN ('RENT_FIRST','FEES_FIRST')),
+                                     rent_kinds        charge_kind[] NOT NULL DEFAULT '{RENT}'
+                                         CONSTRAINT charge_term_rent_kinds_must_hold_rent CHECK ('RENT' = ANY (rent_kinds)),
+    -- note: same meaning as terms_template.rent_kinds ("Counts as rent"), copied from the template with the rest
+
                                      status            TEXT NOT NULL DEFAULT 'PROPOSED'
                                          CONSTRAINT charge_term_status_must_be_known CHECK (status IN ('PROPOSED','PENDING','ACTIVE','CANCELLED')),
     -- PROPOSED  - editable, filled in incrementally

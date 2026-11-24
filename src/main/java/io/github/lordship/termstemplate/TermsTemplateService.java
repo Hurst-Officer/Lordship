@@ -5,12 +5,15 @@ import io.github.lordship.audit.AuditContext;
 import io.github.lordship.audit.AuditMapper;
 import io.github.lordship.audit.AuditService;
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.DomainProblem;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.Patches;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.PropertyScope;
+import io.github.lordship.shared.RentLaw;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.termstemplate.internal.TermsTemplateRepository;
@@ -170,38 +173,58 @@ public class TermsTemplateService {
                 .map(TermsTemplateRow::toTermsTemplate);
     }
 
+    // A global template written for the state given, which is required and never changes afterwards.
+    // The payment order and Counts as rent start from that state's law (RentLaw); every other term takes the
+    // database default.
     @Transactional
-    public TermsTemplate createGlobalTemplate(String name, AgreementType agreementType) {
+    public TermsTemplate createGlobalTemplate(String name, AgreementType agreementType, String state) {
+        String lawState = requireState(state);
         requireGlobalNameIsFree(name);
 
+        RentLaw law = RentLaw.of(lawState, agreementType);
         TermsTemplateRow saved = termsTemplateRepository.save(
-                new TermsTemplateRow(null, name, agreementType, ActingAgent.resolve(auditContext)));
+                new TermsTemplateRow(null, name, agreementType, lawState, ActingAgent.resolve(auditContext))
+                        .withRentRules(lawState, law.startingRentKinds(), law.startingPaymentOrder()));
 
         auditService.recordInsert("terms_template", saved.uuid(), AuditMapper.toMap(saved));
         return saved.toTermsTemplate();
     }
 
     // A new global template that starts from another template's terms, or from a property's deal, instead of
-    // the database defaults. The new template takes the name and the agreement type given.
+    // the database defaults. The new template takes the name, the agreement type and the state given; the state
+    // is required, as on a new template.
     // From a property's deal, the two rates are left empty (TermsTemplateRow.copyAsGlobal says why).
+    // The payment order and Counts as rent are kept when the source answers to the same law (the same state and
+    // agreement type). Otherwise they start from the new template's law, as on a new template, because the
+    // source's choices were made under another law.
     // Empty means the source does not exist.
     @Transactional
-    public Optional<TermsTemplate> createGlobalTemplateFrom(String name, AgreementType agreementType, UUID sourceUuid) {
+    public Optional<TermsTemplate> createGlobalTemplateFrom(String name, AgreementType agreementType, UUID sourceUuid,
+                                                            String state) {
         Optional<TermsTemplateRow> sourceOpt = termsTemplateRepository.findById(sourceUuid);
         if (sourceOpt.isEmpty()) {
             return Optional.empty();
         }
+        String lawState = requireState(state);
         requireGlobalNameIsFree(name);
 
-        TermsTemplateRow saved = termsTemplateRepository.saveCopy(
-                sourceOpt.get().copyAsGlobal(name, agreementType, ActingAgent.resolve(auditContext)));
+        TermsTemplateRow source = sourceOpt.get();
+        TermsTemplateRow copy = source.copyAsGlobal(name, agreementType, ActingAgent.resolve(auditContext));
+        boolean sameLaw = lawState.equals(source.state()) && source.agreementType() == agreementType;
+        RentLaw law = RentLaw.of(lawState, agreementType);
+        copy = sameLaw
+                ? copy.withRentRules(lawState, source.rentKinds(), source.paymentOrder())
+                : copy.withRentRules(lawState, law.startingRentKinds(), law.startingPaymentOrder());
+
+        TermsTemplateRow saved = termsTemplateRepository.saveCopy(copy);
 
         auditService.recordInsert("terms_template", saved.uuid(), AuditMapper.toMap(saved));
         return Optional.of(saved.toTermsTemplate());
     }
 
-    // A property gains an agreement type only by an admin copying a global template in.
-    // Empty means the template does not exist.
+    // A property gains an agreement type only by an admin copying a global template in. The deal takes the
+    // template's state, which must be the property's, and keeps that state for good.
+    // Empty means the template or the property does not exist.
     @Transactional
     public Optional<TermsTemplate> copyTemplateToProperty(UUID templateUuid, UUID property) {
         Optional<TermsTemplateRow> templateOpt = termsTemplateRepository.findById(templateUuid);
@@ -215,7 +238,17 @@ public class TermsTemplateService {
         }
         requirePropertyScopeIsFree(property, template.agreementType());
 
-        TermsTemplateRow saved = termsTemplateRepository.saveCopy(template.copyTo(property, ActingAgent.resolve(auditContext)));
+        // A template goes only to a property in the template's state.
+        Optional<String> propertyState = termsTemplateRepository.findPropertyState(property);
+        if (propertyState.isEmpty()) {
+            return Optional.empty();
+        }
+        if (!template.state().equals(propertyState.get())) {
+            throw RuleConflict.of("terms_template.other_state", template.state(), propertyState.get());
+        }
+        TermsTemplateRow copy = template.copyTo(property, ActingAgent.resolve(auditContext));
+
+        TermsTemplateRow saved = termsTemplateRepository.saveCopy(copy);
         auditService.recordInsert("terms_template", saved.uuid(), AuditMapper.toMap(saved));
         return Optional.of(saved.toTermsTemplate());
     }
@@ -238,6 +271,7 @@ public class TermsTemplateService {
         validateDepositCeiling(before, changes);
         reconcileMethodAmountPairs(before, changes);
         reconcileLateFeeTiers(before, changes);
+        reconcileRentRules(before, changes);
 
         Optional<TermsTemplateRow> afterOpt =
                 termsTemplateRepository.patch(uuid, changes);
@@ -510,6 +544,45 @@ public class TermsTemplateService {
         if (!problems.isEmpty()) {
             throw InvalidRequest.withDetails("late_fee_tier.chart_not_valid", problems);
         }
+    }
+
+    /**
+     * Reads the payment order and Counts as rent of a patch, and refuses (400) a result the law of the template's
+     * state does not allow. The result is checked whole (the patch over the template as it is). The state itself
+     * is set when the template or deal is made and is never patched.
+     */
+    private void reconcileRentRules(TermsTemplateRow before, Map<String, Object> changes) {
+        boolean kindsTouched = changes.containsKey("rent_kinds");
+        boolean orderTouched = changes.containsKey("payment_order");
+        if (!kindsTouched && !orderTouched) {
+            return;
+        }
+
+        List<ChargeKind> rentKinds = kindsTouched
+                ? ChargeKind.fromRequest(changes.get("rent_kinds"), "rent_kinds")
+                : before.rentKinds();
+        PaymentOrder paymentOrder = orderTouched
+                ? RentLaw.readPaymentOrder(changes.get("payment_order"), "payment_order")
+                : before.paymentOrder();
+
+        RentLaw.of(before.state(), before.agreementType()).requireAllowed(rentKinds, paymentOrder);
+
+        if (kindsTouched) {
+            changes.put("rent_kinds", rentKinds);
+        }
+        if (orderTouched) {
+            changes.put("payment_order", paymentOrder.name());
+        }
+    }
+
+    // The state a new global template is written for. Refuses (400, on the field) none: a template's state is
+    // the first thing set, because the state's law decides what the template may hold.
+    private static String requireState(String raw) {
+        String state = RentLaw.readState(raw, "state");
+        if (state == null) {
+            throw InvalidRequest.onField("state", "value.required");
+        }
+        return state;
     }
 
     // The patched value when it is a whole number, otherwise the current one.

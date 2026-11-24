@@ -3,6 +3,7 @@ package io.github.lordship.instruments;
 import io.github.lordship.globalsettings.GlobalSettings;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.properties.Property;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.DocumentToken;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
@@ -147,6 +148,44 @@ public final class TokenResolver {
         }
 
         put(out, DocumentToken.CHARGED_UTILITIES, chargedUtilities(term));
+
+        put(out, DocumentToken.PAYMENT_ORDER, term.paymentOrder());
+        put(out, DocumentToken.RENT_KINDS, rentKindWords(term));
+    }
+
+    /**
+     * Counts as rent in a lease's words ("lot rent", "water", "pet fees"), keeping only the kinds this deal
+     * charges: a lease that says water counts as rent when the deal bills no water would state a charge the deal
+     * does not have. Rent itself always prints.
+     */
+    private static List<String> rentKindWords(TenancyChargeTerm term) {
+        List<String> words = new ArrayList<>();
+        for (ChargeKind kind : term.rentKinds()) {
+            if (charges(term, kind)) {
+                words.add(kind.leaseWords(term.agreementType()));
+            }
+        }
+        return words;
+    }
+
+    /**
+     * Whether the deal charges this kind at all. A kind the deal has no setting for (a notice fee, other charges)
+     * counts as charged: nothing on the deal says otherwise.
+     */
+    private static boolean charges(TenancyChargeTerm term, ChargeKind kind) {
+        return switch (kind) {
+            case RENT, NOTICE_FEE, MISC_CHARGE -> true;
+            case WATER -> isCharged(term.waterMethod());
+            case SEWER -> isCharged(term.sewerMethod());
+            case POWER -> isCharged(term.powerMethod());
+            case TRASH -> isCharged(term.trashMethod());
+            case CAR_FEE -> term.carFee() != null && term.carFee().signum() > 0;
+            case PET_FEE -> term.petFee() != null && term.petFee().signum() > 0;
+            case LATE_FEE -> term.lateFeeMethod() != null && term.lateFeeMethod() != FeeMethod.NONE;
+            case NSF_FEE -> term.nsfFeeMethod() != null && term.nsfFeeMethod() != FeeMethod.NONE;
+            case RULE_VIOLATION_FEE ->
+                    term.ruleViolationFeeMethod() != null && term.ruleViolationFeeMethod() != FeeMethod.NONE;
+        };
     }
 
     /** Null when no deposit is taken, so a clause asking for one reports it rather than printing $0.00. */

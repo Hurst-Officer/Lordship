@@ -169,6 +169,15 @@ public enum DocumentToken {
     CHARGED_UTILITIES("term.charged_utilities", Source.COMPUTED, Format.LIST,
             "The utilities this tenant is charged for, derived from the four methods"),
 
+    // Which charges a payment covers first. The MT packet words each order as its own clause.
+    PAYMENT_ORDER("term.payment_order", Source.CHARGE_TERM, Format.ENUM,
+            "RENT_FIRST / FEES_FIRST -- selects which payment clause prints",
+            Set.of("RENT_FIRST", "FEES_FIRST")),
+    // Counts as rent in words, keeping only the kinds this deal charges, so a deal with no water charge
+    // never names water as rent.
+    RENT_KINDS("term.rent_kinds", Source.COMPUTED, Format.LIST,
+            "What counts as rent on this deal, e.g. lot rent, water and sewer"),
+
     AGREEMENT_TYPE("term.agreement_type", Source.CHARGE_TERM, Format.ENUM,
             "LAND / RESIDENTIAL / STORAGE -- selects agreement-specific wording",
             Set.of("RESIDENTIAL", "LAND", "TRANSIENT", "COMMERCIAL", "STORAGE", "UTILITY_SERVICE")),

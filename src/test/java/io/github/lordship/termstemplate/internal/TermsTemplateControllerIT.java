@@ -22,6 +22,7 @@ import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
 
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.*;
@@ -77,7 +78,8 @@ public class TermsTemplateControllerIT extends IntegrationTest {
                         .content("""
                         {
                             "name" : "IT Land Terms",
-                            "agreementType" : "LAND"
+                            "agreementType" : "LAND",
+                            "state" : "WA"
                         }
                         """))
                 // Assert
@@ -112,7 +114,8 @@ public class TermsTemplateControllerIT extends IntegrationTest {
                         .content("""
                         {
                             "name" : "Standard Manufactured Home Lot Terms",
-                            "agreementType" : "LAND"
+                            "agreementType" : "LAND",
+                            "state" : "WA"
                         }
                         """))
                 // Assert -- the name is a global template's identity
@@ -574,6 +577,98 @@ public class TermsTemplateControllerIT extends IntegrationTest {
                 .andExpect(status().isNotFound());
     }
 
+    // ── State law: payment order and Counts as rent ──────────────────────────
+
+    @Test
+    void rentLaws_shouldListEveryKindOfCharge_andTheLawsLordshipKnows() throws Exception {
+        // Arrange
+        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+
+        // Act
+        mockMvc.perform(get("/api/terms-templates/rent-laws")
+                        .header("Authorization", "Bearer " + token))
+                // Assert -- what Glade's Counts as rent box offers comes from here
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.chargeKinds.length()").value(12))
+                .andExpect(jsonPath("$.monthlyKinds.length()").value(7))
+                .andExpect(jsonPath("$.laws[?(@.state == 'WA' && @.agreementType == 'LAND')].paymentOrders[*]")
+                        .value(contains("RENT_FIRST")))
+                .andExpect(jsonPath("$.laws[?(@.state == 'WA' && @.agreementType == 'LAND')].paymentOrderByPolicy")
+                        .value(contains(true)))
+                .andExpect(jsonPath("$.laws[?(@.state == 'MT' && @.agreementType == 'LAND')].startingPaymentOrder")
+                        .value(hasItem("FEES_FIRST")));
+    }
+
+    @Test
+    void patchDeal_shouldKeepAWashingtonDealWithinWashingtonLaw() throws Exception {
+        // Arrange -- a Washington template, copied to a property in Washington (TestDataSupport)
+        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+        UUID templateId = createTemplate(token, "IT Rent Rules Source", "LAND");
+        UUID deal = dealAt(token, templateId, "QR");
+
+        // Act / Assert -- a monthly charge may count as rent; the deal keeps rent first, and the deal's state,
+        // set when the deal was made, is never patched
+        patchTemplate(token, deal, """
+                {
+                    "rentKinds" : ["WATER", "RENT"],
+                    "state" : "MT"
+                }
+                """)
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paymentOrder").value("RENT_FIRST"))
+                .andExpect(jsonPath("$.rentKinds[*]").value(contains("RENT", "WATER")))
+                .andExpect(jsonPath("$.state").value("WA"));
+
+        // a late fee never counts as rent in Washington
+        patchTemplate(token, deal, """
+                {
+                    "rentKinds" : ["RENT", "LATE_FEE"]
+                }
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("rent_kinds.not_allowed_in_state"));
+
+        // and a payment goes to rent first, by company policy
+        patchTemplate(token, deal, """
+                {
+                    "paymentOrder" : "FEES_FIRST"
+                }
+                """)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("payment_order.not_allowed_by_policy"));
+    }
+
+    @Test
+    void createGlobalTemplate_shouldStartFromItsStatesLaw_andGoOnlyToThatState() throws Exception {
+        // Arrange
+        String token = TestAuthSupport.loginAsRoot(mockMvc, objectMapper, rootEmail, rootPassword);
+
+        // Act -- a template written for Montana
+        MvcResult created = mockMvc.perform(post("/api/terms-templates/global")
+                        .header("Authorization", "Bearer " + token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                        {
+                            "name" : "IT Montana Lots",
+                            "agreementType" : "LAND",
+                            "state" : "mt"
+                        }
+                        """))
+                // Assert -- as the MT packet reads: every charge counts as rent, fees first
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.state").value("MT"))
+                .andExpect(jsonPath("$.paymentOrder").value("FEES_FIRST"))
+                .andExpect(jsonPath("$.rentKinds.length()").value(12))
+                .andReturn();
+        UUID templateId = UUID.fromString(JsonPath.read(created.getResponse().getContentAsString(), "$.id"));
+
+        // a Montana template does not go to a Washington property
+        PropertyRow washington = testData.insertProperty("QW");
+        copyToProperty(token, templateId, washington.uuid())
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("terms_template.other_state"));
+    }
+
     @Test
     void listGlobalTemplates_shouldBeRejected_whenNoTokenProvided() throws Exception {
         mockMvc.perform(get("/api/terms-templates/global"))
@@ -589,7 +684,8 @@ public class TermsTemplateControllerIT extends IntegrationTest {
                         .content(String.format("""
                         {
                             "name" : "%s",
-                            "agreementType" : "%s"
+                            "agreementType" : "%s",
+                            "state" : "WA"
                         }
                         """, name, agreementType)))
                 .andExpect(status().isCreated())
@@ -625,7 +721,8 @@ public class TermsTemplateControllerIT extends IntegrationTest {
                         {
                             "name" : "%s",
                             "agreementType" : "%s",
-                            "copyFromId" : "%s"
+                            "copyFromId" : "%s",
+                            "state" : "WA"
                         }
                         """, name, agreementType, copyFromId)));
     }

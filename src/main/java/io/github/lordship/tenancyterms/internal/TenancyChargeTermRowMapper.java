@@ -1,8 +1,10 @@
 package io.github.lordship.tenancyterms.internal;
 
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancyterms.TenancyTermSource;
@@ -62,6 +64,9 @@ public class TenancyChargeTermRowMapper implements RowMapper<TenancyChargeTermRo
 
                 enumOf(SecurityDepositMethod.class, rs.getString("security_deposit_method")),
                 rs.getBigDecimal("security_deposit_amount"),
+
+                enumOf(PaymentOrder.class, rs.getString("payment_order")),
+                ChargeKind.fromDatabase(rs.getString("rent_kinds")),
 
                 enumOf(TenancyTermStatus.class, rs.getString("status")),
                 enumOf(TenancyTermSource.class, rs.getString("source")),

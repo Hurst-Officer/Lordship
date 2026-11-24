@@ -99,7 +99,7 @@ public class DocumentTemplateControllerIT extends IntegrationTest {
                 .andExpect(jsonPath("$.sections.length()").value(8))
                 .andExpect(jsonPath("$.sections[0].sectionKey").value("CHECKLIST"))
                 .andExpect(jsonPath("$.sections[7].sectionKey").value("SEPTIC"))
-                .andExpect(jsonPath("$.conditionWorklist.length()").value(11)); // changes if we add elements
+                .andExpect(jsonPath("$.conditionWorklist.length()").value(12)); // changes if we add elements
     }
 
     // The list view drops children on purpose: sixty clause bodies per row is

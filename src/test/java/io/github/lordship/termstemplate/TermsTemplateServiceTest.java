@@ -50,7 +50,8 @@ public class TermsTemplateServiceTest {
         when(termsTemplateRepository.save(any())).thenReturn(stubRow);
 
         // Act
-        TermsTemplate result = termsTemplateService.createGlobalTemplate("WA Land Lease 2026", AgreementType.LAND);
+        TermsTemplate result =
+                termsTemplateService.createGlobalTemplate("WA Land Lease 2026", AgreementType.LAND, "WA");
 
         // Assert
         assertEquals("WA Land Lease 2026", result.name());
@@ -66,7 +67,7 @@ public class TermsTemplateServiceTest {
         when(termsTemplateRepository.save(any())).thenReturn(stubRow);
 
         // Act
-        termsTemplateService.createGlobalTemplate("WA Land Lease 2026", AgreementType.LAND);
+        termsTemplateService.createGlobalTemplate("WA Land Lease 2026", AgreementType.LAND, "WA");
 
         // Assert
         verify(termsTemplateRepository).save(argThat(
@@ -81,7 +82,20 @@ public class TermsTemplateServiceTest {
 
         // Act / Assert
         assertThrows(IllegalStateException.class,
-                () -> termsTemplateService.createGlobalTemplate("WA Land Lease 2026", AgreementType.LAND));
+                () -> termsTemplateService.createGlobalTemplate("WA Land Lease 2026", AgreementType.LAND, "WA"));
+        verify(termsTemplateRepository, never()).save(any());
+        verifyNoInteractions(auditService);
+    }
+
+    @Test
+    void createGlobalTemplate_shouldRefuse_whenNoStateIsGiven() {
+        // Act -- the state comes first: the state's law decides what the template may hold
+        InvalidRequest refused = assertThrows(InvalidRequest.class,
+                () -> termsTemplateService.createGlobalTemplate("Land Lease 2026", AgreementType.LAND, " "));
+
+        // Assert
+        assertEquals("value.required", refused.problem().code());
+        assertEquals("state", refused.problem().field());
         verify(termsTemplateRepository, never()).save(any());
         verifyNoInteractions(auditService);
     }
@@ -143,6 +157,7 @@ public class TermsTemplateServiceTest {
         when(termsTemplateRepository.findById(templateRow.uuid())).thenReturn(Optional.of(templateRow));
         when(termsTemplateRepository.findByPropertyAndAgreementType(property, AgreementType.LAND))
                 .thenReturn(Optional.empty());
+        when(termsTemplateRepository.findPropertyState(property)).thenReturn(Optional.of("WA"));
         when(termsTemplateRepository.saveCopy(any()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -614,9 +629,114 @@ public class TermsTemplateServiceTest {
         verifyNoInteractions(auditService);
     }
 
+    // ── State law: payment order and Counts as rent ──────────────────────────
+
+    @Test
+    void patchTermsTemplate_shouldRefuseALateFeeAsRent_onAWashingtonDeal() {
+        // Arrange -- a property's deal follows the law of its own state, set when the deal was made
+        TermsTemplateRow before = atProperty(
+                template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND), UUID.randomUUID());
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("rent_kinds", List.of("RENT", "LATE_FEE"));
+
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class,
+                () -> termsTemplateService.patchTermsTemplate(before.uuid(), changes));
+
+        // Assert -- RCW 59.20.030(25) keeps late fees out of rent
+        assertEquals("rent_kinds.not_allowed_in_state", refused.problem().code());
+        assertEquals("rent_kinds", refused.problem().field());
+        verify(termsTemplateRepository, never()).patch(any(), any());
+    }
+
+    @Test
+    void patchTermsTemplate_shouldAcceptFeesFirstAndLateFeesAsRent_onAMontanaDeal() {
+        // Arrange -- Montana counts every charge as rent and allows either payment order
+        TermsTemplateRow before = atProperty(
+                template(UUID.randomUUID(), "MT Land Lease 2026", AgreementType.LAND), UUID.randomUUID())
+                .withRentRules("MT", List.of(ChargeKind.RENT), PaymentOrder.RENT_FIRST);
+        when(termsTemplateRepository.findById(before.uuid())).thenReturn(Optional.of(before));
+        when(termsTemplateRepository.patch(eq(before.uuid()), any())).thenReturn(Optional.of(before));
+
+        Map<String, Object> changes = new HashMap<>();
+        changes.put("rent_kinds", List.of("late_fee", "RENT"));
+        changes.put("payment_order", "fees_first");
+
+        // Act
+        termsTemplateService.patchTermsTemplate(before.uuid(), changes);
+
+        // Assert -- the repository is handed the kinds as read, in declaration order, and the order's name
+        verify(termsTemplateRepository).patch(eq(before.uuid()), argThat(map ->
+                List.of(ChargeKind.RENT, ChargeKind.LATE_FEE).equals(map.get("rent_kinds"))
+                        && "FEES_FIRST".equals(map.get("payment_order"))));
+    }
+
+    @Test
+    void copyTemplateToProperty_shouldKeepTheTemplatesState_andItsRentRules() {
+        // Arrange -- a Montana template, as the MT packet reads: every charge is rent, fees first
+        UUID property = UUID.randomUUID();
+        TermsTemplateRow templateRow = template(UUID.randomUUID(), "MT Land Lease 2026", AgreementType.LAND)
+                .withRentRules("MT", List.of(ChargeKind.values()), PaymentOrder.FEES_FIRST);
+        when(termsTemplateRepository.findById(templateRow.uuid())).thenReturn(Optional.of(templateRow));
+        when(termsTemplateRepository.findByPropertyAndAgreementType(property, AgreementType.LAND))
+                .thenReturn(Optional.empty());
+        when(termsTemplateRepository.findPropertyState(property)).thenReturn(Optional.of("MT"));
+        when(termsTemplateRepository.saveCopy(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // Act
+        termsTemplateService.copyTemplateToProperty(templateRow.uuid(), property);
+
+        // Assert -- the deal's state is set here, from the template, and is never patched afterwards
+        verify(termsTemplateRepository).saveCopy(argThat(copy ->
+                "MT".equals(copy.state())
+                        && copy.paymentOrder() == PaymentOrder.FEES_FIRST
+                        && copy.rentKinds().equals(List.of(ChargeKind.values()))));
+    }
+
+    @Test
+    void copyTemplateToProperty_shouldRefuse_whenTheTemplateIsWrittenForAnotherState() {
+        // Arrange -- a Washington template and a Montana property
+        UUID property = UUID.randomUUID();
+        TermsTemplateRow templateRow = template(UUID.randomUUID(), "WA Land Lease 2026", AgreementType.LAND);
+        when(termsTemplateRepository.findById(templateRow.uuid())).thenReturn(Optional.of(templateRow));
+        when(termsTemplateRepository.findByPropertyAndAgreementType(property, AgreementType.LAND))
+                .thenReturn(Optional.empty());
+        when(termsTemplateRepository.findPropertyState(property)).thenReturn(Optional.of("MT"));
+
+        // Act
+        RuleConflict refused = assertThrows(RuleConflict.class,
+                () -> termsTemplateService.copyTemplateToProperty(templateRow.uuid(), property));
+
+        // Assert
+        assertEquals("terms_template.other_state", refused.problem().code());
+        verify(termsTemplateRepository, never()).saveCopy(any());
+    }
+
+    @Test
+    void createGlobalTemplateFrom_shouldStartOver_whenTheNewTemplateIsForAnotherState() {
+        // Arrange -- a Montana deal: every charge counts as rent, fees first
+        TermsTemplateRow montanaDeal = atProperty(
+                template(UUID.randomUUID(), "MT Land Lease 2026", AgreementType.LAND), UUID.randomUUID())
+                .withRentRules("MT", List.of(ChargeKind.values()), PaymentOrder.FEES_FIRST);
+        when(termsTemplateRepository.findById(montanaDeal.uuid())).thenReturn(Optional.of(montanaDeal));
+        when(termsTemplateRepository.saveCopy(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        // Act
+        termsTemplateService.createGlobalTemplateFrom(
+                "WA Land From MT", AgreementType.LAND, montanaDeal.uuid(), "WA");
+
+        // Assert -- the Montana choices were made under another law, so the template takes Washington's
+        verify(termsTemplateRepository).saveCopy(argThat(copy ->
+                "WA".equals(copy.state())
+                        && copy.paymentOrder() == PaymentOrder.RENT_FIRST
+                        && copy.rentKinds().equals(List.of(ChargeKind.RENT))));
+    }
+
     // ── Fixtures ─────────────────────────────────────────────────────────────
 
-    /** A global template carrying the V1 defaults, as the database would return it. */
+    /** A global Washington template carrying the V1 defaults, as the database would return it. */
     private static TermsTemplateRow template(UUID uuid, String name, AgreementType agreementType) {
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         return new TermsTemplateRow(
@@ -633,6 +753,7 @@ public class TermsTemplateServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 SecurityDepositMethod.NONE, BigDecimal.ZERO,
+                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), "WA", // payment order, rent kinds, state
                 null, now, now, SystemPrincipal.AGENT_UUID, null);
     }
 
@@ -651,6 +772,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 row.securityDepositMethod(), row.securityDepositAmount(),
+                row.paymentOrder(), row.rentKinds(), row.state(),
                 row.note(), row.createdAt(), updatedAt, row.createdBy(), row.deletedAt());
     }
 
@@ -669,6 +791,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 row.securityDepositMethod(), row.securityDepositAmount(),
+                row.paymentOrder(), row.rentKinds(), row.state(),
                 row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
     }
 
@@ -688,6 +811,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 row.securityDepositMethod(), row.securityDepositAmount(),
+                row.paymentOrder(), row.rentKinds(), row.state(),
                 row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
     }
 
@@ -707,6 +831,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 method, amount,
+                row.paymentOrder(), row.rentKinds(), row.state(),
                 row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
     }
 
@@ -823,6 +948,7 @@ public class TermsTemplateServiceTest {
         when(termsTemplateRepository.findById(global.uuid())).thenReturn(Optional.of(global));
         when(termsTemplateRepository.findByPropertyAndAgreementType(property, AgreementType.RESIDENTIAL))
                 .thenReturn(Optional.empty());
+        when(termsTemplateRepository.findPropertyState(property)).thenReturn(Optional.of("WA"));
         when(termsTemplateRepository.saveCopy(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // Act
@@ -945,7 +1071,7 @@ public class TermsTemplateServiceTest {
 
         // Act
         Optional<TermsTemplate> made = termsTemplateService.createGlobalTemplateFrom(
-                "ID Land Lease 2026", AgreementType.LAND, source.uuid());
+                "ID Land Lease 2026", AgreementType.LAND, source.uuid(), "ID");
 
         // Assert -- a template of the template: no property, and copiedFrom stays empty as on every global
         assertTrue(made.isPresent());
@@ -975,7 +1101,8 @@ public class TermsTemplateServiceTest {
         when(termsTemplateRepository.saveCopy(any())).thenAnswer(inv -> inv.getArgument(0));
 
         // Act
-        termsTemplateService.createGlobalTemplateFrom("ID Land Lease 2026", AgreementType.STORAGE, deal.uuid());
+        termsTemplateService.createGlobalTemplateFrom(
+                "ID Land Lease 2026", AgreementType.STORAGE, deal.uuid(), "ID");
 
         // Assert -- every term but the two rates, under the kind asked for
         verify(termsTemplateRepository).saveCopy(argThat(row ->
@@ -996,7 +1123,7 @@ public class TermsTemplateServiceTest {
 
         // Act
         Optional<TermsTemplate> made = termsTemplateService.createGlobalTemplateFrom(
-                "ID Land Lease 2026", AgreementType.LAND, unknownUUID);
+                "ID Land Lease 2026", AgreementType.LAND, unknownUUID, "ID");
 
         // Assert
         assertTrue(made.isEmpty());
@@ -1014,7 +1141,7 @@ public class TermsTemplateServiceTest {
 
         // Act / Assert
         assertThrows(IllegalStateException.class, () -> termsTemplateService.createGlobalTemplateFrom(
-                "OR Land Lease 2026", AgreementType.LAND, source.uuid()));
+                "OR Land Lease 2026", AgreementType.LAND, source.uuid(), "OR"));
         verify(termsTemplateRepository, never()).saveCopy(any());
         verifyNoInteractions(auditService);
     }
@@ -1103,6 +1230,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 row.securityDepositMethod(), row.securityDepositAmount(),
+                row.paymentOrder(), row.rentKinds(), row.state(),
                 row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
     }
 }

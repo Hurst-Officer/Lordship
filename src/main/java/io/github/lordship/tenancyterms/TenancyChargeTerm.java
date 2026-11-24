@@ -1,8 +1,10 @@
 package io.github.lordship.tenancyterms;
 
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 
@@ -54,6 +56,9 @@ public record TenancyChargeTerm(
 
         SecurityDepositMethod securityDepositMethod,
         BigDecimal securityDepositAmount,
+
+        PaymentOrder paymentOrder,  // which charges a payment covers first
+        List<ChargeKind> rentKinds, // "Counts as rent"; always holds RENT
 
         TenancyTermStatus status,
         TenancyTermSource source,

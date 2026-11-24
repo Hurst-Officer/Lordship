@@ -74,10 +74,10 @@ public class TermsTemplateScopeIT extends IntegrationTest {
 
         // Fixtures go in through the repository, as in TermsTemplateRepositoryTest
         TermsTemplateRow template = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "Scope Land Terms", AgreementType.LAND, SystemPrincipal.AGENT_UUID));
+                null, "Scope Land Terms", AgreementType.LAND, "WA", SystemPrincipal.AGENT_UUID));
         templateId = template.uuid();
         storageTemplateId = termsTemplateRepository.save(new TermsTemplateRow(
-                null, "Scope Storage Terms", AgreementType.STORAGE, SystemPrincipal.AGENT_UUID)).uuid();
+                null, "Scope Storage Terms", AgreementType.STORAGE, "WA", SystemPrincipal.AGENT_UUID)).uuid();
         dealA = termsTemplateRepository.saveCopy(template.copyTo(parkA, SystemPrincipal.AGENT_UUID)).uuid();
         dealB = termsTemplateRepository.saveCopy(template.copyTo(parkB, SystemPrincipal.AGENT_UUID)).uuid();
 
@@ -265,7 +265,7 @@ public class TermsTemplateScopeIT extends IntegrationTest {
                 .header("Authorization", "Bearer " + token)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""
-                        { "name": "%s", "agreementType": "LAND", "copyFromId": "%s" }
+                        { "name": "%s", "agreementType": "LAND", "copyFromId": "%s", "state": "WA" }
                         """.formatted(name, copyFromId)));
     }
 }

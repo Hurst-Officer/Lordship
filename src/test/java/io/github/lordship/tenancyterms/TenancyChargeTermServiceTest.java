@@ -337,6 +337,23 @@ public class TenancyChargeTermServiceTest {
     }
 
     @Test
+    void patchChargeTerm_shouldRefuseALateFeeAsRent_inWashington() {
+        // Arrange -- the terms were seeded from a Washington deal, and late fees are never rent in Washington
+        UUID uuid = UUID.randomUUID();
+        when(tenancyChargeTermRepository.findById(uuid))
+                .thenReturn(Optional.of(row(uuid, TenancyTermStatus.PROPOSED)));
+        when(tenancyChargeTermRepository.findLawState(TENANCY, TEMPLATE)).thenReturn(Optional.of("WA"));
+
+        // Act
+        InvalidRequest refused = assertThrows(InvalidRequest.class, () -> tenancyChargeTermService.patchChargeTerm(
+                uuid, changes("rent_kinds", List.of("RENT", "LATE_FEE"))));
+
+        // Assert -- refused at once, like a method the column does not take, not held for submission
+        assertEquals("rent_kinds.not_allowed_in_state", refused.problem().code());
+        verify(tenancyChargeTermRepository, never()).patch(any(), any());
+    }
+
+    @Test
     void patchChargeTerm_shouldRejectSubmeteredTrash() {
         // Arrange -- trash is collected per container; there is nothing to meter
         UUID uuid = UUID.randomUUID();
@@ -1149,6 +1166,7 @@ public class TenancyChargeTermServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 SecurityDepositMethod.NONE, BigDecimal.ZERO,
+                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), "WA", // payment order, rent kinds, state
                 null, now, now, SystemPrincipal.AGENT_UUID, null);
     }
 
@@ -1343,6 +1361,7 @@ public class TenancyChargeTermServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,      // sewer
                 UtilityMethod.NONE, BigDecimal.ZERO,      // trash
                 securityDepositMethod, securityDepositAmount, // security deposit
+                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), // payment order, rent kinds
                 status,
                 source,
                 sourceUuid,

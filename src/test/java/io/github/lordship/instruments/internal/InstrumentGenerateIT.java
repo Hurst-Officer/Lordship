@@ -406,7 +406,7 @@ public class InstrumentGenerateIT extends IntegrationTest {
                         .header("Authorization", "Bearer " + token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "name": "GN Land Terms", "agreementType": "LAND" }
+                                { "name": "GN Land Terms", "agreementType": "LAND", "state": "WA" }
                                 """))
                 .andExpect(status().isCreated())
                 .andReturn();

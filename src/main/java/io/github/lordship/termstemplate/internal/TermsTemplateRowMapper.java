@@ -1,8 +1,10 @@
 package io.github.lordship.termstemplate.internal;
 
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import org.springframework.jdbc.core.RowMapper;
@@ -65,6 +67,10 @@ public class TermsTemplateRowMapper implements RowMapper<TermsTemplateRow> {
 
                 enumOf(SecurityDepositMethod.class, rs.getString("security_deposit_method")),
                 rs.getBigDecimal("security_deposit_amount"),
+
+                enumOf(PaymentOrder.class, rs.getString("payment_order")),
+                ChargeKind.fromDatabase(rs.getString("rent_kinds")),
+                rs.getString("state"),
 
                 rs.getString("note"),
                 rs.getObject("created_at", OffsetDateTime.class),

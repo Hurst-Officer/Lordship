@@ -1,8 +1,10 @@
 package io.github.lordship.tenancyterms.internal;
 
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
+import io.github.lordship.shared.PaymentOrder;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
@@ -61,6 +63,9 @@ public record TenancyChargeTermRow(
         SecurityDepositMethod securityDepositMethod,
         BigDecimal securityDepositAmount,
 
+        PaymentOrder paymentOrder,  // which charges a payment covers first
+        List<ChargeKind> rentKinds, // "Counts as rent"; always holds RENT
+
         TenancyTermStatus status,
         TenancyTermSource source,
         UUID sourceUuid,    // the document this term was written for; null for MIGRATION and CORRECTION
@@ -90,6 +95,7 @@ public record TenancyChargeTermRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
+                paymentOrder, rentKinds,
                 status, source, sourceUuid, termsTemplate, correctionReason,
                 cancelledAt, cancelledBy, cancelReason, deletedAt,
                 note, createdAt, createdBy
@@ -140,6 +146,8 @@ public record TenancyChargeTermRow(
                 template.trashFlatAmount(),
                 template.securityDepositMethod(),
                 template.securityDepositAmount(),
+                template.paymentOrder(),
+                template.rentKinds(),
                 TenancyTermStatus.PROPOSED,
                 source,
                 sourceUuid,
@@ -192,6 +200,8 @@ public record TenancyChargeTermRow(
                 from.trashFlatAmount(),
                 from.securityDepositMethod(),
                 from.securityDepositAmount(),
+                from.paymentOrder(),
+                from.rentKinds(),
                 TenancyTermStatus.PROPOSED,
                 from.source(),
                 from.sourceUuid(),
@@ -218,6 +228,7 @@ public record TenancyChargeTermRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
+                paymentOrder, rentKinds,
                 status, source, sourceUuid, termsTemplate, reason,
                 cancelledAt, cancelledBy, cancelReason, deletedAt,
                 note, createdAt, createdBy);

@@ -1,5 +1,6 @@
 package io.github.lordship.tenancyterms.internal;
 
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.tenancyterms.ChargeTermConfiguration;
 import io.github.lordship.tenancyterms.RentHistoryYear;
@@ -34,6 +35,7 @@ public class TenancyChargeTermRepository {
             "sewer_method", "sewer_flat_amount",
             "trash_method", "trash_flat_amount",
             "security_deposit_method", "security_deposit_amount",
+            "payment_order", "rent_kinds",
             "note"
     );
 
@@ -69,10 +71,10 @@ public class TenancyChargeTermRepository {
             SELECT CAST(agreement_type AS text) AS agreement_type,
                    late_fee_method, nsf_fee_method, rule_violation_fee_method,
                    water_method, power_method, sewer_method, trash_method,
-                   security_deposit_method,
+                   security_deposit_method, payment_order,
                    COUNT(*)::int AS tenancy_count
               FROM in_force
-             GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9
+             GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
              ORDER BY tenancy_count DESC
             """)
                 .param("propertyId", propertyId)
@@ -156,6 +158,7 @@ public class TenancyChargeTermRepository {
                     sewer_method, sewer_flat_amount,
                     trash_method, trash_flat_amount,
                     security_deposit_method, security_deposit_amount,
+                    payment_order, rent_kinds,
                     status, source, source_uuid, terms_template, correction_reason,
                     note, created_by
                 ) VALUES (
@@ -170,6 +173,7 @@ public class TenancyChargeTermRepository {
                     :sewerMethod, :sewerFlatAmount,
                     :trashMethod, :trashFlatAmount,
                     :securityDepositMethod, :securityDepositAmount,
+                    :paymentOrder, CAST(:rentKinds AS charge_kind[]),
                     :status, :source, :sourceUuid, :termsTemplate, :correctionReason,
                     :note, :createdBy
                 ) RETURNING *
@@ -202,6 +206,8 @@ public class TenancyChargeTermRepository {
                 .param("trashFlatAmount", row.trashFlatAmount())
                 .param("securityDepositMethod", nameOf(row.securityDepositMethod()))
                 .param("securityDepositAmount", row.securityDepositAmount())
+                .param("paymentOrder", nameOf(row.paymentOrder()))
+                .param("rentKinds", ChargeKind.toDatabase(row.rentKinds()))
                 .param("status", nameOf(row.status()))
                 .param("source", nameOf(row.source()))
                 .param("sourceUuid", row.sourceUuid())
@@ -211,6 +217,25 @@ public class TenancyChargeTermRepository {
                 .param("createdBy", row.createdBy())
                 .query(rowMapper)
                 .single();
+    }
+
+    // The state whose law a tenancy's terms answer to: the state of the deal (terms_template) the terms were
+    // seeded from, which never changes. Terms seeded from no deal (a migration) answer to the state the tenancy's
+    // lot is in (the property's property_state). Empty for an unknown tenancy with no deal.
+    public Optional<String> findLawState(UUID tenancy, UUID termsTemplate) {
+        return jdbc.sql("""
+                SELECT COALESCE(
+                         (SELECT tt.state FROM terms_template tt WHERE tt.uuid = :termsTemplate),
+                         (SELECT p.property_state
+                            FROM tenancy t
+                            JOIN lot l      ON l.uuid = t.lot_id
+                            JOIN property p ON p.uuid = l.property_id
+                           WHERE t.uuid = :tenancy))
+                """)
+                .param("tenancy", tenancy)
+                .param("termsTemplate", termsTemplate)
+                .query(String.class)
+                .optional();
     }
 
     public Optional<TenancyChargeTermRow> findById(UUID uuid) {
@@ -266,6 +291,9 @@ public class TenancyChargeTermRepository {
             if (col.equals("late_fee_tiers")) {
                 // The service hands over a List<LateFeeTier>. It is stored as JSONB.
                 sql.append(col).append(" = CAST(:").append(col).append(" AS jsonb), ");
+            } else if (col.equals("rent_kinds")) {
+                // The service hands over a List<ChargeKind>. It is stored as a charge_kind[].
+                sql.append(col).append(" = CAST(:").append(col).append(" AS charge_kind[]), ");
             } else {
                 sql.append(col).append(" = :").append(col).append(", ");
             }
@@ -280,6 +308,9 @@ public class TenancyChargeTermRepository {
         if (params.get("late_fee_tiers") instanceof List<?> tiers) {
             params.put("late_fee_tiers", LateFeeTier.toJson(
                     tiers.stream().map(LateFeeTier.class::cast).toList()));
+        }
+        if (params.get("rent_kinds") instanceof List<?> kinds) {
+            params.put("rent_kinds", ChargeKind.toDatabase(kinds));
         }
 
         return jdbc.sql(sql.toString())

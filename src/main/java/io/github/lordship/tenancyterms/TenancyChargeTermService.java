@@ -7,8 +7,11 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.lots.Lot;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.shared.AgreementType;
+import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.DomainProblem;
 import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.PaymentOrder;
+import io.github.lordship.shared.RentLaw;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
@@ -362,6 +365,7 @@ public class TenancyChargeTermService {
     private Optional<TenancyChargeTermRow> patchOne(TenancyChargeTermRow before, Map<String, Object> changes) {
         reconcileMethodAmountPairs(before, changes);
         reconcileLateFeeTiers(before, changes);
+        reconcileRentRules(before, changes);
 
         Optional<TenancyChargeTermRow> afterOpt = tenancyChargeTermRepository.patch(before.uuid(), changes);
         if (afterOpt.isEmpty()) {
@@ -825,6 +829,37 @@ public class TenancyChargeTermService {
 
         if (!FeeMethod.TIERED.name().equals(method)) {
             changes.put("late_fee_tiers", List.of());
+        }
+    }
+
+    /**
+     * Reads the payment order and Counts as rent of a patch, and refuses (400) what the law of the terms' state
+     * does not allow (RentLaw): the state of the deal the terms were seeded from. Refused at once rather than at
+     * submission, like a method the column does not take: no further editing makes a kind the law keeps out of
+     * rent into rent.
+     */
+    private void reconcileRentRules(TenancyChargeTermRow before, Map<String, Object> changes) {
+        boolean kindsTouched = changes.containsKey("rent_kinds");
+        boolean orderTouched = changes.containsKey("payment_order");
+        if (!kindsTouched && !orderTouched) {
+            return;
+        }
+
+        List<ChargeKind> rentKinds = kindsTouched
+                ? ChargeKind.fromRequest(changes.get("rent_kinds"), "rent_kinds")
+                : before.rentKinds();
+        PaymentOrder paymentOrder = orderTouched
+                ? RentLaw.readPaymentOrder(changes.get("payment_order"), "payment_order")
+                : before.paymentOrder();
+
+        String state = tenancyChargeTermRepository.findLawState(before.tenancy(), before.termsTemplate()).orElse(null);
+        RentLaw.of(state, before.agreementType()).requireAllowed(rentKinds, paymentOrder);
+
+        if (kindsTouched) {
+            changes.put("rent_kinds", rentKinds);
+        }
+        if (orderTouched) {
+            changes.put("payment_order", paymentOrder.name());
         }
     }
 
