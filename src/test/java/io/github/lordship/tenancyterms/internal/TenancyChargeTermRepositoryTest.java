@@ -629,6 +629,7 @@ public class TenancyChargeTermRepositoryTest extends IntegrationTest {
                 UtilityMethod.RUBS, new BigDecimal("304.00"),
                 SecurityDepositMethod.FLAT, new BigDecimal("101.00"),
                 PaymentOrder.FEES_FIRST, List.of(ChargeKind.RENT, ChargeKind.WATER),
+                RentStarts.NEXT_FIRST,
                 TenancyTermStatus.PROPOSED,
                 TenancyTermSource.CORRECTION,
                 null,

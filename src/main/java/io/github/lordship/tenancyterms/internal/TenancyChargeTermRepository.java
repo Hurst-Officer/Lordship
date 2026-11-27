@@ -158,7 +158,7 @@ public class TenancyChargeTermRepository {
                     sewer_method, sewer_flat_amount,
                     trash_method, trash_flat_amount,
                     security_deposit_method, security_deposit_amount,
-                    payment_order, rent_kinds,
+                    payment_order, rent_kinds, rent_starts,
                     status, source, source_uuid, terms_template, correction_reason,
                     note, created_by
                 ) VALUES (
@@ -173,7 +173,7 @@ public class TenancyChargeTermRepository {
                     :sewerMethod, :sewerFlatAmount,
                     :trashMethod, :trashFlatAmount,
                     :securityDepositMethod, :securityDepositAmount,
-                    :paymentOrder, CAST(:rentKinds AS charge_kind[]),
+                    :paymentOrder, CAST(:rentKinds AS charge_kind[]), :rentStarts,
                     :status, :source, :sourceUuid, :termsTemplate, :correctionReason,
                     :note, :createdBy
                 ) RETURNING *
@@ -208,6 +208,7 @@ public class TenancyChargeTermRepository {
                 .param("securityDepositAmount", row.securityDepositAmount())
                 .param("paymentOrder", nameOf(row.paymentOrder()))
                 .param("rentKinds", ChargeKind.toDatabase(row.rentKinds()))
+                .param("rentStarts", nameOf(row.rentStarts()))
                 .param("status", nameOf(row.status()))
                 .param("source", nameOf(row.source()))
                 .param("sourceUuid", row.sourceUuid())

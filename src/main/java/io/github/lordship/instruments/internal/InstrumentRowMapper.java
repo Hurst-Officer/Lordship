@@ -55,6 +55,7 @@ public class InstrumentRowMapper implements RowMapper<InstrumentRow> {
 
                 rs.getObject("returned_on", LocalDate.class),
                 rs.getObject("returned_file", UUID.class),
+                rs.getObject("signed_on", LocalDate.class),
 
                 rs.getString("note"),
                 rs.getObject("created_at", OffsetDateTime.class),

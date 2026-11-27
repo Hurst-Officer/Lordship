@@ -34,6 +34,7 @@ import org.springframework.http.MediaType;
 
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -172,13 +173,14 @@ public class InstrumentController {
     // page breaks are the ones that will print. Nothing is saved.
     @PreAuthorize("hasAuthority('instrument:view')")
     @GetMapping(value = "/{uuid}/preview.pdf", produces = MediaType.APPLICATION_PDF_VALUE)
+    // Named as the office names a draft's file: "CD Lot 14 Lease Draft Lopez.pdf" (PaperName).
     public ResponseEntity<byte[]> previewPdf(@PathVariable UUID uuid) {
-        return instrumentService.previewPdf(uuid)
+        return instrumentService.previewPdfNamed(uuid)
                 .map(pdf -> ResponseEntity.ok()
                         .contentType(MediaType.APPLICATION_PDF)
-                        .header(HttpHeaders.CONTENT_DISPOSITION,
-                                ContentDisposition.inline().filename("preview.pdf").build().toString())
-                        .body(pdf))
+                        .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline()
+                                .filename(pdf.fileName(), StandardCharsets.UTF_8).build().toString())
+                        .body(pdf.content()))
                 .orElse(ResponseEntity.notFound().build());
     }
 
@@ -359,8 +361,9 @@ public class InstrumentController {
 
     // "inline" so a browser opens the PDF instead of only saving it.
     private static ResponseEntity<byte[]> fileResponse(StoredFile stored) {
+        // UTF-8, so a name such as "Peña" arrives whole (filename*=UTF-8''...)
         ContentDisposition disposition = ContentDisposition.inline()
-                .filename(stored.file().fileName())
+                .filename(stored.file().fileName(), StandardCharsets.UTF_8)
                 .build();
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType(stored.file().contentType()))

@@ -5,6 +5,7 @@ import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.PaymentOrder;
+import io.github.lordship.shared.RentStarts;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
@@ -65,6 +66,7 @@ public record TenancyChargeTermRow(
 
         PaymentOrder paymentOrder,  // which charges a payment covers first
         List<ChargeKind> rentKinds, // "Counts as rent"; always holds RENT
+        RentStarts rentStarts,      // when the lease's rent starts, the deal's rule when the term was written
 
         TenancyTermStatus status,
         TenancyTermSource source,
@@ -95,7 +97,7 @@ public record TenancyChargeTermRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
-                paymentOrder, rentKinds,
+                paymentOrder, rentKinds, rentStarts,
                 status, source, sourceUuid, termsTemplate, correctionReason,
                 cancelledAt, cancelledBy, cancelReason, deletedAt,
                 note, createdAt, createdBy
@@ -148,6 +150,7 @@ public record TenancyChargeTermRow(
                 template.securityDepositAmount(),
                 template.paymentOrder(),
                 template.rentKinds(),
+                template.rentStarts(),
                 TenancyTermStatus.PROPOSED,
                 source,
                 sourceUuid,
@@ -202,6 +205,7 @@ public record TenancyChargeTermRow(
                 from.securityDepositAmount(),
                 from.paymentOrder(),
                 from.rentKinds(),
+                from.rentStarts(),
                 TenancyTermStatus.PROPOSED,
                 from.source(),
                 from.sourceUuid(),
@@ -228,7 +232,7 @@ public record TenancyChargeTermRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
-                paymentOrder, rentKinds,
+                paymentOrder, rentKinds, rentStarts,
                 status, source, sourceUuid, termsTemplate, reason,
                 cancelledAt, cancelledBy, cancelReason, deletedAt,
                 note, createdAt, createdBy);

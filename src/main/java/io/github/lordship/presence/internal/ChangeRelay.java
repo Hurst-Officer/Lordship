@@ -122,7 +122,7 @@ class ChangeRelay {
         // Tenancies: the tenancies each changed person is on, then the lot of every tenancy a notice names
         Map<String, List<String>> personTenancies = tenanciesOf(idsOf(notices, "person", "uuid"));
         Set<String> tenancyIds = new LinkedHashSet<>();
-        for (String table : List.of("tenant", "occupant", "tenancy_interested_party")) {
+        for (String table : List.of("tenant", "occupant", "tenancy_interested_party", "move_in_check", "move_in_file")) {
             tenancyIds.addAll(idsOf(notices, table, "tenancy_id"));
         }
         tenancyIds.addAll(idsOf(notices, "tenancy_charge_term", "tenancy"));

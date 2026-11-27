@@ -12,6 +12,7 @@ import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.Patches;
 import io.github.lordship.shared.PaymentOrder;
+import io.github.lordship.shared.RentStarts;
 import io.github.lordship.shared.PropertyScope;
 import io.github.lordship.shared.RentLaw;
 import io.github.lordship.shared.RuleConflict;
@@ -272,6 +273,10 @@ public class TermsTemplateService {
         reconcileMethodAmountPairs(before, changes);
         reconcileLateFeeTiers(before, changes);
         reconcileRentRules(before, changes);
+        if (changes.containsKey("rent_starts")) {
+            // one of the RentStarts rules, or 400 terms_template.rent_starts_unknown
+            changes.put("rent_starts", RentStarts.fromRequest(changes.get("rent_starts"), "rent_starts").name());
+        }
 
         Optional<TermsTemplateRow> afterOpt =
                 termsTemplateRepository.patch(uuid, changes);

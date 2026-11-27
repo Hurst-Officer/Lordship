@@ -7,10 +7,12 @@ import io.github.lordship.homes.HomeService;
 import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.instruments.Instrument;
 import io.github.lordship.instruments.InstrumentService;
+import io.github.lordship.instruments.SignedScans;
 import io.github.lordship.lots.LotOffers;
 import io.github.lordship.lots.LotService;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.PropertyScope;
+import io.github.lordship.tenancy.MoveInChecks;
 import io.github.lordship.tenancy.TenancyRoll;
 import io.github.lordship.tenancyterms.TenancyChargeTerm;
 import io.github.lordship.tenancyterms.TenancyChargeTermService;
@@ -69,7 +71,10 @@ public class RecordHistoryController {
             Map.entry("tenancy_interested_party", "tenants:view"),
             // a tenancy's documents, and the rent steps a document carries (the lease panel of Glade's Tenancies)
             Map.entry("instrument", "instrument:view"),
-            Map.entry("tenancy_charge_term", "tenancy_term:view"));
+            Map.entry("tenancy_charge_term", "tenancy_term:view"),
+            // an item of a move-in's office list, and a move-in's upload (the signed scan)
+            Map.entry("move_in_check", "tenancy:view"),
+            Map.entry("move_in_file", "instrument:view"));
 
     // An agent's history is read for the roles they were given and lost, and the permissions taken from them alone
     // and given back ("permissions.lots:edit"), and nothing else of theirs
@@ -89,12 +94,17 @@ public class RecordHistoryController {
     private final TenancyRoll tenancyRoll;
     private final InstrumentService instrumentService;
     private final TenancyChargeTermService chargeTermService;
+    private final MoveInChecks moveInChecks;
+    private final SignedScans signedScans;
 
     public RecordHistoryController(AuditService auditService, LotService lotService, HomeService homeService,
                                    PropertyDocumentAssignmentService assignmentService,
                                    LotOffers lotOffers, TermsTemplateService termsTemplateService,
                                    TenancyRoll tenancyRoll, InstrumentService instrumentService,
-                                   TenancyChargeTermService chargeTermService) {
+                                   TenancyChargeTermService chargeTermService, MoveInChecks moveInChecks,
+                                   SignedScans signedScans) {
+        this.moveInChecks = moveInChecks;
+        this.signedScans = signedScans;
         this.tenancyRoll = tenancyRoll;
         this.instrumentService = instrumentService;
         this.chargeTermService = chargeTermService;
@@ -204,6 +214,15 @@ public class RecordHistoryController {
                     .orElse(false);
             case "tenancy_charge_term" -> chargeTermService.findById(id)
                     .map(TenancyChargeTerm::tenancy)
+                    .flatMap(tenancyRoll::propertyOfTenancy)
+                    .map(scope::allows)
+                    .orElse(false);
+            // an item of a move-in's office list and a move-in's upload are their tenancy's
+            case "move_in_check" -> moveInChecks.tenancyOfCheck(id)
+                    .flatMap(tenancyRoll::propertyOfTenancy)
+                    .map(scope::allows)
+                    .orElse(false);
+            case "move_in_file" -> signedScans.tenancyOfFile(id)
                     .flatMap(tenancyRoll::propertyOfTenancy)
                     .map(scope::allows)
                     .orElse(false);

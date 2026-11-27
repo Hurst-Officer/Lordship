@@ -5,6 +5,7 @@ import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.PaymentOrder;
+import io.github.lordship.shared.RentStarts;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import org.springframework.jdbc.core.RowMapper;
@@ -70,6 +71,7 @@ public class TermsTemplateRowMapper implements RowMapper<TermsTemplateRow> {
 
                 enumOf(PaymentOrder.class, rs.getString("payment_order")),
                 ChargeKind.fromDatabase(rs.getString("rent_kinds")),
+                enumOf(RentStarts.class, rs.getString("rent_starts")),
                 rs.getString("state"),
 
                 rs.getString("note"),

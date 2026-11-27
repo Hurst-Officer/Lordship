@@ -37,6 +37,18 @@ CREATE UNIQUE INDEX document_file_storage_key_uq ON document_file (storage_key);
 -- note: the same PDF can legitimately be connected to two different tenancies. Indexed so duplicates can be found
 CREATE INDEX document_file_sha256_idx ON document_file (sha256);
 
+-- Who was handed a stored file, and when: every read of a move-in's upload (a signed lease scan) goes through
+-- Lordship, which checks the permission and the agent's properties, then writes a row here (DocumentFileService).
+-- Written once, never changed.
+CREATE TABLE document_file_read (
+                                    uuid    UUID PRIMARY KEY DEFAULT uuidv7(),
+                                    file    UUID NOT NULL REFERENCES document_file(uuid),
+                                    read_by UUID NOT NULL REFERENCES agent(uuid),
+                                    read_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX document_file_read_file_idx ON document_file_read (file);
+
 -- A utility bill (V9) can carry its scanned copy
 ALTER TABLE utility_bill
     ADD CONSTRAINT utility_bill_document_file_fk FOREIGN KEY (document_file) REFERENCES document_file(uuid);
@@ -251,6 +263,7 @@ CREATE TABLE instrument ( -- WIP
 
                             returned_on    DATE,
                             returned_file  UUID REFERENCES document_file(uuid),
+                            signed_on      DATE, -- the day the household actually signed (Move-In's day signed), set when the signed copy is approved
 
                             note           TEXT,
                             created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -309,6 +322,38 @@ CREATE UNIQUE INDEX instrument_serial_uq
 CREATE INDEX instrument_open_idx
     ON instrument (tenancy)
     WHERE status IN ('GENERATED','SENT','SERVED');
+
+
+-- ── Move-In uploads ──────────────────────────────────────────────────────────
+-- A move-in's uploads (Glade's Move-In). One kind so far: SIGNED_LEASE, the signed scan of the move-in's lease,
+-- uploaded by the park or the office at the Signing stage. The bytes are a document_file, stored under a key that
+-- never holds a name; document_file.file_name follows the office's rule ("CD Lot 14 Lease Lopez.pdf", instruments
+-- PaperName). The newest live upload of a lease is the one that counts; an earlier upload stays on file.
+-- pages: the pages the upload has. page_check: what the quick page check read from each page (instruments
+-- PageCheck.Reading as JSON): the code printed on each page (serial/page/pages), and the pages missing, twice, out
+-- of order, from another lease, upside down, without a code or unreadable.
+-- Later kinds (the screening form, payment photos, assistance animal papers) come with restricted, for papers only
+-- some may read.
+CREATE TABLE move_in_file (
+                              uuid       UUID PRIMARY KEY DEFAULT uuidv7(),
+                              tenancy_id UUID NOT NULL REFERENCES tenancy(uuid),
+                              instrument UUID,
+                              file       UUID NOT NULL REFERENCES document_file(uuid),
+                              kind       TEXT NOT NULL
+                                  CONSTRAINT move_in_file_kind_must_be_known CHECK (kind IN ('SIGNED_LEASE')),
+                              restricted BOOLEAN NOT NULL DEFAULT FALSE,
+                              pages      INT CONSTRAINT move_in_file_pages_not_negative CHECK (pages >= 0),
+                              page_check JSONB,
+                              created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                              created_by UUID NOT NULL REFERENCES agent(uuid),
+                              deleted_at TIMESTAMPTZ,
+                              CONSTRAINT move_in_file_signed_lease_has_instrument CHECK (kind <> 'SIGNED_LEASE' OR instrument IS NOT NULL),
+    -- a signed scan is of a lease of the same tenancy
+                              CONSTRAINT move_in_file_instrument_same_tenancy
+                                  FOREIGN KEY (instrument, tenancy_id) REFERENCES instrument (uuid, tenancy)
+);
+
+CREATE INDEX move_in_file_tenancy_idx ON move_in_file (tenancy_id) WHERE deleted_at IS NULL;
 
 
 -- ── Rendered packet ──────────────────────────────────────────────────────────
@@ -456,6 +501,10 @@ CREATE TABLE tenancy_charge_term (
                                      rent_kinds        charge_kind[] NOT NULL DEFAULT '{RENT}'
                                          CONSTRAINT charge_term_rent_kinds_must_hold_rent CHECK ('RENT' = ANY (rent_kinds)),
     -- note: same meaning as terms_template.rent_kinds ("Counts as rent"), copied from the template with the rest
+                                     rent_starts       TEXT NOT NULL DEFAULT 'NEXT_FIRST'
+                                         CONSTRAINT charge_term_rent_starts_must_be_known CHECK (rent_starts IN ('NEXT_FIRST')),
+    -- note: same meaning as terms_template.rent_starts, copied from the template with the rest, so a lease keeps the
+    -- rule it was signed under
 
                                      status            TEXT NOT NULL DEFAULT 'PROPOSED'
                                          CONSTRAINT charge_term_status_must_be_known CHECK (status IN ('PROPOSED','PENDING','ACTIVE','CANCELLED')),

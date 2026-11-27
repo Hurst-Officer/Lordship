@@ -42,6 +42,7 @@ public record Instrument(
 
         LocalDate returnedOn,
         UUID returnedFile,
+        LocalDate signedOn, // the day the household actually signed, set when the signed copy is approved
 
         String note,
         OffsetDateTime createdAt,

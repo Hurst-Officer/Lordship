@@ -753,7 +753,7 @@ public class TermsTemplateServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 SecurityDepositMethod.NONE, BigDecimal.ZERO,
-                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), "WA", // payment order, rent kinds, state
+                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), RentStarts.NEXT_FIRST, "WA", // payment order, rent kinds, rent starts, state
                 null, now, now, SystemPrincipal.AGENT_UUID, null);
     }
 
@@ -772,7 +772,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 row.securityDepositMethod(), row.securityDepositAmount(),
-                row.paymentOrder(), row.rentKinds(), row.state(),
+                row.paymentOrder(), row.rentKinds(), row.rentStarts(), row.state(),
                 row.note(), row.createdAt(), updatedAt, row.createdBy(), row.deletedAt());
     }
 
@@ -791,7 +791,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 row.securityDepositMethod(), row.securityDepositAmount(),
-                row.paymentOrder(), row.rentKinds(), row.state(),
+                row.paymentOrder(), row.rentKinds(), row.rentStarts(), row.state(),
                 row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
     }
 
@@ -811,7 +811,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 row.securityDepositMethod(), row.securityDepositAmount(),
-                row.paymentOrder(), row.rentKinds(), row.state(),
+                row.paymentOrder(), row.rentKinds(), row.rentStarts(), row.state(),
                 row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
     }
 
@@ -831,7 +831,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 method, amount,
-                row.paymentOrder(), row.rentKinds(), row.state(),
+                row.paymentOrder(), row.rentKinds(), row.rentStarts(), row.state(),
                 row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
     }
 
@@ -1230,7 +1230,7 @@ public class TermsTemplateServiceTest {
                 row.sewerMethod(), row.sewerFlatAmount(),
                 row.trashMethod(), row.trashFlatAmount(),
                 row.securityDepositMethod(), row.securityDepositAmount(),
-                row.paymentOrder(), row.rentKinds(), row.state(),
+                row.paymentOrder(), row.rentKinds(), row.rentStarts(), row.state(),
                 row.note(), row.createdAt(), row.updatedAt(), row.createdBy(), row.deletedAt());
     }
 }

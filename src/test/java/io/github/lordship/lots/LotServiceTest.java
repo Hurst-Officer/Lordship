@@ -806,7 +806,7 @@ public class LotServiceTest {
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 UtilityMethod.NONE, BigDecimal.ZERO,
                 SecurityDepositMethod.NONE, BigDecimal.ZERO,
-                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), "WA", // payment order, rent kinds, state
+                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), RentStarts.NEXT_FIRST, "WA", // payment order, rent kinds, rent starts, state
                 null, now, now, SystemPrincipal.AGENT_UUID, null);
     }
 }

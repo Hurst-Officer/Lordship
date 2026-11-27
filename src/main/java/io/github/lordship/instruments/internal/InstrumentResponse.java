@@ -42,6 +42,7 @@ public record InstrumentResponse(
         LocalDate servedOn,
         ServiceMethod serviceMethod,
         LocalDate returnedOn,
+        LocalDate signedOn,
 
         String note,
         OffsetDateTime createdAt
@@ -69,6 +70,7 @@ public record InstrumentResponse(
                 instrument.servedOn(),
                 instrument.serviceMethod(),
                 instrument.returnedOn(),
+                instrument.signedOn(),
                 instrument.note(),
                 instrument.createdAt());
     }

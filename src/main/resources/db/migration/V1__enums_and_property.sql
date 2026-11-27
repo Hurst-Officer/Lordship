@@ -156,6 +156,12 @@ CREATE TABLE terms_template ( -- note when the property is NULL this is a global
     -- note: rent_kinds is "Counts as rent": the charges billing treats as rent -- which charges a payment covers first
     -- under RENT_FIRST, and whether rent is late (a late fee comes only from these). State law limits what may be in
     -- the list (Java RentLaw), so the limit is checked in Java, not here.
+                                rent_starts TEXT NOT NULL DEFAULT 'NEXT_FIRST'
+                                    CONSTRAINT terms_template_rent_starts_must_be_known CHECK (rent_starts IN ('NEXT_FIRST')),
+    -- note: rent_starts is when a new lease's rent and the lease itself start (Java RentStarts). NEXT_FIRST: the 1st
+    -- of the month after the household takes the home, or the same day for a household that takes the home on a
+    -- 1st. Nothing is prorated. The day the household takes the home (tenancy.start_date) may be any day. Other
+    -- rules will be other values.
                                 state VARCHAR(2) NOT NULL CONSTRAINT terms_template_state_must_be_two_capital_letters CHECK (state ~ '^[A-Z]{2}$'),
     -- note: state is the state whose law the template or deal answers to (Java RentLaw). The state is set when the row
     -- is made and is never changed: a global template is given one, and a property's deal takes its template's,
