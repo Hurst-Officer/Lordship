@@ -116,6 +116,8 @@ final class ChangePlaces {
             }
             // one person's stay on a tenancy
             case "tenant", "occupant", "tenancy_interested_party" -> tenancyOf(places, n.id("tenancy_id"), parents);
+            // a move-in's office list (an item ticked, a request) and a move-in's uploads (the signed scan)
+            case "move_in_check", "move_in_file" -> tenancyOf(places, n.id("tenancy_id"), parents);
             // the rent a tenancy is under, and the document the rent came from
             case "tenancy_charge_term", "instrument" -> tenancyOf(places, n.id("tenancy"), parents);
             case "agent" -> {

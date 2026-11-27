@@ -36,6 +36,14 @@ public class DocumentFileRepository {
                 .single();
     }
 
+    /** Records that an agent was handed the file (document_file_read). */
+    public void recordRead(UUID file, UUID readBy) {
+        jdbc.sql("INSERT INTO document_file_read (file, read_by) VALUES (:file, :readBy)")
+                .param("file", file)
+                .param("readBy", readBy)
+                .update();
+    }
+
     public Optional<DocumentFileRow> findById(UUID uuid) {
         return jdbc.sql("SELECT * FROM document_file WHERE uuid = :uuid")
                 .param("uuid", uuid)

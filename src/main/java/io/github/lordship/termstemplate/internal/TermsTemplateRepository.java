@@ -31,7 +31,7 @@ public class TermsTemplateRepository {
             "sewer_method", "sewer_flat_amount",
             "trash_method", "trash_flat_amount",
             "security_deposit_method", "security_deposit_amount",
-            "payment_order", "rent_kinds",
+            "payment_order", "rent_kinds", "rent_starts",
             "note"
     );
 
@@ -80,7 +80,7 @@ public class TermsTemplateRepository {
                     sewer_method, sewer_flat_amount,
                     trash_method, trash_flat_amount,
                     security_deposit_method, security_deposit_amount,
-                    payment_order, rent_kinds, state,
+                    payment_order, rent_kinds, rent_starts, state,
                     note, created_by
                 ) VALUES (
                     :property, :copiedFrom, :name, :agreementType::agreement_type, :targetRate, :askingRate,
@@ -95,7 +95,7 @@ public class TermsTemplateRepository {
                     :sewerMethod, :sewerFlatAmount,
                     :trashMethod, :trashFlatAmount,
                     :securityDepositMethod, :securityDepositAmount,
-                    :paymentOrder, CAST(:rentKinds AS charge_kind[]), :state,
+                    :paymentOrder, CAST(:rentKinds AS charge_kind[]), :rentStarts, :state,
                     :note, :createdBy
                 ) RETURNING *
                 """)
@@ -133,6 +133,7 @@ public class TermsTemplateRepository {
                 .param("securityDepositAmount", row.securityDepositAmount())
                 .param("paymentOrder", nameOf(row.paymentOrder()))
                 .param("rentKinds", ChargeKind.toDatabase(row.rentKinds()))
+                .param("rentStarts", nameOf(row.rentStarts()))
                 .param("state", row.state())
                 .param("note", row.note())
                 .param("createdBy", row.createdBy())
@@ -141,9 +142,9 @@ public class TermsTemplateRepository {
     }
 
     // The state a property is in (property.property_state), whose law the property's deals follow.
-    // Empty for an unknown property.
+    // Empty for an unknown property and for a deleted property, so a template is never copied into a deleted property.
     public Optional<String> findPropertyState(UUID property) {
-        return jdbc.sql("SELECT property_state FROM property WHERE uuid = :property")
+        return jdbc.sql("SELECT property_state FROM property WHERE uuid = :property AND deleted_at IS NULL")
                 .param("property", property)
                 .query(String.class)
                 .optional();

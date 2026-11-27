@@ -60,6 +60,8 @@ dependencies {
     implementation 'org.apache.xmlgraphics:batik-transcoder:1.19'
     implementation 'org.apache.xmlgraphics:batik-codec:1.19'
     implementation 'org.jsoup:jsoup:1.18.3'
+    // the page codes printed on a generated lease, and read back from the signed scan (instruments PageCheck)
+    implementation 'com.google.zxing:core:3.5.4'
 }
 
 dependencyManagement {

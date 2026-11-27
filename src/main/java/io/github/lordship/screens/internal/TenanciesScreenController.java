@@ -7,7 +7,9 @@ import io.github.lordship.identity.AgentPrincipal;
 import io.github.lordship.instruments.Instrument;
 import io.github.lordship.instruments.InstrumentService;
 import io.github.lordship.instruments.InstrumentStatus;
+import io.github.lordship.instruments.MoveInFinish;
 import io.github.lordship.instruments.OnExpiry;
+import io.github.lordship.instruments.SignedScans;
 import io.github.lordship.lots.LotOffers;
 import io.github.lordship.properties.Property;
 import io.github.lordship.properties.PropertyService;
@@ -17,6 +19,10 @@ import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.PropertyScope;
 import io.github.lordship.shared.TenancyStanding;
+import io.github.lordship.tenancy.MoveInCheck;
+import io.github.lordship.tenancy.MoveInChecks;
+import io.github.lordship.tenancy.MoveInLine;
+import io.github.lordship.tenancy.MoveIns;
 import io.github.lordship.tenancy.TenancyRoll;
 import io.github.lordship.tenancy.TenancyService;
 import io.github.lordship.tenancyterms.TenancyChargeTermResponse;
@@ -44,8 +50,10 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * One call per screen of Glade's Tenancies concern: every property, one property, one lot's tenancy.
- * The screens answer "who rents what, since when, under which rent, and is there paper behind the rent?".
+ * One call per screen of Glade's Move-In concern (the code keeps the name Tenancies, the data type a move-in is):
+ * every property, one property, one lot's move-in. A move-in is a tenancy opened through Move-In and not
+ * finished yet (tenancy MoveIns); each screen carries the move-ins as MoveInLine, with the stage each stands at.
+ * The screens also still carry each tenancy's standing, which the lot maps and the bar's search read.
  *
  * <p>Every screen needs tenancy:view. The people on a tenancy also need tenants:view (members is null without
  * that permission), their phone and email persons:view, the rent tenancy_term:view (terms and leaseTerms are
@@ -58,10 +66,13 @@ import java.util.stream.Collectors;
 @RequestMapping("/api/screens/tenancies")
 public class TenanciesScreenController {
 
-    // The list of every property (X1): each property in the agent's scope with the property's standing
+    // The list of every property (X1): each property in the agent's scope with the property's standing, and every
+    // move-in in process on those properties, the oldest first. today is the server's date.
     public record TenanciesScreen(
             List<RatesPark> properties,
-            List<TenancyRoll.ParkLine> lines
+            List<TenancyRoll.ParkLine> lines,
+            List<MoveInLine> moveIns,
+            LocalDate today
     ) { }
 
     // One property (X2): the lots (with what each offers and whether each is taken), every tenancy the lots have
@@ -72,6 +83,7 @@ public class TenanciesScreenController {
             List<LotOffers.LotLine> lots,
             List<TenancyRoll.Line> tenancies,
             List<RatesStandard> standards,
+            List<MoveInLine> moveIns,
             LocalDate today,
             History.PageHistory history
     ) { }
@@ -88,6 +100,12 @@ public class TenanciesScreenController {
      * the shown tenancy's lease (the newest lease that was not abandoned), earliest first, with every fee: the
      * rent steps the lease panel edits while the lease is a draft. leaseDocuments says, for each kind of agreement
      * the lot offers, which document the property prints a lease from; a kind with none is left out.
+     * moveIns is every move-in the lot has had (deleted or finished included), the oldest first: the lot's
+     * tenancies that came through Move-In. A tenancy that is not among them (the data migration) belongs to the
+     * rent roll and is only read on this screen.
+     * checks is the office's list for the shown tenancy's move-in (MoveInChecks: the fixed items in order, then the
+     * requests), empty when the shown tenancy is not a move-in. scans is the shown move-in's signed scans, the
+     * newest first, with each scan's page check; null without instrument:view.
      */
     public record TenanciesLotScreen(
             LotOffers.LotLine lot,
@@ -101,6 +119,9 @@ public class TenanciesScreenController {
             List<Paper> papers,
             List<TenancyChargeTermResponse> leaseTerms,
             List<LeaseDocument> leaseDocuments,
+            List<MoveInLine> moveIns,
+            List<MoveInCheck> checks,
+            List<SignedScans.SignedScan> scans,
             LocalDate today,
             LocalDate defaultStart,
             History.PageHistory history
@@ -130,12 +151,21 @@ public class TenanciesScreenController {
     private final InstrumentService instrumentService;
     private final TenancyChargeTermService chargeTermService;
     private final PropertyDocumentAssignmentService assignmentService;
+    private final MoveIns moveIns;
+    private final MoveInChecks moveInChecks;
+    private final SignedScans signedScans;
+    private final MoveInFinish moveInFinish;
 
     public TenanciesScreenController(PropertyService propertyService, LotOffers lotOffers, TenancyRoll tenancyRoll,
                                      TermsTemplateService termsTemplateService, AuditService auditService,
                                      InstrumentService instrumentService,
                                      TenancyChargeTermService chargeTermService,
-                                     PropertyDocumentAssignmentService assignmentService) {
+                                     PropertyDocumentAssignmentService assignmentService,
+                                     MoveIns moveIns, MoveInChecks moveInChecks, SignedScans signedScans,
+                                     MoveInFinish moveInFinish) {
+        this.moveInChecks = moveInChecks;
+        this.signedScans = signedScans;
+        this.moveInFinish = moveInFinish;
         this.propertyService = propertyService;
         this.lotOffers = lotOffers;
         this.tenancyRoll = tenancyRoll;
@@ -144,6 +174,7 @@ public class TenanciesScreenController {
         this.instrumentService = instrumentService;
         this.chargeTermService = chargeTermService;
         this.assignmentService = assignmentService;
+        this.moveIns = moveIns;
     }
 
     // Every property in the agent's scope with the property's standing (TenancyRoll.ParkLine)
@@ -153,10 +184,16 @@ public class TenanciesScreenController {
         PropertyScope scope = AgentPrincipal.scopeOf(authentication);
         List<Property> properties = propertyService.findAll(scope);
         Set<UUID> shown = properties.stream().map(Property::uuid).collect(Collectors.toSet());
+        boolean mayViewPeople = authorities(authentication).contains("tenants:view");
 
         return ResponseEntity.ok(new TenanciesScreen(
                 properties.stream().map(RatesPark::from).toList(),
-                tenancyRoll.parkLines().stream().filter(line -> shown.contains(line.propertyId())).toList()));
+                tenancyRoll.parkLines().stream().filter(line -> shown.contains(line.propertyId())).toList(),
+                moveIns.inProcess().stream()
+                        .filter(moveIn -> shown.contains(moveIn.propertyId()))
+                        .map(moveIn -> mayViewPeople ? moveIn : moveIn.withoutNames())
+                        .toList(),
+                LocalDate.now()));
     }
 
     // One property's roll. 404 for an unknown property. The page's last edit counts every tenancy on the roll.
@@ -188,6 +225,9 @@ public class TenanciesScreenController {
                 lotOffers.lotsOf(propertyId),
                 tenancies,
                 termsTemplateService.findByProperty(propertyId).stream().map(RatesStandard::from).toList(),
+                moveIns.ofProperty(propertyId).stream()
+                        .map(moveIn -> can.contains("tenants:view") ? moveIn : moveIn.withoutNames())
+                        .toList(),
                 LocalDate.now(),
                 history));
     }
@@ -270,6 +310,16 @@ public class TenanciesScreenController {
                         .map(assignment -> new LeaseDocument(offer.agreementType(), assignment.documentName())))
                 .flatMap(Optional::stream)
                 .toList();
+        List<MoveInLine> lotMoveIns = moveIns.ofLot(lotId).stream()
+                .map(line -> mayViewPeople ? line : line.withoutNames())
+                .toList();
+        UUID shownTenancy = shown;
+        boolean movingIn = shown != null && lotMoveIns.stream().anyMatch(line -> line.tenancyId().equals(shownTenancy));
+        List<MoveInCheck> checks = movingIn ? moveInChecks.of(shown, moveInFinish.takesDeposit(shown)) : List.of();
+        List<SignedScans.SignedScan> scans = null;
+        if (can.contains("instrument:view")) {
+            scans = movingIn ? signedScans.of(shown) : List.of();
+        }
 
         History.PageHistory history = null;
         if (can.contains("audit:view")) {
@@ -286,6 +336,9 @@ public class TenanciesScreenController {
             if (members != null) {
                 members.forEach(member -> bars.add(new History.Ref(tableOf(member.role()), member.id())));
             }
+            checks.stream()
+                    .filter(check -> check.id() != null)
+                    .forEach(check -> bars.add(new History.Ref("move_in_check", check.id())));
             UUID shownId = shown;
             List<History.Ref> counted = tenancies.stream()
                     .filter(line -> !line.id().equals(shownId))
@@ -306,6 +359,9 @@ public class TenanciesScreenController {
                 papers,
                 leaseTerms,
                 leaseDocuments,
+                lotMoveIns,
+                checks,
+                scans,
                 today,
                 TenancyService.billingPeriodStart(today),
                 history));

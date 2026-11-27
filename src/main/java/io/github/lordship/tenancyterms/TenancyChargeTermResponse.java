@@ -5,6 +5,7 @@ import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.PaymentOrder;
+import io.github.lordship.shared.RentStarts;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 
@@ -63,6 +64,7 @@ public record TenancyChargeTermResponse(
 
         PaymentOrder paymentOrder,  // which charges a payment covers first
         List<ChargeKind> rentKinds, // "Counts as rent", in ChargeKind order; always holds RENT
+        RentStarts rentStarts,      // when the lease's rent starts, the deal's rule when the term was written
 
         TenancyTermStatus status,
         // Chosen, not leaked: the form needs to know whether to render read-only.
@@ -95,7 +97,7 @@ public record TenancyChargeTermResponse(
                 term.sewerMethod(), term.sewerFlatAmount(),
                 term.trashMethod(), term.trashFlatAmount(),
                 term.securityDepositMethod(), term.securityDepositAmount(),
-                term.paymentOrder(), term.rentKinds(),
+                term.paymentOrder(), term.rentKinds(), term.rentStarts(),
                 term.status(), term.isEditable(),
                 term.source(), term.sourceUuid(), term.termsTemplate(), term.correctionReason(),
                 term.cancelledAt(), term.cancelledBy(), term.cancelReason(),

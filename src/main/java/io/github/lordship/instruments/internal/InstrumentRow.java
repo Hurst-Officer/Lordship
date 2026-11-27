@@ -50,6 +50,7 @@ public record InstrumentRow(
 
         LocalDate returnedOn,
         UUID returnedFile,
+        LocalDate signedOn,
 
         String note,
         OffsetDateTime createdAt,
@@ -81,6 +82,7 @@ public record InstrumentRow(
                 proofFile,
                 returnedOn,
                 returnedFile,
+                signedOn,
                 note,
                 createdAt,
                 createdBy

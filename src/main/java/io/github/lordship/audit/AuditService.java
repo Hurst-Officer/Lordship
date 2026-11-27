@@ -249,7 +249,9 @@ public class AuditService {
             // a tenancy and the people on the tenancy (Glade's Tenancies)
             "tenancy", "tenant", "occupant", "tenancy_interested_party",
             // a tenancy's documents and the rent steps a document carries (the lease panel of Glade's Tenancies)
-            "instrument", "tenancy_charge_term");
+            "instrument", "tenancy_charge_term",
+            // a move-in's office list and uploads (Glade's Move-In)
+            "move_in_check", "move_in_file");
 
     // The history bars reach back this many years
     public static final int HISTORY_YEARS = 3;

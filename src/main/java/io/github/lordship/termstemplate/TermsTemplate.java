@@ -5,6 +5,7 @@ import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.PaymentOrder;
+import io.github.lordship.shared.RentStarts;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 
@@ -63,6 +64,7 @@ public record TermsTemplate(
 
         PaymentOrder paymentOrder,  // which charges a payment covers first
         List<ChargeKind> rentKinds, // "Counts as rent"; always holds RENT
+        RentStarts rentStarts,      // when a new lease's rent starts (NEXT_FIRST: the 1st after the household takes the home)
         String state,               // the state whose law the template or deal answers to; set when made, never changed
 
         String note,

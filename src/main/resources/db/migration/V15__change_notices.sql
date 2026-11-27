@@ -89,7 +89,9 @@ FROM (
         'terms_template',
         -- the people on a tenancy, the rent a tenancy is under and the document the rent came from (Glade's
         -- Tenancies). Keyed by "tenancy_id" or "tenancy", so not found by the columns above.
-        'tenant', 'occupant', 'tenancy_interested_party', 'tenancy_charge_term', 'instrument'])
+        'tenant', 'occupant', 'tenancy_interested_party', 'tenancy_charge_term', 'instrument',
+        -- a move-in's office list and uploads (Glade's Move-In), keyed by "tenancy_id"
+        'move_in_check', 'move_in_file'])
 ) AS watched
 WHERE watched.table_name NOT IN ('site_elevation', 'property_footprint_stale', 'map_feature_edit',
                                  'agent_session_spent_token');

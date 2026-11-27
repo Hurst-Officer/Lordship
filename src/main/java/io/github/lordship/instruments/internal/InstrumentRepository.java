@@ -170,6 +170,29 @@ public class InstrumentRepository {
     }
 
     /**
+     * The signed copy is back and the office accepted the copy: APPROVED, with the day the copy came back, the file
+     * of the signed copy and the day the household signed. Only from GENERATED, SENT or SERVED, so a second call
+     * (or an abandoned lease) changes nothing and answers empty.
+     */
+    public Optional<InstrumentRow> markApproved(UUID uuid, LocalDate returnedOn, UUID returnedFile, LocalDate signedOn) {
+        return jdbc.sql("""
+                        UPDATE instrument
+                           SET status        = 'APPROVED',
+                               returned_on   = :returnedOn,
+                               returned_file = :returnedFile,
+                               signed_on     = :signedOn
+                         WHERE uuid = :uuid AND status IN ('GENERATED', 'SENT', 'SERVED')
+                         RETURNING *
+                        """)
+                .param("uuid", uuid)
+                .param("returnedOn", returnedOn)
+                .param("returnedFile", returnedFile)
+                .param("signedOn", signedOn)
+                .query(rowMapper)
+                .optional();
+    }
+
+    /**
      * Paper that never went out, or was replaced before it did. Only from the
      * states where that is true: a document the tenant already has cannot be
      * un-sent, and the correction for one that is wrong is a new instrument.

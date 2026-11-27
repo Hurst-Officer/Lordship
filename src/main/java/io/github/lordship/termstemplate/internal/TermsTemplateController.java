@@ -71,6 +71,7 @@ public class TermsTemplateController {
             Map.entry("trashFlatAmount", "trash_flat_amount"),
             Map.entry("paymentOrder", "payment_order"),
             Map.entry("rentKinds", "rent_kinds"),
+            Map.entry("rentStarts", "rent_starts"),
             Map.entry("note", "note")
     );
 

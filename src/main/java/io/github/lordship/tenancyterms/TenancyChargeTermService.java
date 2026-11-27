@@ -29,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.function.Function;
@@ -37,6 +38,9 @@ import java.util.function.Function;
 public class TenancyChargeTermService {
 
     private static final BigDecimal MAX_DEPOSIT_MONTHS = new BigDecimal("5");
+
+    // a day as the office writes the day in a sentence: 12/1/2026
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("M/d/yyyy");
 
     private static final Set<String> LATE_FEE_METHODS = Set.of(
             FeeMethod.NONE.name(), FeeMethod.FLAT.name(), FeeMethod.PERCENT_OF_RENT.name(),
@@ -754,6 +758,13 @@ public class TenancyChargeTermService {
         // the tiers and the grace period, which the database cannot check
         problems.addAll(LateFeeTier.problems(row.lateFeeMethod(), row.lateFeeTiers(),
                 row.paymentDueDay(), row.gracePeriodDays()));
+
+        // A document's rent step starts on the day the deal's rule allows (RentStarts): under NEXT_FIRST, a 1st, so
+        // no month is ever billed in part. Terms without a document (MIGRATION, CORRECTION) keep the days they had.
+        if (row.sourceUuid() != null && row.rentStarts() != null && !row.rentStarts().allows(row.validAt())) {
+            problems.add(DomainProblem.Problem.onField("valid_at", "term.rent_starts_on_a_first",
+                    row.validAt().format(DAY), row.rentStarts().firstDay(row.validAt()).format(DAY)));
+        }
 
         return problems;
     }

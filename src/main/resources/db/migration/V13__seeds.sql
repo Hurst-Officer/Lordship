@@ -171,6 +171,15 @@ INSERT INTO permission_seed (permission_name) VALUES
                                                    ('instrument:create'),
                                                    ('instrument:edit'),
 
+                                                   -- Move-In (Glade): the office's list for a signed lease, the
+                                                   -- signed scan, and finishing a move-in. Finish is a separate
+                                                   -- permission so property managers can be given finish later.
+                                                   ('move_in:tick'),
+                                                   ('move_in:waive'),
+                                                   ('move_in:request'),
+                                                   ('move_in:upload'),
+                                                   ('move_in:finish'),
+
                                                    -- homes
                                                    ('homes:view'),
                                                    ('homes:create'),
@@ -227,7 +236,8 @@ INSERT INTO permission_area (area, group_key, area_order) VALUES
     ('instrument', 'documents', 25),
     ('notices', 'notices', 26),
     ('audit', 'system', 27),
-    ('global_settings', 'system', 28);
+    ('global_settings', 'system', 28),
+    ('move_in', 'tenancies', 29);
 
 -- Inside a group: by area, then view, create, edit, delete, then the rest in seed order.
 INSERT INTO permission (permission_name, group_id, sort_order)
@@ -325,6 +335,11 @@ WHERE r.role_name = 'Office Staff'
                             'tenancy_term:delete',
                             'tenancy_term:activate',
                             'tenancy_term:cancel',
+                            'move_in:tick',
+                            'move_in:waive',
+                            'move_in:request',
+                            'move_in:upload',
+                            'move_in:finish',
                             'vehicles:view',
                             'vehicles:edit',
                             'vehicles:create',
@@ -386,6 +401,7 @@ WHERE r.role_name = 'Property Manager'
                             'tenants:edit',
                             'notices:view',
                             'tenancy_term:view',
+                            'move_in:upload',
                             'vehicles:view',
                             'meters:view',
                             'meterbills:view',

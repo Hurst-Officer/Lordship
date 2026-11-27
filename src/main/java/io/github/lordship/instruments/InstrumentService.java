@@ -31,6 +31,7 @@ import io.github.lordship.shared.DomainProblem;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.InvalidRequest;
+import io.github.lordship.shared.RentStarts;
 import io.github.lordship.shared.RuleConflict;
 import io.github.lordship.sitemaps.ParkMap;
 import io.github.lordship.sitemaps.SiteMapService;
@@ -43,6 +44,8 @@ import io.github.lordship.tenancyterms.TenancyChargeTermService;
 import io.github.lordship.tenancyterms.TenancyTermSource;
 import io.github.lordship.tenancyterms.TenancyTermStatus;
 import io.github.lordship.tenants.TenantService;
+import io.github.lordship.termstemplate.TermsTemplate;
+import io.github.lordship.termstemplate.TermsTemplateService;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -50,6 +53,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -73,6 +77,9 @@ import java.util.UUID;
 @Service
 public class InstrumentService {
 
+    // a day as the office writes the day in a sentence: 12/1/2026
+    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("M/d/yyyy");
+
     private final InstrumentRepository instrumentRepository;
     private final InstrumentAdditionRepository additionRepository;
     private final TenancyService tenancyService;
@@ -90,6 +97,7 @@ public class InstrumentService {
     private final DocumentFileService documentFileService;
     private final SiteMapService siteMapService;
     private final SatelliteImagery satelliteImagery;
+    private final TermsTemplateService termsTemplateService;
     private final String serialPrefix;
 
     public InstrumentService(InstrumentRepository instrumentRepository,
@@ -109,6 +117,7 @@ public class InstrumentService {
                              DocumentFileService documentFileService,
                              SiteMapService siteMapService,
                              SatelliteImagery satelliteImagery,
+                             TermsTemplateService termsTemplateService,
                              @Value("${lordship.serial.prefix}") String serialPrefix) {
         this.instrumentRepository = instrumentRepository;
         this.additionRepository = additionRepository;
@@ -127,6 +136,7 @@ public class InstrumentService {
         this.documentFileService = documentFileService;
         this.siteMapService = siteMapService;
         this.satelliteImagery = satelliteImagery;
+        this.termsTemplateService = termsTemplateService;
         this.serialPrefix = serialPrefix;
     }
 
@@ -177,7 +187,8 @@ public class InstrumentService {
      * <p>agreementType is chosen now because it decides which document template
      * is used and which terms template the charge terms are copied from.
      *
-     * <p>A LEASE gets its start date filled in (see {@link #defaultLeaseStart}).
+     * <p>A LEASE gets its start date filled in (see {@link #defaultLeaseStart}): under the deal's rent starts rule
+     * (RentStarts), the 1st after the household takes the home.
      * The office worker can change it with a PATCH. Other document types start
      * with no dates.
      *
@@ -194,7 +205,7 @@ public class InstrumentService {
         }
 
         LocalDate termStart = (type == InstrumentType.LEASE)
-                ? defaultLeaseStart(tenancyOpt.get())
+                ? defaultLeaseStart(tenancyOpt.get(), agreementType)
                 : null;
 
         InstrumentRow saved = instrumentRepository.save(
@@ -275,8 +286,8 @@ public class InstrumentService {
      * still PENDING becomes ACTIVE in one transaction, so a refusal on any step leaves none of them in force.
      * Terms that are already ACTIVE are left alone, which makes a second accept harmless.
      *
-     * <p>The document's own status does not move (GENERATED today): sent, served and approved are not recorded
-     * yet, and APPROVED needs the signed copy on file. When they are, approve is this call plus the status.
+     * <p>The document's own status does not move here: APPROVED needs the signed copy on file, and finishing a
+     * move-in records that next ({@link #approve}). Sent and served are not recorded yet.
      *
      * <p>Empty for an unknown document. 409 instrument.not_generated for a draft or an abandoned document.
      * 409 term.day_taken when another rent of the tenancy is already in force from the same day.
@@ -295,17 +306,48 @@ public class InstrumentService {
         return Optional.of(row.toInstrument());
     }
 
+    /**
+     * The signed copy is on file and the office accepted the copy: the document becomes APPROVED, with the day the
+     * copy came back (returnedOn), the stored signed copy (returnedFile) and the day the household signed
+     * (signedOn). Finishing a move-in does this after accept, in the same transaction (MoveInFinish). A document
+     * that is already APPROVED is answered unchanged, so a second call is harmless.
+     *
+     * <p>Empty for an unknown document. 409 instrument.not_generated for a draft or an abandoned document.
+     */
+    @Transactional
+    public Optional<Instrument> approve(UUID uuid, LocalDate returnedOn, UUID returnedFile, LocalDate signedOn) {
+        Optional<InstrumentRow> rowOpt = instrumentRepository.findById(uuid);
+        if (rowOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        InstrumentRow before = rowOpt.get();
+        if (before.status() == InstrumentStatus.APPROVED) {
+            return Optional.of(before.toInstrument());
+        }
+        if (before.status() == InstrumentStatus.DRAFT || before.status() == InstrumentStatus.ABANDONED) {
+            throw RuleConflict.of("instrument.not_generated", before.status());
+        }
+        InstrumentRow after = instrumentRepository.markApproved(uuid, returnedOn, returnedFile, signedOn)
+                // approved or abandoned by someone else between the read and this write
+                .orElseThrow(() -> RuleConflict.of("instrument.not_generated", before.status()));
+        AuditMapper.Diff diff = AuditMapper.diff(before, after);
+        auditService.recordUpdate("instrument", uuid, diff.before(), diff.after());
+        return Optional.of(after.toInstrument());
+    }
+
     // ---- generate ------------------------------------------------------------
 
     /**
      * Turns a finished draft into the document that goes to the tenant.
      *
      * <p>In order:
-     *   1. Check it is a DRAFT (409 if not) and, for a lease, has its dates (400).
+     *   1. Check it is a DRAFT (409 if not) and, for a lease, has its dates (400), the first day being one the
+     *      deal's rent starts rule allows (400 instrument.term_start_not_first: under NEXT_FIRST, a 1st).
      *   2. Assemble it exactly as preview does, and refuse if anything is missing (400, with the list).
      *   3. Move its charge terms to PENDING, so the deal cannot change under a printed document.
      *   4. Save every section and clause as printed.
-     *   5. Stamp a serial, render the PDF with the deal written into it, and save it.
+     *   5. Stamp a serial, render the PDF with the deal written in, print a page code on every page
+     *      (PageCheck), and save the PDF.
      *   6. Mark the document GENERATED.
      *
      * <p>All in one transaction. A refusal at any step changes nothing.
@@ -321,6 +363,7 @@ public class InstrumentService {
         }
         InstrumentRow before = requireDraft(rowOpt.get());
         requireTermDates(before);
+        requireRentStartDay(before);
 
         Assembly assembly = assemble(before);
         LeasePreview preview = assembly.preview();
@@ -331,12 +374,15 @@ public class InstrumentService {
 
         String serial = Serial.generate(serialPrefix, before.agreementType(), before.type());
         String html = LeaseDocument.render(preview, serial, assembly.assignment().document().styles());
-        byte[] pdf = PdfRenderer.toPdf(html, InstrumentMetadata.of(
-                assembly.facts(), preview, serial, InstrumentMetadata.Status.GENERATED, OffsetDateTime.now()));
+        // every page carries a code beside the serial ("serial/page/pages"), read back from the signed scan
+        // (PageCheck), and corner marks a later check lines a scan up with
+        byte[] pdf = PageCheck.stamp(PdfRenderer.toPdf(html, InstrumentMetadata.of(
+                assembly.facts(), preview, serial, InstrumentMetadata.Status.GENERATED, OffsetDateTime.now())), serial);
 
+        // stored under the serial (a storage key must be new); downloaded as the office names its files
         DocumentFile file = documentFileService.store(
                 serial + ".pdf",
-                serial + ".pdf",
+                fileNameOf(assembly.facts(), before.type(), PaperName.Copy.BLANK),
                 "application/pdf",
                 pdf,
                 ActingAgent.resolve(auditContext));
@@ -518,11 +564,24 @@ public class InstrumentService {
 
     /**
      * What generate would refuse about the document's rent steps (TenancyChargeTermService.problemsForDocument):
-     * the other half of "is this draft ready", beside the preview's own lists. Empty when the rent steps are
-     * ready, and for a document that is not a draft.
+     * the other half of "is this draft ready", beside the preview's own lists. Also a lease's first day that the
+     * deal's rent starts rule does not allow (under NEXT_FIRST, a day other than a 1st), unless a rent step on
+     * the same day already says so. Empty when the rent steps are ready, and for a document that is not a draft.
      */
     public List<TenancyChargeTermService.TermProblem> termProblems(UUID instrumentUuid) {
-        return chargeTermService.problemsForDocument(instrumentUuid);
+        List<TenancyChargeTermService.TermProblem> found =
+                new ArrayList<>(chargeTermService.problemsForDocument(instrumentUuid));
+        instrumentRepository.findById(instrumentUuid)
+                .filter(row -> row.status() == InstrumentStatus.DRAFT)
+                .ifPresent(row -> brokenRentStart(row).ifPresent(rule -> {
+                    boolean stepSaysSo = found.stream().anyMatch(problem -> row.termStart().equals(problem.validAt()));
+                    if (!stepSaysSo) {
+                        found.add(0, new TenancyChargeTermService.TermProblem(row.termStart(),
+                                DomainProblem.Problem.onField("termStart", "instrument.term_start_not_first",
+                                        row.termStart().format(DAY), rule.firstDay(row.termStart()).format(DAY))));
+                    }
+                }));
+        return found;
     }
 
     /**
@@ -533,14 +592,32 @@ public class InstrumentService {
      * Nothing is saved.
      */
     public Optional<byte[]> previewPdf(UUID instrumentUuid) {
+        return previewPdfNamed(instrumentUuid).map(NamedPdf::content);
+    }
+
+    /** A PDF with the name the office saves the PDF under (PaperName). */
+    public record NamedPdf(String fileName, byte[] content) { }
+
+    /**
+     * The draft as real pages (see previewPdf), with the name a draft is downloaded under:
+     * "CD Lot 14 Lease Draft Lopez.pdf". Empty if there is no such document.
+     */
+    public Optional<NamedPdf> previewPdfNamed(UUID instrumentUuid) {
         return instrumentRepository.findById(instrumentUuid).map(row -> {
             Assembly assembly = assemble(row);
             String html = LeaseDocument.render(
                     assembly.preview(), "PREVIEW", assembly.assignment().document().styles());
-            return PdfRenderer.toPdf(html, InstrumentMetadata.of(
+            byte[] pdf = PdfRenderer.toPdf(html, InstrumentMetadata.of(
                     assembly.facts(), assembly.preview(), null,
                     InstrumentMetadata.Status.PREVIEW, OffsetDateTime.now()));
+            return new NamedPdf(fileNameOf(assembly.facts(), row.type(), PaperName.Copy.DRAFT), pdf);
         });
+    }
+
+    // The name a document's PDF is saved under, from what the document says: "CD Lot 14 Lease Copy Lopez.pdf"
+    private static String fileNameOf(TokenResolver.LeaseFacts facts, InstrumentType type, PaperName.Copy copy) {
+        return PaperName.of(facts.property().propertyCode(), facts.lot().lotNumber(), type, copy,
+                facts.tenantNames());
     }
 
     /**
@@ -700,6 +777,33 @@ public class InstrumentService {
         }
     }
 
+    /**
+     * A lease starts on a day the rule its rent steps carry allows (RentStarts, copied from the deal when the steps
+     * were written): under NEXT_FIRST, a 1st, so no month is billed in part. 400 instrument.term_start_not_first,
+     * with the day given and the 1st the rule gives instead.
+     */
+    private void requireRentStartDay(InstrumentRow row) {
+        brokenRentStart(row).ifPresent(rule -> {
+            throw InvalidRequest.onField("termStart", "instrument.term_start_not_first",
+                    row.termStart().format(DAY), rule.firstDay(row.termStart()).format(DAY));
+        });
+    }
+
+    /**
+     * The rent starts rule a lease's first day breaks, or empty: the rule of the lease's earliest rent step.
+     * Empty too for a document that is not a lease, a lease with no first day yet, and a lease with no rent steps
+     * (assemble refuses that one by name).
+     */
+    private Optional<RentStarts> brokenRentStart(InstrumentRow row) {
+        if (row.type() != InstrumentType.LEASE || row.termStart() == null) {
+            return Optional.empty();
+        }
+        return chargeTermService.findBySource(row.uuid()).stream()
+                .min(Comparator.comparing(TenancyChargeTerm::validAt))
+                .map(TenancyChargeTerm::rentStarts)
+                .filter(rule -> !rule.allows(row.termStart()));
+    }
+
     /** Throws a 400 listing everything the preview says is missing. */
     private static void requireComplete(DocumentFreeze.Frozen frozen) {
         List<DomainProblem.Problem> problems = new ArrayList<>();
@@ -743,13 +847,19 @@ public class InstrumentService {
      *
      * <p>If the tenancy already has a lease, the new one starts the day after
      * the latest one ends. A new lease must never cut the current lease short.
-     * Otherwise the new lease starts on the tenancy's start date.
+     * Otherwise the new lease starts from the tenancy's start date (the day the
+     * household takes the home).
+     *
+     * <p>That day then goes through the rent starts rule of the property's deal
+     * for the kind (RentStarts): under NEXT_FIRST, the 1st of the next month,
+     * or the day itself when the day is a 1st. A property with no deal for the
+     * kind keeps the day (writing the rent steps refuses that property by name).
      *
      * <p>Abandoned leases are skipped, and so are leases with no dates yet.
      * Returns null if there is nothing to go on.
      */
-    private LocalDate defaultLeaseStart(Tenancy tenancy) {
-        return instrumentRepository.findByTenancy(tenancy.uuid()).stream()
+    private LocalDate defaultLeaseStart(Tenancy tenancy, AgreementType agreementType) {
+        LocalDate from = instrumentRepository.findByTenancy(tenancy.uuid()).stream()
                 .map(InstrumentRow::toInstrument)
                 .filter(doc -> doc.type() == InstrumentType.LEASE)
                 .filter(doc -> doc.status() != InstrumentStatus.ABANDONED)
@@ -757,6 +867,14 @@ public class InstrumentService {
                 .flatMap(Optional::stream)
                 .max(Comparator.naturalOrder())
                 .orElse(tenancy.startDate());
+        if (from == null) {
+            return null;
+        }
+        return lotService.findById(tenancy.lotId())
+                .flatMap(lot -> termsTemplateService.findForProperty(lot.propertyId(), agreementType))
+                .map(TermsTemplate::rentStarts)
+                .map(rule -> rule.firstDay(from))
+                .orElse(from);
     }
 
     /**

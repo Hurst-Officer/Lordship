@@ -5,6 +5,7 @@ import io.github.lordship.shared.ChargeKind;
 import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.PaymentOrder;
+import io.github.lordship.shared.RentStarts;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.termstemplate.TermsTemplate;
 import io.github.lordship.shared.UtilityMethod;
@@ -65,6 +66,7 @@ public record TermsTemplateRow(
 
         PaymentOrder paymentOrder,  // which charges a payment covers first
         List<ChargeKind> rentKinds, // "Counts as rent"; always holds RENT
+        RentStarts rentStarts,      // when a new lease's rent starts
         String state,               // whose law the row answers to; set when the row is made, never changed
 
         String note,
@@ -87,7 +89,7 @@ public record TermsTemplateRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
-                paymentOrder, rentKinds, state,
+                paymentOrder, rentKinds, rentStarts, state,
                 note, createdAt, updatedAt, createdBy, deletedAt
         );
     }
@@ -112,7 +114,8 @@ public record TermsTemplateRow(
                 null, null,                    // sewer method, amount
                 null, null,                    // trash method, amount
                 null, null,         // security deposit method, amount
-                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), state, // payment order, rent kinds, state
+                PaymentOrder.RENT_FIRST, List.of(ChargeKind.RENT), // payment order, rent kinds
+                RentStarts.NEXT_FIRST, state,  // rent starts, state
                 null,                          // note
                 null, null,                    // createdAt, updatedAt
                 createdBy,
@@ -138,7 +141,7 @@ public record TermsTemplateRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
-                paymentOrder, rentKinds, state,
+                paymentOrder, rentKinds, rentStarts, state,
                 note, null, null, copiedBy, null
         );
     }
@@ -168,7 +171,7 @@ public record TermsTemplateRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
-                paymentOrder, rentKinds, null,
+                paymentOrder, rentKinds, rentStarts, null,
                 note, null, null, copiedBy, null
         );
     }
@@ -188,7 +191,7 @@ public record TermsTemplateRow(
                 sewerMethod, sewerFlatAmount,
                 trashMethod, trashFlatAmount,
                 securityDepositMethod, securityDepositAmount,
-                newPaymentOrder, newRentKinds, newState,
+                newPaymentOrder, newRentKinds, rentStarts, newState,
                 note, createdAt, updatedAt, createdBy, deletedAt
         );
     }

@@ -75,6 +75,17 @@ public class DocumentFileService {
                 .map(file -> new StoredFile(file, fileStorage.read(file.storageKey())));
     }
 
+    /**
+     * The file's record and the file's bytes, handed to an agent: the read is recorded (document_file_read, who and when)
+     * before the bytes leave. For a move-in's uploads, where every read is kept. Empty if there is no such file.
+     */
+    @Transactional
+    public Optional<StoredFile> readFor(UUID uuid, UUID readBy) {
+        Optional<StoredFile> found = read(uuid);
+        found.ifPresent(stored -> documentFileRepository.recordRead(uuid, readBy));
+        return found;
+    }
+
     private static byte[] sha256(byte[] content) {
         try {
             return MessageDigest.getInstance("SHA-256").digest(content);

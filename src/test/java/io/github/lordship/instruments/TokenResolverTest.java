@@ -10,6 +10,7 @@ import io.github.lordship.shared.FeeMethod;
 import io.github.lordship.shared.InstrumentType;
 import io.github.lordship.shared.LateFeeTier;
 import io.github.lordship.shared.PaymentOrder;
+import io.github.lordship.shared.RentStarts;
 import io.github.lordship.shared.SecurityDepositMethod;
 import io.github.lordship.shared.UtilityMethod;
 import io.github.lordship.tenancy.Tenancy;
@@ -307,7 +308,7 @@ public class TokenResolverTest {
                 now, UUID.randomUUID(),
                 null, null,
                 null, null, null, null,
-                null, null,
+                null, null, null,
                 null, now, UUID.randomUUID());
     }
 
@@ -396,7 +397,7 @@ public class TokenResolverTest {
                 UtilityMethod.RUBS, BigDecimal.ZERO,                   // sewer
                 UtilityMethod.NONE, BigDecimal.ZERO,                   // trash
                 depositMethod, new BigDecimal(depositAmount),
-                paymentOrder, rentKinds,
+                paymentOrder, rentKinds, RentStarts.NEXT_FIRST,
                 TenancyTermStatus.PROPOSED, TenancyTermSource.LEASE,
                 null, UUID.randomUUID(), null,                         // sourceUuid, termsTemplate, correctionReason
                 null, null, null,                                      // cancel columns
@@ -609,7 +610,7 @@ public class TokenResolverTest {
                 i.template(), i.templateVersion(), i.documentAssignment(),
                 i.generatedAt(), i.generatedFile(), i.sentAt(), i.sentBy(),
                 i.servedOn(), i.serviceMethod(), i.servedBy(), i.proofFile(),
-                i.returnedOn(), i.returnedFile(), i.note(), i.createdAt(), i.createdBy());
+                i.returnedOn(), i.returnedFile(), i.signedOn(), i.note(), i.createdAt(), i.createdBy());
     }
 
     private static List<RentHistoryYear> history() {
@@ -642,6 +643,6 @@ public class TokenResolverTest {
                 i.template(), i.templateVersion(), i.documentAssignment(),
                 i.generatedAt(), i.generatedFile(), i.sentAt(), i.sentBy(),
                 i.servedOn(), i.serviceMethod(), i.servedBy(), i.proofFile(),
-                i.returnedOn(), i.returnedFile(), i.note(), i.createdAt(), i.createdBy());
+                i.returnedOn(), i.returnedFile(), i.signedOn(), i.note(), i.createdAt(), i.createdBy());
     }
 }

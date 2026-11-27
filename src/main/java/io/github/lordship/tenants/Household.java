@@ -5,6 +5,7 @@ import io.github.lordship.audit.AuditService;
 import io.github.lordship.shared.AgreementType;
 import io.github.lordship.shared.InvalidRequest;
 import io.github.lordship.shared.RuleConflict;
+import io.github.lordship.tenancy.MoveIns;
 import io.github.lordship.tenancy.Tenancy;
 import io.github.lordship.tenancy.TenancyService;
 import io.github.lordship.tenants.internal.InterestedPartyRepository;
@@ -40,6 +41,7 @@ public class Household {
     private final OccupantRepository occupantRepository;
     private final InterestedPartyRepository interestedPartyRepository;
     private final AuditService auditService;
+    private final MoveIns moveIns;
 
     public Household(TenancyService tenancyService,
                      TenantService tenantService,
@@ -47,7 +49,8 @@ public class Household {
                      TenantRepository tenantRepository,
                      OccupantRepository occupantRepository,
                      InterestedPartyRepository interestedPartyRepository,
-                     AuditService auditService) {
+                     AuditService auditService,
+                     MoveIns moveIns) {
         this.tenancyService = tenancyService;
         this.tenantService = tenantService;
         this.occupantService = occupantService;
@@ -55,6 +58,7 @@ public class Household {
         this.occupantRepository = occupantRepository;
         this.interestedPartyRepository = interestedPartyRepository;
         this.auditService = auditService;
+        this.moveIns = moveIns;
     }
 
     /**
@@ -65,6 +69,9 @@ public class Household {
      * <p>A tenancy needs at least one tenant (400 tenancy.tenant_needed, on tenantIds). A person named twice,
      * or as both a tenant and an occupant, is a 400 (tenancy.person_twice): one person is on a lease or lives
      * under one, not both.
+     *
+     * <p>A tenancy opened here is a move-in (Glade's Move-In concern) until the move-in is finished: the tenancy
+     * is marked with move_in_started_at (MoveIns.markStarted).
      */
     @Transactional
     public Tenancy open(UUID lotId, AgreementType agreementType, LocalDate startDate,
@@ -87,6 +94,7 @@ public class Household {
         }
 
         Tenancy tenancy = tenancyService.openOn(lotId, agreementType, startDate);
+        moveIns.markStarted(tenancy.uuid());
         for (UUID personId : tenants) {
             tenantService.create(tenancy.uuid(), personId, tenancy.startDate());
         }
